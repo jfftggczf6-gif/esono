@@ -420,3 +420,401 @@ moduleRoutes.get('/module/:code/quiz', async (c) => {
     return c.redirect('/dashboard')
   }
 })
+
+// B3 - Questions guidées (Input structurant)
+moduleRoutes.get('/module/:code/questions', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.redirect('/login')
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.redirect('/login')
+
+    const moduleCode = c.req.param('code')
+    
+    const module = await c.env.DB.prepare(`
+      SELECT * FROM modules WHERE module_code = ?
+    `).bind(moduleCode).first()
+
+    if (!module) return c.redirect('/dashboard')
+
+    // Get progress
+    const progress = await c.env.DB.prepare(`
+      SELECT * FROM progress WHERE user_id = ? AND module_id = ?
+    `).bind(payload.userId, module.id).first()
+
+    // Get existing answers
+    const existingAnswers = await c.env.DB.prepare(`
+      SELECT question_number, user_response FROM questions WHERE progress_id = ?
+    `).bind(progress?.id || 0).all()
+
+    const answersMap = new Map()
+    existingAnswers.results.forEach((a: any) => {
+      answersMap.set(a.question_number, a.user_response)
+    })
+
+    const content = moduleCode === 'step1_business_model' ? businessModelCanvasContent : null
+    if (!content || !content.guided_questions) {
+      return c.redirect(`/module/${moduleCode}`)
+    }
+
+    return c.html(
+      <html lang="fr">
+        <head>
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>{module.title as string} - Questions Guidées</title>
+          <script src="https://cdn.tailwindcss.com"></script>
+          <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet" />
+          <link href="/static/style.css" rel="stylesheet" />
+        </head>
+        <body class="bg-gray-50">
+          <div class="min-h-screen py-8 px-4">
+            <div class="max-w-6xl mx-auto">
+              {/* Header */}
+              <div class="mb-6 flex items-center justify-between">
+                <a href="/dashboard" class="text-blue-600 hover:text-blue-700 font-medium">
+                  <i class="fas fa-arrow-left mr-2"></i>Retour au dashboard
+                </a>
+                <div class="text-sm text-gray-600">
+                  <i class="fas fa-edit mr-2"></i>Étape 3/7 - Questions guidées
+                </div>
+              </div>
+
+              {/* Progress Bar */}
+              <div class="mb-8 bg-white rounded-lg shadow-sm p-4">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-sm font-medium text-gray-700">Progression du module</span>
+                  <span class="text-sm text-gray-600">3/7</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2">
+                  <div class="bg-blue-600 h-2 rounded-full transition-all" style="width: 43%"></div>
+                </div>
+              </div>
+
+              {/* Main Content */}
+              <div class="bg-white rounded-xl shadow-lg p-8 mb-6">
+                <div class="mb-8">
+                  <h1 class="text-3xl font-bold text-gray-900 mb-3">Business Model Canvas - 9 Blocs</h1>
+                  <p class="text-gray-600 mb-4">
+                    Complétez chaque bloc de votre Business Model Canvas. Prenez le temps de réfléchir à chaque question,
+                    les exemples et conseils vous guideront.
+                  </p>
+                  <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <div class="flex items-start gap-3">
+                      <i class="fas fa-lightbulb text-blue-600 mt-1"></i>
+                      <div class="text-sm">
+                        <p class="text-blue-900 font-medium mb-1">Conseil :</p>
+                        <p class="text-blue-800">Vos réponses seront sauvegardées automatiquement. Soyez précis et concret dans vos descriptions.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <form id="canvasForm" class="space-y-8">
+                  {content.guided_questions!.map((q, index) => (
+                    <div class="border-b border-gray-200 pb-8 last:border-0">
+                      <div class="grid md:grid-cols-3 gap-6">
+                        {/* Question Panel */}
+                        <div class="md:col-span-2">
+                          <div class="flex items-start gap-3 mb-4">
+                            <div class="w-10 h-10 bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-lg flex items-center justify-center flex-shrink-0 font-bold">
+                              {index + 1}
+                            </div>
+                            <div class="flex-1">
+                              <h3 class="text-xl font-bold text-gray-900 mb-2">{q.section}</h3>
+                              <p class="text-gray-700 font-medium mb-4">{q.question}</p>
+                              
+                              <textarea
+                                id={`question_${q.id}`}
+                                name={`question_${q.id}`}
+                                rows={6}
+                                required
+                                class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all resize-y"
+                                placeholder={q.placeholder}
+                              >{answersMap.get(q.id) || ''}</textarea>
+                              
+                              <div class="flex items-center justify-between mt-3">
+                                <span class="text-sm text-gray-500">
+                                  <i class="far fa-keyboard mr-1"></i>
+                                  <span id={`charCount_${q.id}`}>0</span> caractères
+                                </span>
+                                <button
+                                  type="button"
+                                  onclick={`saveAnswer(${q.id}, '${moduleCode}')`}
+                                  class="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                                >
+                                  <i class="fas fa-save mr-1"></i>Sauvegarder
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Help Panel */}
+                        <div class="space-y-4">
+                          {/* Help Text */}
+                          <div class="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                            <h4 class="flex items-center gap-2 font-semibold text-purple-900 mb-2">
+                              <i class="fas fa-info-circle"></i>
+                              Aide
+                            </h4>
+                            <p class="text-sm text-purple-800">{q.help_text}</p>
+                          </div>
+
+                          {/* Example */}
+                          <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                            <h4 class="flex items-center gap-2 font-semibold text-green-900 mb-2">
+                              <i class="fas fa-check-circle"></i>
+                              Exemple
+                            </h4>
+                            <p class="text-sm text-green-800">{q.example}</p>
+                          </div>
+
+                          {/* Common Mistake */}
+                          <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+                            <h4 class="flex items-center gap-2 font-semibold text-red-900 mb-2">
+                              <i class="fas fa-exclamation-triangle"></i>
+                              À éviter
+                            </h4>
+                            <p class="text-sm text-red-800">{q.common_mistake}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Save Status */}
+                  <div id="saveStatus" class="hidden">
+                    <div class="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
+                      <i class="fas fa-check-circle text-green-600 text-xl"></i>
+                      <span class="text-green-800 font-medium">Réponses sauvegardées avec succès !</span>
+                    </div>
+                  </div>
+
+                  {/* Submit Button */}
+                  <div class="flex items-center justify-between pt-6 border-t border-gray-200">
+                    <div class="text-sm text-gray-600">
+                      <i class="fas fa-clock mr-2"></i>
+                      Temps estimé : 30-45 minutes
+                    </div>
+                    <button
+                      type="submit"
+                      class="px-8 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold rounded-lg transition-all shadow-md hover:shadow-lg"
+                    >
+                      Soumettre pour analyse
+                      <i class="fas fa-arrow-right ml-2"></i>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+
+          <script dangerouslySetInnerHTML={{__html: `
+            const moduleCode = '${moduleCode}';
+            const progressId = ${progress?.id || 0};
+            
+            // Character counter
+            document.querySelectorAll('textarea').forEach(textarea => {
+              const id = textarea.id.replace('question_', '');
+              const counter = document.getElementById('charCount_' + id);
+              
+              function updateCounter() {
+                counter.textContent = textarea.value.length;
+              }
+              
+              textarea.addEventListener('input', updateCounter);
+              updateCounter();
+            });
+            
+            // Auto-save function
+            async function saveAnswer(questionId, moduleCode) {
+              const textarea = document.getElementById('question_' + questionId);
+              const answer = textarea.value.trim();
+              
+              if (!answer) {
+                alert('Veuillez écrire une réponse avant de sauvegarder.');
+                return;
+              }
+              
+              try {
+                const response = await fetch('/api/module/answer', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    module_code: moduleCode,
+                    question_number: questionId,
+                    answer: answer
+                  })
+                });
+                
+                if (response.ok) {
+                  // Show save status
+                  const status = document.getElementById('saveStatus');
+                  status.classList.remove('hidden');
+                  setTimeout(() => status.classList.add('hidden'), 3000);
+                  
+                  // Visual feedback
+                  textarea.classList.add('border-green-500');
+                  setTimeout(() => textarea.classList.remove('border-green-500'), 2000);
+                }
+              } catch (err) {
+                console.error('Save error:', err);
+                alert('Erreur lors de la sauvegarde. Veuillez réessayer.');
+              }
+            }
+            
+            // Form submission
+            document.getElementById('canvasForm').addEventListener('submit', async (e) => {
+              e.preventDefault();
+              
+              // Check all questions answered
+              const textareas = document.querySelectorAll('textarea[required]');
+              let allAnswered = true;
+              
+              textareas.forEach(textarea => {
+                if (!textarea.value.trim()) {
+                  allAnswered = false;
+                  textarea.classList.add('border-red-500');
+                }
+              });
+              
+              if (!allAnswered) {
+                alert('Veuillez répondre à toutes les questions avant de soumettre.');
+                return;
+              }
+              
+              // Save all answers
+              const answers = [];
+              textareas.forEach(textarea => {
+                const id = parseInt(textarea.id.replace('question_', ''));
+                answers.push({
+                  question_number: id,
+                  answer: textarea.value.trim()
+                });
+              });
+              
+              try {
+                const response = await fetch('/api/module/submit-answers', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    module_code: moduleCode,
+                    answers: answers
+                  })
+                });
+                
+                if (response.ok) {
+                  // Redirect to next step (B4 - Analysis)
+                  window.location.href = '/module/' + moduleCode + '/analysis';
+                }
+              } catch (err) {
+                console.error('Submit error:', err);
+                alert('Erreur lors de la soumission. Veuillez réessayer.');
+              }
+            });
+            
+            // Make saveAnswer global
+            window.saveAnswer = saveAnswer;
+          `}} />
+        </body>
+      </html>
+    )
+  } catch (error) {
+    console.error('Questions error:', error)
+    return c.redirect('/dashboard')
+  }
+})
+
+// B4 - Analyse IA / Challenge (Temporary placeholder)
+moduleRoutes.get('/module/:code/analysis', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.redirect('/login')
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.redirect('/login')
+
+    const moduleCode = c.req.param('code')
+    
+    const module = await c.env.DB.prepare(`
+      SELECT * FROM modules WHERE module_code = ?
+    `).bind(moduleCode).first()
+
+    if (!module) return c.redirect('/dashboard')
+
+    return c.html(
+      <html lang="fr">
+        <head>
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>{module.title as string} - Analyse</title>
+          <script src="https://cdn.tailwindcss.com"></script>
+          <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet" />
+          <link href="/static/style.css" rel="stylesheet" />
+        </head>
+        <body class="bg-gray-50">
+          <div class="min-h-screen py-8 px-4">
+            <div class="max-w-4xl mx-auto">
+              <div class="bg-white rounded-xl shadow-lg p-8">
+                <div class="text-center py-12">
+                  <div class="w-24 h-24 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse">
+                    <i class="fas fa-robot text-4xl text-white"></i>
+                  </div>
+                  <h1 class="text-3xl font-bold text-gray-900 mb-4">Analyse IA en cours...</h1>
+                  <p class="text-gray-600 mb-8 max-w-2xl mx-auto">
+                    Cette fonctionnalité (B4-B7) sera implémentée dans la prochaine itération.
+                    Vos réponses ont été sauvegardées avec succès !
+                  </p>
+                  
+                  <div class="bg-green-50 border border-green-200 rounded-lg p-6 mb-8 inline-block">
+                    <div class="flex items-center gap-3">
+                      <i class="fas fa-check-circle text-3xl text-green-600"></i>
+                      <div class="text-left">
+                        <h3 class="font-bold text-green-900 mb-1">Félicitations ! 🎉</h3>
+                        <p class="text-green-800">
+                          Vous avez complété les 3 premières étapes du parcours pédagogique.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="space-y-3 mb-8">
+                    <div class="flex items-center justify-center gap-3 text-gray-700">
+                      <i class="fas fa-check text-green-600"></i>
+                      <span>B1 - Vidéo pédagogique</span>
+                    </div>
+                    <div class="flex items-center justify-center gap-3 text-gray-700">
+                      <i class="fas fa-check text-green-600"></i>
+                      <span>B2 - Quiz de validation</span>
+                    </div>
+                    <div class="flex items-center justify-center gap-3 text-gray-700">
+                      <i class="fas fa-check text-green-600"></i>
+                      <span>B3 - Questions guidées</span>
+                    </div>
+                    <div class="flex items-center justify-center gap-3 text-gray-400">
+                      <i class="fas fa-circle text-gray-300"></i>
+                      <span>B4-B7 - À venir</span>
+                    </div>
+                  </div>
+
+                  <a
+                    href="/dashboard"
+                    class="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
+                  >
+                    <i class="fas fa-home"></i>
+                    Retour au dashboard
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </body>
+      </html>
+    )
+  } catch (error) {
+    console.error('Analysis error:', error)
+    return c.redirect('/dashboard')
+  }
+})

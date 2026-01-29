@@ -836,4 +836,113 @@ app.post('/api/module/quiz', async (c) => {
   }
 })
 
+// API: Save single answer
+app.post('/api/module/answer', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const { module_code, question_number, answer } = await c.req.json()
+
+    // Get module and progress
+    const module = await c.env.DB.prepare(`
+      SELECT id FROM modules WHERE module_code = ?
+    `).bind(module_code).first()
+
+    if (!module) return c.json({ error: 'Module non trouvé' }, 404)
+
+    const progress = await c.env.DB.prepare(`
+      SELECT id FROM progress WHERE user_id = ? AND module_id = ?
+    `).bind(payload.userId, module.id).first()
+
+    if (!progress) return c.json({ error: 'Progress non trouvé' }, 404)
+
+    // Check if answer exists
+    const existing = await c.env.DB.prepare(`
+      SELECT id FROM questions WHERE progress_id = ? AND question_number = ?
+    `).bind(progress.id, question_number).first()
+
+    if (existing) {
+      // Update
+      await c.env.DB.prepare(`
+        UPDATE questions 
+        SET user_response = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).bind(answer, existing.id).run()
+    } else {
+      // Insert
+      await c.env.DB.prepare(`
+        INSERT INTO questions (progress_id, question_number, question_text, user_response)
+        VALUES (?, ?, ?, ?)
+      `).bind(progress.id, question_number, `Question ${question_number}`, answer).run()
+    }
+
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('Answer save error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+// API: Submit all answers
+app.post('/api/module/submit-answers', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const { module_code, answers } = await c.req.json()
+
+    // Get module and progress
+    const module = await c.env.DB.prepare(`
+      SELECT id FROM modules WHERE module_code = ?
+    `).bind(module_code).first()
+
+    if (!module) return c.json({ error: 'Module non trouvé' }, 404)
+
+    const progress = await c.env.DB.prepare(`
+      SELECT id FROM progress WHERE user_id = ? AND module_id = ?
+    `).bind(payload.userId, module.id).first()
+
+    if (!progress) return c.json({ error: 'Progress non trouvé' }, 404)
+
+    // Save all answers
+    for (const ans of answers) {
+      const existing = await c.env.DB.prepare(`
+        SELECT id FROM questions WHERE progress_id = ? AND question_number = ?
+      `).bind(progress.id, ans.question_number).first()
+
+      if (existing) {
+        await c.env.DB.prepare(`
+          UPDATE questions 
+          SET user_response = ?, updated_at = datetime('now')
+          WHERE id = ?
+        `).bind(ans.answer, existing.id).run()
+      } else {
+        await c.env.DB.prepare(`
+          INSERT INTO questions (progress_id, question_number, question_text, user_response)
+          VALUES (?, ?, ?, ?)
+        `).bind(progress.id, ans.question_number, `Question ${ans.question_number}`, ans.answer).run()
+      }
+    }
+
+    // Update progress status
+    await c.env.DB.prepare(`
+      UPDATE progress 
+      SET status = 'in_progress', current_question = 9, updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(progress.id).run()
+
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('Submit answers error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
 export default app
