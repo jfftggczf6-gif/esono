@@ -5,6 +5,7 @@ import { hashPassword, verifyPassword, generateToken, verifyToken } from './auth
 import { getCookie, setCookie } from 'hono/cookie'
 import { getUserWithProgress } from './dashboard'
 import { getCookieOptions } from './cookies'
+import { moduleRoutes } from './module-routes'
 
 type Bindings = {
   DB: D1Database
@@ -15,6 +16,9 @@ const app = new Hono<{ Bindings: Bindings }>()
 // Middleware
 app.use(renderer)
 app.use('/api/*', cors())
+
+// Mount module routes
+app.route('/', moduleRoutes)
 
 // Landing Page - A1
 app.get('/', (c) => {
@@ -775,63 +779,60 @@ app.get('/dashboard', async (c) => {
   }
 })
 
-// Module Page (Temporary - will be developed in next phases)
+// Module entry point - redirect to video
 app.get('/module/:code', async (c) => {
+  const moduleCode = c.req.param('code')
+  return c.redirect(`/module/${moduleCode}/video`)
+})
+
+// API: Save quiz results
+app.post('/api/module/quiz', async (c) => {
   try {
     const token = getCookie(c, 'auth_token')
-    
     if (!token) {
-      return c.redirect('/login')
+      return c.json({ error: 'Non authentifié' }, 401)
     }
 
     const payload = await verifyToken(token)
     if (!payload) {
-      return c.redirect('/login')
+      return c.json({ error: 'Token invalide' }, 401)
     }
 
-    const moduleCode = c.req.param('code')
-    
+    const { module_code, score, passed, answers } = await c.req.json()
+
+    // Get module
     const module = await c.env.DB.prepare(`
-      SELECT * FROM modules WHERE module_code = ?
-    `).bind(moduleCode).first()
+      SELECT id FROM modules WHERE module_code = ?
+    `).bind(module_code).first()
 
     if (!module) {
-      return c.redirect('/dashboard')
+      return c.json({ error: 'Module non trouvé' }, 404)
     }
 
-    return c.render(
-      <div class="min-h-screen bg-gray-50 py-8 px-4">
-        <div class="max-w-4xl mx-auto">
-          <div class="bg-white rounded-xl shadow-lg p-8">
-            <div class="mb-6">
-              <a href="/dashboard" class="text-blue-600 hover:text-blue-700 font-medium">
-                <i class="fas fa-arrow-left mr-2"></i>Retour au dashboard
-              </a>
-            </div>
-            
-            <div class="text-center py-12">
-              <div class="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                <i class="fas fa-tools text-4xl text-blue-600"></i>
-              </div>
-              <h1 class="text-3xl font-bold text-gray-900 mb-4">{module.title as string}</h1>
-              <p class="text-gray-600 mb-6">{module.description as string}</p>
-              <div class="inline-block bg-yellow-50 border border-yellow-200 rounded-lg px-6 py-4">
-                <p class="text-yellow-800 font-medium">
-                  <i class="fas fa-info-circle mr-2"></i>
-                  Module en cours de développement - Phase 2
-                </p>
-                <p class="text-sm text-yellow-700 mt-2">
-                  Les contenus pédagogiques (B1→B7) seront disponibles dans la prochaine itération
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
+    // Get progress
+    const progress = await c.env.DB.prepare(`
+      SELECT id FROM progress WHERE user_id = ? AND module_id = ?
+    `).bind(payload.userId, module.id).first()
+
+    if (progress) {
+      // Update progress
+      await c.env.DB.prepare(`
+        UPDATE progress 
+        SET quiz_score = ?, quiz_passed = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).bind(score, passed ? 1 : 0, progress.id).run()
+
+      // Save quiz attempt
+      await c.env.DB.prepare(`
+        INSERT INTO quiz_attempts (progress_id, score, passed, answers_json)
+        VALUES (?, ?, ?, ?)
+      `).bind(progress.id, score, passed ? 1 : 0, JSON.stringify(answers)).run()
+    }
+
+    return c.json({ success: true, score, passed })
   } catch (error) {
-    console.error('Module error:', error)
-    return c.redirect('/dashboard')
+    console.error('Quiz save error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
   }
 })
 
