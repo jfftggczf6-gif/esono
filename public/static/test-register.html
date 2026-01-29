@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Inscription</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 p-8">
+  <div class="max-w-md mx-auto bg-white rounded-lg shadow-lg p-8">
+    <h1 class="text-2xl font-bold mb-6">Test Inscription Simplifié</h1>
+    
+    <div id="console-output" class="mb-6 p-4 bg-gray-900 text-green-400 text-xs font-mono rounded max-h-60 overflow-auto">
+      Console logs apparaîtront ici...
+    </div>
+    
+    <form id="testForm" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium mb-2">Nom</label>
+        <input type="text" name="name" value="Test User" class="w-full px-3 py-2 border rounded" required>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium mb-2">Email</label>
+        <input type="email" name="email" value="test@example.com" class="w-full px-3 py-2 border rounded" required>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium mb-2">Mot de passe</label>
+        <input type="password" name="password" value="test123456" class="w-full px-3 py-2 border rounded" required>
+      </div>
+      
+      <input type="hidden" name="country" value="SN">
+      <input type="hidden" name="status" value="entrepreneur">
+      <input type="hidden" name="user_type" value="entrepreneur">
+      
+      <div id="error" class="hidden bg-red-50 text-red-700 p-3 rounded"></div>
+      <div id="success" class="hidden bg-green-50 text-green-700 p-3 rounded"></div>
+      
+      <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">
+        Créer le compte
+      </button>
+    </form>
+  </div>
+  
+  <script>
+    const consoleOutput = document.getElementById('console-output');
+    
+    function log(msg) {
+      const timestamp = new Date().toLocaleTimeString();
+      consoleOutput.innerHTML += `[${timestamp}] ${msg}<br>`;
+      consoleOutput.scrollTop = consoleOutput.scrollHeight;
+      console.log(msg);
+    }
+    
+    log('Script chargé');
+    
+    const form = document.getElementById('testForm');
+    const errorDiv = document.getElementById('error');
+    const successDiv = document.getElementById('success');
+    
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      log('Formulaire soumis - preventDefault appelé');
+      
+      errorDiv.classList.add('hidden');
+      successDiv.classList.add('hidden');
+      
+      const formData = new FormData(form);
+      const data = {
+        name: formData.get('name'),
+        email: formData.get('email'),
+        password: formData.get('password'),
+        country: formData.get('country'),
+        status: formData.get('status'),
+        user_type: formData.get('user_type')
+      };
+      
+      log('Données: ' + JSON.stringify({...data, password: '***'}));
+      
+      try {
+        log('Envoi de la requête...');
+        const response = await fetch('/api/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+        
+        log('Réponse reçue: ' + response.status);
+        const result = await response.json();
+        log('Résultat: ' + JSON.stringify(result));
+        
+        if (response.ok && result.success) {
+          successDiv.textContent = 'Compte créé avec succès ! ID: ' + result.user.id;
+          successDiv.classList.remove('hidden');
+          log('✅ SUCCÈS - Redirection dans 2 secondes...');
+          setTimeout(() => {
+            window.location.href = '/dashboard';
+          }, 2000);
+        } else {
+          errorDiv.textContent = result.error || 'Erreur inconnue';
+          errorDiv.classList.remove('hidden');
+          log('❌ ERREUR: ' + result.error);
+        }
+      } catch (error) {
+        log('❌ EXCEPTION: ' + error.message);
+        errorDiv.textContent = 'Erreur: ' + error.message;
+        errorDiv.classList.remove('hidden');
+      }
+    });
+    
+    log('Event listener attaché au formulaire');
+  </script>
+</body>
+</html>

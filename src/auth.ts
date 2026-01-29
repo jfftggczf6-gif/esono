@@ -21,9 +21,9 @@ export async function generateToken(payload: JWTPayload): Promise<string> {
 
 export async function verifyToken(token: string): Promise<JWTPayload | null> {
   try {
-    const payload = await verify(token, JWT_SECRET)
+    const payload = await verify(token, JWT_SECRET, 'HS256')
     return payload as JWTPayload
-  } catch {
+  } catch (error) {
     return null
   }
 }

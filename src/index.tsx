@@ -4,6 +4,7 @@ import { cors } from 'hono/cors'
 import { hashPassword, verifyPassword, generateToken, verifyToken } from './auth'
 import { getCookie, setCookie } from 'hono/cookie'
 import { getUserWithProgress } from './dashboard'
+import { getCookieOptions } from './cookies'
 
 type Bindings = {
   DB: D1Database
@@ -434,12 +435,7 @@ app.post('/api/register', async (c) => {
       userType: user_type
     })
 
-    setCookie(c, 'auth_token', token, {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'Lax',
-      maxAge: 60 * 60 * 24 * 7 // 7 days
-    })
+    setCookie(c, 'auth_token', token, getCookieOptions(c))
 
     return c.json({
       success: true,
@@ -484,12 +480,7 @@ app.post('/api/login', async (c) => {
       userType: user.user_type as 'pre_entrepreneur' | 'entrepreneur'
     })
 
-    setCookie(c, 'auth_token', token, {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'Lax',
-      maxAge: 60 * 60 * 24 * 7 // 7 days
-    })
+    setCookie(c, 'auth_token', token, getCookieOptions(c))
 
     return c.json({
       success: true,
@@ -508,10 +499,9 @@ app.post('/api/login', async (c) => {
 
 // API: Logout
 app.post('/api/logout', (c) => {
+  const opts = getCookieOptions(c)
   setCookie(c, 'auth_token', '', {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'Lax',
+    ...opts,
     maxAge: 0
   })
   return c.json({ success: true })
