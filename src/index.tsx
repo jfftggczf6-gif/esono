@@ -3,6 +3,7 @@ import { renderer } from './renderer'
 import { cors } from 'hono/cors'
 import { hashPassword, verifyPassword, generateToken, verifyToken } from './auth'
 import { getCookie, setCookie } from 'hono/cookie'
+import { getUserWithProgress } from './dashboard'
 
 type Bindings = {
   DB: D1Database
@@ -544,6 +545,303 @@ app.get('/api/user', async (c) => {
   } catch (error) {
     console.error('Get user error:', error)
     return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+// Dashboard - A3
+app.get('/dashboard', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    
+    if (!token) {
+      return c.redirect('/login')
+    }
+
+    const payload = await verifyToken(token)
+    if (!payload) {
+      return c.redirect('/login')
+    }
+
+    const data = await getUserWithProgress(c.env.DB, payload.userId)
+    if (!data) {
+      return c.redirect('/login')
+    }
+
+    const { user, project, modules, progress, stats } = data
+    const isPreEntrepreneur = user.user_type === 'pre_entrepreneur'
+
+    return c.render(
+      <div class="min-h-screen bg-gray-50">
+        {/* Navigation Bar */}
+        <nav class="bg-white border-b border-gray-200 shadow-sm">
+          <div class="max-w-7xl mx-auto px-4 py-4">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-gradient-to-br from-blue-600 to-green-600 rounded-lg flex items-center justify-center">
+                  <i class="fas fa-graduation-cap text-white"></i>
+                </div>
+                <div>
+                  <h1 class="text-lg font-bold text-gray-900">Plateforme EdTech</h1>
+                  <p class="text-xs text-gray-500">{project?.name || 'Mon Projet'}</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-4">
+                <div class="text-right">
+                  <p class="text-sm font-medium text-gray-900">{user.name}</p>
+                  <p class="text-xs text-gray-500">{user.email}</p>
+                </div>
+                <button onclick="logout()" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">
+                  <i class="fas fa-sign-out-alt mr-2"></i>Déconnexion
+                </button>
+              </div>
+            </div>
+          </div>
+        </nav>
+
+        {/* Main Content */}
+        <div class="max-w-7xl mx-auto px-4 py-8">
+          {/* Welcome Banner */}
+          <div class={`mb-8 p-6 rounded-2xl ${isPreEntrepreneur ? 'bg-gradient-to-br from-blue-500 to-blue-600' : 'bg-gradient-to-br from-green-500 to-green-600'} text-white shadow-lg`}>
+            <div class="flex items-start justify-between">
+              <div>
+                <h2 class="text-2xl font-bold mb-2">
+                  Bienvenue, {user.name} ! 👋
+                </h2>
+                <p class="text-blue-100 mb-4">
+                  {isPreEntrepreneur 
+                    ? 'Progressez dans votre apprentissage entrepreneurial' 
+                    : 'Continuez à structurer votre entreprise'}
+                </p>
+                <div class="flex items-center gap-6">
+                  <div>
+                    <div class="text-3xl font-bold">{stats.completedModules}/{stats.totalModules}</div>
+                    <div class="text-sm text-blue-100">Modules complétés</div>
+                  </div>
+                  <div>
+                    <div class="text-3xl font-bold">Étape {stats.currentStep}</div>
+                    <div class="text-sm text-blue-100">Sur 5 étapes</div>
+                  </div>
+                </div>
+              </div>
+              <div class="text-right">
+                <div class="text-4xl font-bold mb-1">{stats.progressPercentage}%</div>
+                <div class="text-sm text-blue-100">Progression globale</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Progress Bar */}
+          <div class="mb-8 bg-white rounded-xl shadow-md p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Votre Parcours</h3>
+            <div class="flex items-center gap-2">
+              {[1, 2, 3, 4, 5].map(step => {
+                const isCompleted = step < stats.currentStep
+                const isCurrent = step === stats.currentStep
+                return (
+                  <div class="flex-1 flex items-center">
+                    <div class="flex-1 flex items-center">
+                      <div class={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
+                        isCompleted ? 'bg-green-500 text-white' : 
+                        isCurrent ? 'bg-blue-500 text-white' : 
+                        'bg-gray-200 text-gray-500'
+                      }`}>
+                        {isCompleted ? <i class="fas fa-check"></i> : step}
+                      </div>
+                      {step < 5 && (
+                        <div class={`flex-1 h-1 ${isCompleted ? 'bg-green-500' : 'bg-gray-200'}`}></div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            <div class="flex justify-between mt-3">
+              <div class="text-xs text-gray-600 text-center" style="width: 20%">Activité</div>
+              <div class="text-xs text-gray-600 text-center" style="width: 20%">Finances</div>
+              <div class="text-xs text-gray-600 text-center" style="width: 20%">Projections</div>
+              <div class="text-xs text-gray-600 text-center" style="width: 20%">Business Plan</div>
+              <div class="text-xs text-gray-600 text-center" style="width: 20%">Impact ODD</div>
+            </div>
+          </div>
+
+          {/* Next Step Card */}
+          {stats.nextModule && (
+            <div class="mb-8 bg-gradient-to-br from-purple-50 to-pink-50 border-2 border-purple-200 rounded-xl shadow-md p-6">
+              <div class="flex items-start justify-between">
+                <div class="flex-1">
+                  <div class="flex items-center gap-2 mb-3">
+                    <i class="fas fa-star text-yellow-500"></i>
+                    <h3 class="text-lg font-semibold text-gray-900">Prochaine Étape Recommandée</h3>
+                  </div>
+                  <h4 class="text-xl font-bold text-gray-900 mb-2">{stats.nextModule.title}</h4>
+                  <p class="text-gray-600 mb-4">{stats.nextModule.description}</p>
+                  <div class="flex items-center gap-4 text-sm text-gray-600">
+                    <span><i class="far fa-clock mr-1"></i>{stats.nextModule.estimated_time} min</span>
+                    <span><i class="fas fa-layer-group mr-1"></i>Étape {stats.nextModule.step_number}</span>
+                  </div>
+                </div>
+                <a href={`/module/${stats.nextModule.module_code}`} class="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg transition-colors">
+                  Commencer
+                  <i class="fas fa-arrow-right ml-2"></i>
+                </a>
+              </div>
+            </div>
+          )}
+
+          {/* Modules Grid */}
+          <div class="mb-8">
+            <h3 class="text-2xl font-bold text-gray-900 mb-6">Tous les Modules</h3>
+            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {(modules as any[]).map(module => {
+                const moduleProgress = (progress as any[]).find((p: any) => p.module_id === module.id)
+                const isCompleted = moduleProgress?.status === 'completed'
+                const isInProgress = moduleProgress?.status === 'in_progress'
+                const isNotStarted = !moduleProgress || moduleProgress.status === 'not_started'
+
+                return (
+                  <a href={`/module/${module.module_code}`} class="block group">
+                    <div class="bg-white rounded-xl shadow-md hover:shadow-xl transition-all p-6 border-2 border-transparent hover:border-blue-300 h-full">
+                      <div class="flex items-start justify-between mb-4">
+                        <div class={`w-12 h-12 rounded-lg flex items-center justify-center ${
+                          isCompleted ? 'bg-green-100' : isInProgress ? 'bg-blue-100' : 'bg-gray-100'
+                        }`}>
+                          {isCompleted ? (
+                            <i class="fas fa-check-circle text-2xl text-green-600"></i>
+                          ) : isInProgress ? (
+                            <i class="fas fa-spinner text-2xl text-blue-600"></i>
+                          ) : (
+                            <i class="fas fa-circle text-2xl text-gray-400"></i>
+                          )}
+                        </div>
+                        <span class="text-sm font-medium text-gray-500">Étape {module.step_number}</span>
+                      </div>
+                      
+                      <h4 class="text-lg font-bold text-gray-900 mb-2 group-hover:text-blue-600 transition-colors">
+                        {module.title}
+                      </h4>
+                      <p class="text-sm text-gray-600 mb-4 line-clamp-2">{module.description}</p>
+                      
+                      <div class="flex items-center justify-between text-xs text-gray-500">
+                        <span><i class="far fa-clock mr-1"></i>{module.estimated_time} min</span>
+                        {isCompleted && moduleProgress?.quiz_passed && (
+                          <span class="text-green-600 font-medium">
+                            <i class="fas fa-trophy mr-1"></i>{moduleProgress.quiz_score}%
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </a>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Stats Cards */}
+          <div class="grid md:grid-cols-3 gap-6">
+            <div class="bg-white rounded-xl shadow-md p-6">
+              <div class="flex items-center gap-4">
+                <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                  <i class="fas fa-book text-xl text-blue-600"></i>
+                </div>
+                <div>
+                  <div class="text-2xl font-bold text-gray-900">{stats.totalModules}</div>
+                  <div class="text-sm text-gray-600">Modules disponibles</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-md p-6">
+              <div class="flex items-center gap-4">
+                <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                  <i class="fas fa-check-double text-xl text-green-600"></i>
+                </div>
+                <div>
+                  <div class="text-2xl font-bold text-gray-900">{stats.completedModules}</div>
+                  <div class="text-sm text-gray-600">Modules complétés</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-md p-6">
+              <div class="flex items-center gap-4">
+                <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+                  <i class="fas fa-chart-line text-xl text-purple-600"></i>
+                </div>
+                <div>
+                  <div class="text-2xl font-bold text-gray-900">{stats.progressPercentage}%</div>
+                  <div class="text-sm text-gray-600">Progression totale</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <script src="/static/dashboard.js"></script>
+      </div>
+    )
+  } catch (error) {
+    console.error('Dashboard error:', error)
+    return c.redirect('/login')
+  }
+})
+
+// Module Page (Temporary - will be developed in next phases)
+app.get('/module/:code', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    
+    if (!token) {
+      return c.redirect('/login')
+    }
+
+    const payload = await verifyToken(token)
+    if (!payload) {
+      return c.redirect('/login')
+    }
+
+    const moduleCode = c.req.param('code')
+    
+    const module = await c.env.DB.prepare(`
+      SELECT * FROM modules WHERE module_code = ?
+    `).bind(moduleCode).first()
+
+    if (!module) {
+      return c.redirect('/dashboard')
+    }
+
+    return c.render(
+      <div class="min-h-screen bg-gray-50 py-8 px-4">
+        <div class="max-w-4xl mx-auto">
+          <div class="bg-white rounded-xl shadow-lg p-8">
+            <div class="mb-6">
+              <a href="/dashboard" class="text-blue-600 hover:text-blue-700 font-medium">
+                <i class="fas fa-arrow-left mr-2"></i>Retour au dashboard
+              </a>
+            </div>
+            
+            <div class="text-center py-12">
+              <div class="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <i class="fas fa-tools text-4xl text-blue-600"></i>
+              </div>
+              <h1 class="text-3xl font-bold text-gray-900 mb-4">{module.title as string}</h1>
+              <p class="text-gray-600 mb-6">{module.description as string}</p>
+              <div class="inline-block bg-yellow-50 border border-yellow-200 rounded-lg px-6 py-4">
+                <p class="text-yellow-800 font-medium">
+                  <i class="fas fa-info-circle mr-2"></i>
+                  Module en cours de développement - Phase 2
+                </p>
+                <p class="text-sm text-yellow-700 mt-2">
+                  Les contenus pédagogiques (B1→B7) seront disponibles dans la prochaine itération
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  } catch (error) {
+    console.error('Module error:', error)
+    return c.redirect('/dashboard')
   }
 })
 
