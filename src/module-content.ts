@@ -28,7 +28,7 @@ export interface GuidedQuestion {
 export const businessModelCanvasContent: ModuleContent = {
   video_url: 'https://www.youtube.com/embed/QoAOzMTLP5s', // Business Model Canvas explained
   video_duration: 480, // 8 minutes
-  
+
   quiz_questions: [
     {
       id: 1,
@@ -170,4 +170,164 @@ export const businessModelCanvasContent: ModuleContent = {
       common_mistake: "Erreur fréquente : Sous-estimer les coûts indirects (admin, juridique, assurances). Ajoutez 15-20% de marge de sécurité."
     }
   ]
+}
+
+// Rapport d'activité structuré
+export const activityReportContent: ModuleContent = {
+  video_url: 'https://www.youtube.com/embed/xbmDXLI4Lk0',
+  video_duration: 600,
+  quiz_questions: [
+    {
+      id: 1,
+      question: "Quel est l'objectif principal d'un rapport d'activité investisseur ?",
+      options: [
+        'Présenter uniquement les résultats financiers',
+        'Structurer votre activité autour du problème, de la solution, du marché et de l’exécution',
+        'Lister les réalisations de l’équipe',
+        'Promouvoir la marque sur les réseaux sociaux'
+      ],
+      correct_answer: 1,
+      explanation: 'Un rapport d’activité crédible doit rassurer sur la compréhension du problème, la pertinence de la solution et la capacité d’exécution sur un marché précis.'
+    },
+    {
+      id: 2,
+      question: 'Quelle différence entre vision et mission ? ',
+      options: [
+        'Aucune différence',
+        'La vision décrit l’ambition long terme, la mission décrit ce que vous faites au quotidien',
+        'La mission est financière, la vision est sociale',
+        'La vision concerne uniquement les investisseurs'
+      ],
+      correct_answer: 1,
+      explanation: 'La vision donne l’impact à long terme souhaité, la mission décrit comment vous agissez chaque jour pour l’atteindre.'
+    },
+    {
+      id: 3,
+      question: 'Pourquoi valider un “problème client” avant de parler produit ? ',
+      options: [
+        'Pour lancer plus vite',
+        'Pour prouver qu’il existe une douleur réelle à résoudre et éviter une solution sans marché',
+        'Pour impressionner les investisseurs',
+        'Ce n’est pas nécessaire si l’équipe est expérimentée'
+      ],
+      correct_answer: 1,
+      explanation: 'Sans validation du problème (interviews, données, traction), il est difficile de démontrer qu’un client paiera réellement.'
+    },
+    {
+      id: 4,
+      question: 'Que doit contenir la section “Traction & preuves” ? ',
+      options: [
+        'Uniquement des projections',
+        'Des retours clients, essais pilotes, chiffres d’utilisation ou revenus existants',
+        'La description de l’équipe',
+        'Les besoins financiers détaillés'
+      ],
+      correct_answer: 1,
+      explanation: 'Les investisseurs attendent des signaux d’adoption : clients actifs, revenus, partenariats signés, pilotes réussis.'
+    },
+    {
+      id: 5,
+      question: 'Comment présenter vos besoins financiers ? ',
+      options: [
+        'Avec un montant arrondi sans justification',
+        'En détaillant l’enveloppe, les postes d’utilisation des fonds et l’horizon visé',
+        'En citant les concurrents',
+        'En listant toutes les dépenses passées'
+      ],
+      correct_answer: 1,
+      explanation: 'Il faut montrer un plan d’utilisation clair (ex: produit, commercial, capital de travail) lié à des jalons précis.'
+    }
+  ],
+  guided_questions: [
+    {
+      id: 1,
+      section: 'Vision & mission',
+      question: 'Quelle est votre ambition long terme et comment votre mission s’exprime au quotidien ? ',
+      placeholder: 'Vision : devenir la principale plateforme… Mission : connecter les producteurs...',
+      help_text: 'Expliquez la destination (vision) et la manière d’y parvenir (mission).',
+      example: 'Vision : “Rendre les services financiers inclusifs en Afrique francophone.” Mission : “Nous digitalisons les tontines pour sécuriser l’épargne de 50 000 ménages dans 3 ans.”',
+      common_mistake: 'Confondre vision et slogan marketing, ou rester trop vague.'
+    },
+    {
+      id: 2,
+      section: 'Problème client',
+      question: 'Quel problème concret résolvez-vous et pour qui ? ',
+      placeholder: 'Décrivez la douleur client, les données terrain, la taille…',
+      help_text: 'Démontrez que vous connaissez votre cible et sa douleur prioritaire.',
+      example: '“70 % des PME agro n’obtiennent pas de crédit car elles n’ont pas de dossier structuré – nous structurons ces données en 48h.”',
+      common_mistake: 'Parler immédiatement de la solution, sans quantifier le problème.'
+    },
+    {
+      id: 3,
+      section: 'Solution & proposition de valeur',
+      question: 'Quelle solution proposez-vous et pourquoi est-elle différenciante ? ',
+      placeholder: 'Produit, service, innovation, éléments différenciants…',
+      help_text: 'Expliquez le “comment” et ce qui vous distingue des alternatives.',
+      example: '“Plateforme SaaS qui score les risques des coopératives et pré-remplit les dossiers pour les banques, réduisant le délai de financement de 12 semaines à 7 jours.”',
+      common_mistake: 'Lister des fonctionnalités sans prouver la valeur pour le client.'
+    },
+    {
+      id: 4,
+      section: 'Marché & clients',
+      question: 'Quel marché adressez-vous et quelle est votre cible prioritaire ? ',
+      placeholder: 'Taille, segments prioritaires, dynamique…',
+      help_text: 'Démontrez la taille du marché, la croissance et votre segment accessible.',
+      example: '“TAM 5 Md$ (agro transformation Afrique de l’Ouest). Nous ciblons 12 000 coopératives structurées (SAM 180 M$) et adressons 600 coopératives pilotes (SOM 9 M$).”',
+      common_mistake: 'Trop diluer la cible en voulant toucher “tout le monde”.'
+    },
+    {
+      id: 5,
+      section: 'Concurrence & différenciation',
+      question: 'Qui sont vos principaux concurrents et quels sont vos avantages clés ? ',
+      placeholder: 'Alternatives directes, indirectes, avantages concurrentiels…',
+      help_text: 'Cartographiez 2-3 acteurs et démontrez pourquoi vous gagnez.',
+      example: '“Banques traditionnelles : délais >12 semaines. Cabinets locaux : coût élevé. Notre différenciation : scoring propriétaire + agents terrain + dossiers prêts en 72h.”',
+      common_mistake: 'Dire “nous n’avons pas de concurrence” ou rester trop générique.'
+    },
+    {
+      id: 6,
+      section: 'Traction & preuves',
+      question: 'Quelles preuves d’adoption et résultats tangibles pouvez-vous partager ? ',
+      placeholder: 'Clients actifs, revenus, partenariats, pilotes…',
+      help_text: 'Mettez en avant les chiffres et signaux concrets.',
+      example: '“12 coopératives payantes, volume financé 220 k€, NPS 42, 3 banques partenaires.”',
+      common_mistake: 'Se contenter d’intentions ou déclarations qualitatives.'
+    },
+    {
+      id: 7,
+      section: 'Modèle de revenus & go-to-market',
+      question: 'Comment générez-vous des revenus et comment allez-vous scaler ? ',
+      placeholder: 'Sources de revenus, tarifs, plan de déploiement…',
+      help_text: 'Montrez la logique économique et la stratégie d’expansion.',
+      example: '“Commission 4% sur financements + abonnement premium 49€/mois. Go-to-market : 3 régions pilotes, puis extension via ministères partenaires.”',
+      common_mistake: 'Rester flou sur la monétisation ou les canaux de distribution.'
+    },
+    {
+      id: 8,
+      section: 'Équipe & gouvernance',
+      question: 'Qui porte le projet et quelles compétences clés sont couvertes ? ',
+      placeholder: 'Fondateurs, leadership, advisory board…',
+      help_text: 'Rassurez sur la capacité d’exécution et l’équilibre des compétences.',
+      example: '“CEO 10 ans microfinance, CTO ex-SaaS scoring, COO ex-FAO (logistique terrain). Advisory board : ex-IFC, ex-Orange Bank.”',
+      common_mistake: 'Lister des CV sans montrer la complémentarité ou les manques assumés.'
+    },
+    {
+      id: 9,
+      section: 'Besoins financiers & utilisation des fonds',
+      question: 'Combien cherchez-vous et comment l’enveloppe sera utilisée ? ',
+      placeholder: 'Montant, allocation par postes, jalons…',
+      help_text: 'Faites le lien entre l’utilisation des fonds et les objectifs business à 12-18 mois.',
+      example: '“Levée 500 k€. 45% produit, 30% commercial, 15% capital de travail, 10% conformité. Jalons : 60 coopératives, ARR 400 k€, break-even 2026.”',
+      common_mistake: 'Demander un montant sans allocation détaillée ni jalons mesurables.'
+    }
+  ]
+}
+
+const MODULE_CONTENT_REGISTRY: Record<string, ModuleContent> = {
+  step1_business_model: businessModelCanvasContent,
+  step1_activity_report: activityReportContent
+}
+
+export const getModuleContent = (moduleCode: string): ModuleContent | null => {
+  return MODULE_CONTENT_REGISTRY[moduleCode] ?? null
 }

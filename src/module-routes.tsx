@@ -1,11 +1,113 @@
 import { Hono } from 'hono'
 import { getCookie } from 'hono/cookie'
 import { verifyToken } from './auth'
-import { businessModelCanvasContent } from './module-content'
+import { businessModelCanvasContent, getModuleContent } from './module-content'
 import { generateMockFeedback, calculateOverallScore, getScoreLabel } from './ai-feedback'
 
 type Bindings = {
   DB: D1Database
+}
+
+const formatDateTime = (value: string | null | undefined) => {
+  if (!value) return null
+  try {
+    return new Date(value).toLocaleString('fr-FR', {
+      dateStyle: 'long',
+      timeStyle: 'short'
+    })
+  } catch (error) {
+    console.warn('formatDateTime error:', error)
+    return value ?? null
+  }
+}
+
+type CanvasSectionDisplay = {
+  order: number
+  questionId: number
+  section: string
+  question: string
+  answer: string
+  score: number | null
+  scoreLabel: string
+  suggestions: string[]
+  clarifications: string[]
+}
+
+const normalizeFeedbackEntries = (value: unknown): string[] => {
+  if (!value) return []
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        if (!entry) return ''
+        if (typeof entry === 'string') return entry.trim()
+        if (typeof (entry as any).message === 'string') return (entry as any).message.trim()
+        return String(entry ?? '').trim()
+      })
+      .filter((item) => item.length > 0)
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(/[\n•-]/)
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0)
+  }
+  return []
+}
+
+const parseFeedbackPayload = (raw: unknown) => {
+  const base = {
+    strengths: [] as string[],
+    suggestions: [] as string[],
+    questions: [] as string[],
+    percentage: null as number | null,
+    scoreLabel: 'Analyse IA à compléter'
+  }
+
+  if (!raw) {
+    return base
+  }
+
+  try {
+    const payload = typeof raw === 'string' ? JSON.parse(raw) : raw ?? {}
+    return {
+      strengths: normalizeFeedbackEntries((payload as any).strengths),
+      suggestions: normalizeFeedbackEntries((payload as any).suggestions),
+      questions: normalizeFeedbackEntries((payload as any).questions),
+      percentage: typeof (payload as any).percentage === 'number' ? Math.round((payload as any).percentage) : null,
+      scoreLabel: typeof (payload as any).scoreLabel === 'string' ? (payload as any).scoreLabel : 'Analyse IA à compléter'
+    }
+  } catch (error) {
+    console.warn('parseFeedbackPayload error', error)
+    return base
+  }
+}
+
+const SCORE_BADGE_STYLES: Record<string, { badgeClass: string; icon: string; barColor: string }> = {
+  Excellent: {
+    badgeClass: 'bg-emerald-100 text-emerald-700',
+    icon: 'fas fa-trophy',
+    barColor: '#34d399'
+  },
+  Bien: {
+    badgeClass: 'bg-sky-100 text-sky-700',
+    icon: 'fas fa-circle-check',
+    barColor: '#38bdf8'
+  },
+  'À améliorer': {
+    badgeClass: 'bg-amber-100 text-amber-700',
+    icon: 'fas fa-lightbulb',
+    barColor: '#fbbf24'
+  },
+  Insuffisant: {
+    badgeClass: 'bg-rose-100 text-rose-700',
+    icon: 'fas fa-triangle-exclamation',
+    barColor: '#fb7185'
+  },
+  default: {
+    badgeClass: 'bg-slate-200 text-slate-700',
+    icon: 'fas fa-circle',
+    barColor: '#cbd5f5'
+  }
 }
 
 export const moduleRoutes = new Hono<{ Bindings: Bindings }>()
@@ -1392,6 +1494,20 @@ moduleRoutes.get('/module/:code/download', async (c) => {
 
     if (!module) return c.redirect('/dashboard')
 
+    const progressRow = await c.env.DB.prepare(`
+      SELECT status, validated_at, updated_at
+      FROM progress
+      WHERE user_id = ? AND module_id = ?
+    `).bind(payload.userId, module.id).first() as {
+      status?: string
+      validated_at?: string
+      updated_at?: string
+    } | null
+
+    const isValidated = progressRow?.status === 'validated'
+    const validatedAt = progressRow?.validated_at ? String(progressRow.validated_at) : null
+    const lastUpdatedAt = progressRow?.updated_at ? String(progressRow.updated_at) : null
+
     // Récupérer toutes les réponses de l'utilisateur
     const responses = await c.env.DB.prepare(`
       SELECT question_id, answer_text FROM user_answers 
@@ -1403,6 +1519,29 @@ moduleRoutes.get('/module/:code/download', async (c) => {
     responses.results.forEach((r: any) => {
       answersMap[r.question_id] = r.answer_text
     })
+
+    const hasAnswers = responses.results.length > 0
+    const heroGradientClass = isValidated
+      ? 'from-green-50 to-blue-50 border-green-200'
+      : 'from-orange-50 to-yellow-50 border-orange-200'
+    const heroIconContainerClass = isValidated ? 'bg-green-100' : 'bg-orange-100'
+    const heroIconClass = isValidated ? 'fas fa-trophy text-green-600 text-4xl' : 'fas fa-hourglass-half text-orange-500 text-4xl'
+    const heroBadgeClass = isValidated ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'
+    const heroBadgeIconClass = isValidated ? 'fas fa-check-circle' : 'fas fa-exclamation-triangle'
+    const heroBadgeText = isValidated ? "Validé par l'IA Coach" : 'Brouillon – validation en attente'
+    const bannerTitle = isValidated ? 'Module Terminé !' : 'Livrable provisoire'
+    const bannerSubtitle = isValidated ? 'Félicitations pour avoir complété votre' : 'Voici la version exportable de votre'
+    const progressLabel = isValidated ? '7/7 - Terminé ✓' : '7/7 - Livrable provisoire'
+    const progressLabelClass = isValidated ? 'text-green-600' : 'text-orange-600'
+    const progressBarClass = isValidated ? 'bg-green-500' : 'bg-orange-500'
+    const validatedAtDisplay = formatDateTime(validatedAt)
+    const lastUpdatedDisplay = formatDateTime(lastUpdatedAt)
+    const downloadButtonClasses = hasAnswers
+      ? 'bg-red-600 text-white hover:bg-red-700'
+      : 'bg-gray-300 text-gray-500 cursor-not-allowed pointer-events-none'
+    const downloadButtonTitle = hasAnswers
+      ? 'Télécharger le PDF'
+      : 'Complétez les blocs du Canvas pour activer le téléchargement'
 
     return c.html(
       <html lang="fr">
@@ -1435,25 +1574,40 @@ moduleRoutes.get('/module/:code/download', async (c) => {
             <div class="mb-8">
               <div class="flex justify-between items-center mb-2">
                 <span class="text-sm font-medium text-gray-700">Progression</span>
-                <span class="text-sm text-green-600 font-semibold">7/7 - Terminé ✓</span>
+                <span class={`text-sm font-semibold ${progressLabelClass}`}>{progressLabel}</span>
               </div>
               <div class="w-full bg-gray-200 rounded-full h-2">
-                <div class="bg-green-500 h-2 rounded-full" style="width: 100%"></div>
+                <div class={`${progressBarClass} h-2 rounded-full`} style="width: 100%"></div>
               </div>
             </div>
 
-            {/* Badge de Succès */}
-            <div class="bg-gradient-to-r from-green-50 to-blue-50 border-2 border-green-200 rounded-lg p-8 mb-6 text-center">
-              <div class="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <i class="fas fa-trophy text-green-600 text-4xl"></i>
+            {/* Bannière */}
+            <div class={`bg-gradient-to-r ${heroGradientClass} border-2 rounded-lg p-8 mb-6 text-center`}>
+              <div class={`w-20 h-20 ${heroIconContainerClass} rounded-full flex items-center justify-center mx-auto mb-4`}>
+                <i class={heroIconClass}></i>
               </div>
-              <h1 class="text-3xl font-bold text-gray-900 mb-2">Module Terminé !</h1>
-              <p class="text-gray-700 text-lg mb-1">Félicitations pour avoir complété votre</p>
+              <h1 class="text-3xl font-bold text-gray-900 mb-2">{bannerTitle}</h1>
+              <p class="text-gray-700 text-lg mb-1">{bannerSubtitle}</p>
               <p class="text-2xl font-semibold text-blue-600 mb-4">{module.title}</p>
-              <div class="inline-flex items-center gap-2 bg-green-100 text-green-800 px-4 py-2 rounded-full">
-                <i class="fas fa-check-circle"></i>
-                <span class="font-medium">Validé par l'IA Coach</span>
+              <div class={`inline-flex items-center gap-2 px-4 py-2 rounded-full ${heroBadgeClass}`}>
+                <i class={heroBadgeIconClass}></i>
+                <span class="font-medium">{heroBadgeText}</span>
               </div>
+              {isValidated && validatedAtDisplay && (
+                <p class="mt-4 text-sm text-green-800">
+                  Validé le {validatedAtDisplay}
+                </p>
+              )}
+              {!isValidated && (
+                <p class="mt-4 text-sm text-orange-700">
+                  Ce livrable est généré en mode brouillon. Finalisez l'analyse IA et la validation coach pour obtenir la version officielle.
+                </p>
+              )}
+              {lastUpdatedDisplay && (
+                <p class="mt-2 text-xs text-gray-600">
+                  Dernière mise à jour : {lastUpdatedDisplay}
+                </p>
+              )}
             </div>
 
             {/* Aperçu du Document */}
@@ -1465,8 +1619,12 @@ moduleRoutes.get('/module/:code/download', async (c) => {
               <div class="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-8">
                 <div class="text-center">
                   <i class="fas fa-file-alt text-gray-400 text-5xl mb-4"></i>
-                  <p class="text-gray-700 font-medium mb-2">Business Model Canvas - Version Professionnelle</p>
-                  <p class="text-sm text-gray-600">Format PDF - Prêt pour présentation aux investisseurs</p>
+                  <p class="text-gray-700 font-medium mb-2">Business Model Canvas - {isValidated ? 'Version Professionnelle' : 'Version brouillon'}</p>
+                  <p class="text-sm text-gray-600">
+                    {isValidated
+                      ? 'Format PDF - Prêt pour présentation aux investisseurs'
+                      : 'Format PDF provisoire - Validation requise pour la version officielle'}
+                  </p>
                 </div>
               </div>
             </div>
@@ -1480,7 +1638,7 @@ moduleRoutes.get('/module/:code/download', async (c) => {
               <ul class="space-y-2 text-sm text-blue-800">
                 <li class="flex items-center gap-2">
                   <i class="fas fa-check text-green-600"></i>
-                  <span>Les 9 blocs du Business Model Canvas complétés</span>
+                  <span>Les 9 blocs du Business Model Canvas {hasAnswers ? 'complétés' : 'à compléter'}</span>
                 </li>
                 <li class="flex items-center gap-2">
                   <i class="fas fa-check text-green-600"></i>
@@ -1488,20 +1646,53 @@ moduleRoutes.get('/module/:code/download', async (c) => {
                 </li>
                 <li class="flex items-center gap-2">
                   <i class="fas fa-check text-green-600"></i>
-                  <span>Format professionnel prêt pour partage</span>
+                  <span>Format prêt pour partage {isValidated ? '(version validée)' : '(brouillon partageable)'}</span>
                 </li>
                 <li class="flex items-center gap-2">
-                  <i class="fas fa-check text-green-600"></i>
-                  <span>Badge de validation IA Coach</span>
+                  <i class={`fas ${isValidated ? 'fa-check text-green-600' : 'fa-exclamation text-orange-500'}`}></i>
+                  <span>{isValidated ? "Badge de validation IA Coach" : 'En attente de validation IA/coach'}</span>
                 </li>
               </ul>
+              <div class="mt-4 text-sm text-blue-900 space-y-1">
+                <p>
+                  <span class="font-medium">Dernière mise à jour :</span>
+                  <span> {lastUpdatedDisplay ?? 'À compléter'}</span>
+                </p>
+                {isValidated ? (
+                  <p>
+                    <span class="font-medium">Validé le :</span>
+                    <span> {validatedAtDisplay ?? 'Date indisponible'}</span>
+                  </p>
+                ) : (
+                  <p>
+                    <span class="font-medium">Validation :</span>
+                    <span> Analyse IA + validation coach requises pour finaliser le livrable.</span>
+                  </p>
+                )}
+              </div>
             </div>
+
+            {!hasAnswers && (
+              <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 mb-6 flex items-start gap-3">
+                <i class="fas fa-info-circle text-yellow-600 mt-1"></i>
+                <div>
+                  <h3 class="font-semibold text-yellow-900 mb-1">Réponses manquantes</h3>
+                  <p class="text-sm text-yellow-800">
+                    Complétez les 9 blocs du Canvas (Étapes B3 à B5) pour activer le téléchargement du livrable.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Actions de Téléchargement */}
             <div class="space-y-4">
-              <button 
+              <button
+                data-download-btn="true"
                 onclick="downloadPDF()"
-                class="w-full bg-red-600 text-white py-4 px-6 rounded-lg font-medium hover:bg-red-700 transition flex items-center justify-center gap-3 text-lg"
+                class={`w-full ${downloadButtonClasses} py-4 px-6 rounded-lg font-medium transition flex items-center justify-center gap-3 text-lg`}
+                disabled={!hasAnswers}
+                aria-disabled={!hasAnswers}
+                title={downloadButtonTitle}
               >
                 <i class="fas fa-download text-xl"></i>
                 <span>Télécharger le PDF</span>
@@ -1561,7 +1752,17 @@ moduleRoutes.get('/module/:code/download', async (c) => {
           {/* Données pour le PDF */}
           <script dangerouslySetInnerHTML={{__html: `
             const userData = ${JSON.stringify(answersMap)}
-            const moduleName = "${module.title}"
+            const moduleName = ${JSON.stringify(module.title)}
+            const moduleMeta = ${JSON.stringify({ isValidated, validatedAt, lastUpdatedAt, hasAnswers })}
+            
+            function formatDateTime(value) {
+              if (!value) return null
+              const date = new Date(value)
+              if (Number.isNaN(date.getTime())) {
+                return value
+              }
+              return date.toLocaleString('fr-FR')
+            }
             
             function downloadPDF() {
               const { jsPDF } = window.jspdf
