@@ -4233,7 +4233,7 @@ app.post('/api/sic/analyze', async (c) => {
       SET score_global = ?, score_coherence_bmc = ?, analysis_json = ?,
           analysis_timestamp = datetime('now'), impact_matrix_json = ?,
           odd_selected = ?, updated_at = datetime('now')
-      WHERE user_id = ? AND project_id = ? AND module_id = ?
+      WHERE user_id = ? AND module_id = ?
     `).bind(
       analysis.scoreGlobal,
       analysis.scoreCoherenceBmc,
@@ -4241,7 +4241,6 @@ app.post('/api/sic/analyze', async (c) => {
       JSON.stringify(analysis.impactMatrix),
       JSON.stringify(analysis.oddMappings.map(o => o.oddNumber)),
       payload.userId,
-      projectId,
       moduleId
     ).run()
 
