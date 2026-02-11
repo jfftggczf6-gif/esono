@@ -18,6 +18,7 @@ import {
 import { generateMockFeedback, calculateOverallScore, getScoreLabel, getSectionName } from './ai-feedback'
 import { analyzeSIC, generateSicDiagnosticHtml, getSicScoreLabel, SIC_SECTION_LABELS, QUESTION_SECTION_MAP as SIC_QUESTION_MAP, type SicAnalysisResult, type SicSectionScore, ODD_ICONS, ODD_LABELS } from './sic-engine'
 import { generateFullSicDeliverable, type SicDeliverableData } from './sic-deliverable-engine'
+import { generateFullBmcDeliverable, generateBmcDiagnosticHtml, type BmcDeliverableData } from './bmc-deliverable-engine'
 import {
   analyzeInputs, generateInputsDiagnosticHtml, getInputsReadinessLabel,
   INPUT_TAB_ORDER, INPUT_TAB_LABELS, TAB_COACHING, TAB_FIELDS, scoreTab,
@@ -4880,6 +4881,264 @@ moduleRoutes.get('/module/:code/download', async (c) => {
         console.warn('Impossible de parser le content_json du livrable', error)
       }
     }
+
+    // ═══ BMC Module: dedicated download page ═══
+    if (moduleCode === 'mod1_bmc') {
+      // Fetch BMC answers
+      const bmcAnswersRes = await c.env.DB.prepare(`
+        SELECT question_number, user_response FROM questions WHERE progress_id = ? ORDER BY question_number
+      `).bind(progress.id).all()
+      const bmcAnswers = new Map<number, string>()
+      for (const row of (bmcAnswersRes.results ?? []) as any[]) {
+        const r = (row.user_response ?? '').trim()
+        if (r) bmcAnswers.set(Number(row.question_number), r)
+      }
+
+      // Get user & project info
+      const userRow = await c.env.DB.prepare(`SELECT name FROM users WHERE id = ?`).bind(payload.userId).first()
+      const userName = (userRow?.name as string) ?? 'Entrepreneur'
+      let projectName = 'Business Model Canvas'
+
+      // Get project details
+      let projectSector = ''
+      let projectLocation = ''
+      let projectCountry = 'Côte d\'Ivoire'
+      let brandName = ''
+      if (progress.project_id) {
+        try {
+          const proj = await c.env.DB.prepare(`SELECT name, description FROM projects WHERE id = ?`).bind(progress.project_id).first()
+          if (proj?.name && (proj.name as string) !== 'null') {
+            projectName = proj.name as string
+          }
+        } catch {}
+      }
+
+      // Extract brand name and financial data from answers
+      const revenueAnswer = bmcAnswers.get(5) ?? ''
+      const propValeur = bmcAnswers.get(2) ?? ''
+      const brandMatch = (bmcAnswers.get(6) ?? '').match(/marque\s+([A-Z][A-Z\s]+)/i) ?? (propValeur).match(/marque\s+([A-Z][A-Z\s]+)/i)
+      if (brandMatch) brandName = brandMatch[1].trim()
+
+      // Compute BMC score from AI analysis or answers
+      const aiScore = progress.ai_score ? Number(progress.ai_score) : (bmcAnswers.size > 0 ? Math.min(Math.round(bmcAnswers.size / 9 * 80), 95) : 0)
+
+      const bmcDeliverableData: BmcDeliverableData = {
+        companyName: projectName,
+        entrepreneurName: userName,
+        sector: projectSector,
+        location: projectLocation,
+        country: projectCountry,
+        brandName,
+        tagline: '',
+        analysisDate: new Date().toISOString(),
+        answers: bmcAnswers
+      }
+
+      // Score label
+      const bmcScoreLabel = aiScore >= 80 ? { label: 'Excellent', color: 'green' } : aiScore >= 60 ? { label: 'Bon', color: 'blue' } : aiScore >= 40 ? { label: 'À améliorer', color: 'yellow' } : { label: 'Insuffisant', color: 'red' }
+
+      // Render BMC download page
+      return c.html(
+        <html lang="fr">
+          <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>Livrable BMC - {projectName}</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+            <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet" />
+          </head>
+          <body class="bg-slate-50">
+            <nav class="bg-white shadow-sm border-b border-slate-200">
+              <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+                <a href="/dashboard" class="text-indigo-600 hover:text-indigo-700 flex items-center gap-2 font-medium">
+                  <i class="fas fa-arrow-left"></i>
+                  <span>Retour au dashboard</span>
+                </a>
+                <span class="text-xs text-slate-500 flex items-center gap-2">
+                  <i class="fas fa-flag-checkered"></i>
+                  Module 1 · BMC
+                </span>
+              </div>
+            </nav>
+
+            <main class="max-w-6xl mx-auto px-4 py-8 space-y-8">
+              {!isValidated && (
+                <section class="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 text-amber-800">
+                  <div class="flex items-start gap-3">
+                    <span class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-amber-100 text-amber-600">
+                      <i class="fas fa-triangle-exclamation"></i>
+                    </span>
+                    <div>
+                      <h2 class="text-sm font-semibold">Livrable en mode brouillon</h2>
+                      <p class="text-sm">Validez le module pour générer la version officielle du BMC.</p>
+                    </div>
+                  </div>
+                  <a href={`/module/${moduleCode}/validate`} class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold">
+                    <i class="fas fa-check-double"></i>
+                    Passer à la validation
+                  </a>
+                </section>
+              )}
+
+              <header class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <p class="text-xs uppercase tracking-wider text-slate-500">{isValidated ? 'Livrable final' : 'Livrable brouillon'}</p>
+                  <h1 class="text-3xl font-bold text-slate-900">Business Model Canvas</h1>
+                  <p class="mt-2 text-slate-600">Diagnostic expert de votre modèle économique avec scoring, forces, vigilances et recommandations.</p>
+                </div>
+                <div class="flex items-center gap-3 flex-wrap">
+                  <span class={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold ${bmcScoreLabel.color === 'green' ? 'bg-emerald-100 text-emerald-700' : bmcScoreLabel.color === 'blue' ? 'bg-blue-100 text-blue-700' : bmcScoreLabel.color === 'yellow' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                    <i class="fas fa-chart-line"></i>
+                    {aiScore}% — {bmcScoreLabel.label}
+                  </span>
+                  <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold bg-emerald-100 text-emerald-700">
+                    <i class="fas fa-th-large"></i>
+                    {bmcAnswers.size}/9 blocs
+                  </span>
+                </div>
+              </header>
+
+              <section class="grid gap-4 md:grid-cols-2">
+                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                  <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <i class="fas fa-download text-emerald-500"></i>
+                    Livrables disponibles
+                  </h2>
+                  <div class="space-y-3">
+                    <a href="/api/bmc/deliverable?format=full" target="_blank"
+                      class="flex items-center gap-3 p-3 rounded-xl border border-green-300 bg-green-50 hover:bg-green-100 transition ring-2 ring-green-200">
+                      <div class="w-10 h-10 rounded-lg bg-green-600 text-white flex items-center justify-center">
+                        <i class="fas fa-file-lines"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-green-900 text-sm">Livrable BMC Complet</p>
+                        <p class="text-xs text-green-700">Canvas, Diagnostic, SWOT, Forces, Vigilances, Recommandations</p>
+                        <span class="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-bold">
+                          <i class="fas fa-star text-[8px]"></i> RECOMMANDÉ
+                        </span>
+                      </div>
+                    </a>
+                    <a href="/api/bmc/deliverable?format=diagnostic" target="_blank"
+                      class="flex items-center gap-3 p-3 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 transition">
+                      <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                        <i class="fas fa-file-code"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-emerald-900 text-sm">Diagnostic Résumé</p>
+                        <p class="text-xs text-emerald-700">Rapport synthétique avec scores par bloc et alertes</p>
+                      </div>
+                    </a>
+                    <div class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50">
+                      <div class="w-10 h-10 rounded-lg bg-slate-100 text-slate-400 flex items-center justify-center">
+                        <i class="fas fa-file-excel"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-slate-600 text-sm">Excel BMC (9 blocs)</p>
+                        <p class="text-xs text-slate-500">Prochainement disponible</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                  <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <i class="fas fa-chart-bar text-emerald-500"></i>
+                    Blocs BMC renseignés
+                  </h2>
+                  <div class="space-y-3">
+                    {[
+                      { id: 1, label: 'Segments Clients', icon: '👥' },
+                      { id: 2, label: 'Proposition de Valeur', icon: '💎' },
+                      { id: 3, label: 'Canaux', icon: '📦' },
+                      { id: 4, label: 'Relations Clients', icon: '🤝' },
+                      { id: 5, label: 'Flux de Revenus', icon: '💰' },
+                      { id: 6, label: 'Ressources Clés', icon: '🔧' },
+                      { id: 7, label: 'Activités Clés', icon: '⚙️' },
+                      { id: 8, label: 'Partenaires Clés', icon: '🤲' },
+                      { id: 9, label: 'Structure de Coûts', icon: '📊' }
+                    ].map((bloc) => {
+                      const hasAnswer = bmcAnswers.has(bloc.id)
+                      const answerLen = (bmcAnswers.get(bloc.id) ?? '').length
+                      const quality = answerLen > 200 ? 100 : answerLen > 100 ? 75 : answerLen > 30 ? 50 : answerLen > 0 ? 25 : 0
+                      const barColor = quality >= 75 ? '#059669' : quality >= 50 ? '#0284c7' : quality > 0 ? '#d97706' : '#e5e7eb'
+                      return (
+                        <div class="space-y-1" key={`bloc-${bloc.id}`}>
+                          <div class="flex justify-between text-sm">
+                            <span class="font-medium text-slate-700">{bloc.icon} {bloc.label}</span>
+                            <span class="font-bold" style={`color:${barColor}`}>{hasAnswer ? `${quality}%` : '—'}</span>
+                          </div>
+                          <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div class="h-full rounded-full" style={`width:${quality}%;background:${barColor}`}></div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </section>
+
+              {/* Full BMC Deliverable Preview */}
+              <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+                  <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-green-600 text-white flex items-center justify-center text-sm">
+                      <i class="fas fa-file-lines"></i>
+                    </div>
+                    <div>
+                      <h2 class="text-base font-semibold text-slate-900">Aperçu du Livrable BMC Complet</h2>
+                      <p class="text-xs text-slate-500">Canvas, Diagnostic Expert, SWOT, Forces, Vigilances, Plan d'action</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <a href="/api/bmc/deliverable?format=full" target="_blank" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-semibold transition">
+                      <i class="fas fa-external-link-alt"></i>
+                      Ouvrir
+                    </a>
+                    <button onClick="window.frames['bmcFullPreview'].contentWindow.print()" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition">
+                      <i class="fas fa-print"></i>
+                      Imprimer / PDF
+                    </button>
+                  </div>
+                </div>
+                <iframe name="bmcFullPreview" src="/api/bmc/deliverable?format=full" style="width:100%;height:800px;border:none;" title="Livrable BMC Complet"></iframe>
+              </section>
+
+              <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2 mb-4">
+                  <i class="fas fa-rocket text-indigo-500"></i>
+                  Prochaines étapes
+                </h2>
+                <div class="grid gap-4 md:grid-cols-2">
+                  <a href="/module/mod2_sic/video" class="block rounded-2xl border border-slate-200 hover:border-green-300 hover:bg-green-50 transition p-4">
+                    <div class="flex items-center gap-3">
+                      <div class="w-10 h-10 rounded-full bg-green-100 text-green-600 flex items-center justify-center">
+                        <i class="fas fa-leaf"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-slate-900">Module 2 · Social Impact Canvas</p>
+                        <p class="text-sm text-slate-600">Mesurez votre impact social et alignez-vous aux ODD.</p>
+                      </div>
+                    </div>
+                  </a>
+                  <a href="/dashboard" class="block rounded-2xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 transition p-4">
+                    <div class="flex items-center gap-3">
+                      <div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                        <i class="fas fa-home"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-slate-900">Tableau de bord</p>
+                        <p class="text-sm text-slate-600">Revenez au parcours Investment Readiness.</p>
+                      </div>
+                    </div>
+                  </a>
+                </div>
+              </section>
+            </main>
+          </body>
+        </html>
+      )
+    }
+    // ═══ End BMC dedicated download ═══
 
     // ═══ SIC Module: dedicated download page ═══
     if (moduleCode === 'mod2_sic') {

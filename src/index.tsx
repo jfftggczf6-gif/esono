@@ -23,6 +23,7 @@ import {
 import { getScoreLabel, getSectionName } from './ai-feedback'
 import { analyzeSIC, generateSicDiagnosticHtml, getSicScoreLabel, QUESTION_SECTION_MAP, SIC_SECTION_LABELS, type SicAnalysisResult } from './sic-engine'
 import { generateFullSicDeliverable, type SicDeliverableData } from './sic-deliverable-engine'
+import { generateFullBmcDeliverable, generateBmcDiagnosticHtml, type BmcDeliverableData } from './bmc-deliverable-engine'
 import {
   analyzeInputs, generateInputsDiagnosticHtml, getInputsReadinessLabel,
   INPUT_TAB_ORDER, INPUT_TAB_LABELS, TAB_COACHING, TAB_FIELDS, scoreTab,
@@ -4454,6 +4455,143 @@ app.post('/api/sic/deliverable/refresh', async (c) => {
     })
   } catch (error) {
     console.error('SIC refresh error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════
+// Module 1 — BMC Deliverable APIs
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/bmc/deliverable - Get BMC deliverable (HTML)
+app.get('/api/bmc/deliverable', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifie' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const format = c.req.query('format')?.trim() || 'html'
+    const db = c.env.DB
+
+    const module = await db.prepare(`SELECT id FROM modules WHERE module_code = 'mod1_bmc'`).first()
+    if (!module) return c.json({ error: 'Module BMC non trouve' }, 404)
+
+    const progress = await db.prepare(`
+      SELECT id, project_id, ai_score, ai_feedback_json FROM progress WHERE user_id = ? AND module_id = ?
+    `).bind(payload.userId, module.id).first()
+    if (!progress) return c.json({ error: 'Pas de progression BMC' }, 404)
+
+    // Get BMC answers
+    const answersResult = await db.prepare(`
+      SELECT question_number, user_response FROM questions WHERE progress_id = ? ORDER BY question_number
+    `).bind(progress.id).all()
+
+    const bmcAnswers = new Map<number, string>()
+    for (const row of (answersResult.results ?? [])) {
+      const qNum = Number((row as any).question_number)
+      const resp = (row as any).user_response as string ?? ''
+      if (resp.trim()) bmcAnswers.set(qNum, resp.trim())
+    }
+
+    if (bmcAnswers.size === 0) {
+      return c.json({ error: 'Aucune reponse BMC. Remplissez d\'abord le questionnaire.' }, 400)
+    }
+
+    // Get user info
+    const user = await db.prepare(`SELECT name FROM users WHERE id = ?`).bind(payload.userId).first()
+    const userName = (user?.name as string) ?? 'Entrepreneur'
+
+    // Get project info
+    let projectName = 'Mon Projet'
+    let projectSector = ''
+    let projectLocation = ''
+    let projectCountry = 'Côte d\'Ivoire'
+    if (progress.project_id) {
+      try {
+        const project = await db.prepare(`SELECT name, description FROM projects WHERE id = ?`).bind(progress.project_id).first()
+        if (project?.name) projectName = project.name as string
+      } catch {}
+    }
+
+    const deliverableData: BmcDeliverableData = {
+      companyName: projectName,
+      entrepreneurName: userName,
+      sector: projectSector,
+      location: projectLocation,
+      country: projectCountry,
+      brandName: '',
+      tagline: '',
+      analysisDate: new Date().toISOString(),
+      answers: bmcAnswers
+    }
+
+    if (format === 'full') {
+      const fullHtml = generateFullBmcDeliverable(deliverableData)
+      return c.html(fullHtml)
+    }
+
+    if (format === 'diagnostic' || format === 'html') {
+      const diagHtml = generateBmcDiagnosticHtml(deliverableData)
+      return c.html(diagHtml)
+    }
+
+    // JSON format
+    return c.json({
+      success: true,
+      user: userName,
+      project: projectName,
+      answersCount: bmcAnswers.size
+    })
+  } catch (error) {
+    console.error('BMC deliverable error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+// POST /api/bmc/deliverable/refresh - Regenerate BMC analysis and store
+app.post('/api/bmc/deliverable/refresh', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifie' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const db = c.env.DB
+
+    const module = await db.prepare(`SELECT id FROM modules WHERE module_code = 'mod1_bmc'`).first()
+    if (!module) return c.json({ error: 'Module BMC non trouve' }, 404)
+
+    const progress = await db.prepare(`
+      SELECT id, project_id FROM progress WHERE user_id = ? AND module_id = ?
+    `).bind(payload.userId, module.id).first()
+    if (!progress) return c.json({ error: 'Pas de progression BMC' }, 404)
+
+    const answersResult = await db.prepare(`
+      SELECT question_number, user_response FROM questions WHERE progress_id = ? ORDER BY question_number
+    `).bind(progress.id).all()
+
+    const bmcAnswers = new Map<number, string>()
+    for (const row of (answersResult.results ?? [])) {
+      const qNum = Number((row as any).question_number)
+      const resp = (row as any).user_response as string ?? ''
+      if (resp.trim()) bmcAnswers.set(qNum, resp.trim())
+    }
+
+    if (bmcAnswers.size === 0) {
+      return c.json({ error: 'Aucune reponse BMC' }, 400)
+    }
+
+    return c.json({
+      success: true,
+      refreshedAt: new Date().toISOString(),
+      answersCount: bmcAnswers.size,
+      message: 'BMC deliverable refreshed'
+    })
+  } catch (error) {
+    console.error('BMC refresh error:', error)
     return c.json({ error: 'Erreur serveur' }, 500)
   }
 })
