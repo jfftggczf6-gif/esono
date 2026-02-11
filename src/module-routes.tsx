@@ -17,6 +17,7 @@ import {
 } from './module-content'
 import { generateMockFeedback, calculateOverallScore, getScoreLabel, getSectionName } from './ai-feedback'
 import { analyzeSIC, generateSicDiagnosticHtml, getSicScoreLabel, SIC_SECTION_LABELS, QUESTION_SECTION_MAP as SIC_QUESTION_MAP, type SicAnalysisResult, type SicSectionScore, ODD_ICONS, ODD_LABELS } from './sic-engine'
+import { generateFullSicDeliverable, type SicDeliverableData } from './sic-deliverable-engine'
 import {
   analyzeInputs, generateInputsDiagnosticHtml, getInputsReadinessLabel,
   INPUT_TAB_ORDER, INPUT_TAB_LABELS, TAB_COACHING, TAB_FIELDS, scoreTab,
@@ -5006,14 +5007,27 @@ moduleRoutes.get('/module/:code/download', async (c) => {
                     Livrables disponibles
                   </h2>
                   <div class="space-y-3">
+                    <a href={`/api/sic/deliverable?format=full`} target="_blank"
+                      class="flex items-center gap-3 p-3 rounded-xl border border-green-300 bg-green-50 hover:bg-green-100 transition ring-2 ring-green-200">
+                      <div class="w-10 h-10 rounded-lg bg-green-600 text-white flex items-center justify-center">
+                        <i class="fas fa-file-lines"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-green-900 text-sm">Livrable SIC Complet</p>
+                        <p class="text-xs text-green-700">SWOT, ODD, Théorie du Changement, Recommandations...</p>
+                        <span class="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-bold">
+                          <i class="fas fa-star text-[8px]"></i> RECOMMANDÉ
+                        </span>
+                      </div>
+                    </a>
                     <a href={`/api/sic/deliverable`} target="_blank"
                       class="flex items-center gap-3 p-3 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 transition">
                       <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
                         <i class="fas fa-file-code"></i>
                       </div>
                       <div>
-                        <p class="font-semibold text-emerald-900 text-sm">Diagnostic HTML</p>
-                        <p class="text-xs text-emerald-700">Rapport interactif avec visualisations ODD</p>
+                        <p class="font-semibold text-emerald-900 text-sm">Diagnostic Résumé</p>
+                        <p class="text-xs text-emerald-700">Rapport synthétique avec scores et alertes</p>
                       </div>
                     </a>
                     <div class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50">
@@ -5095,6 +5109,32 @@ moduleRoutes.get('/module/:code/download', async (c) => {
                   </ul>
                 </section>
               )}
+
+              {/* Full SIC Deliverable Preview */}
+              <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+                  <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-green-600 text-white flex items-center justify-center text-sm">
+                      <i class="fas fa-file-lines"></i>
+                    </div>
+                    <div>
+                      <h2 class="text-base font-semibold text-slate-900">Aperçu du Livrable SIC Complet</h2>
+                      <p class="text-xs text-slate-500">SWOT, ODD détaillés, Théorie du Changement, Recommandations, Maturité</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <a href={`/api/sic/deliverable?format=full`} target="_blank" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-semibold transition">
+                      <i class="fas fa-external-link-alt"></i>
+                      Ouvrir
+                    </a>
+                    <button onClick="window.frames['sicFullPreview'].contentWindow.print()" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition">
+                      <i class="fas fa-print"></i>
+                      Imprimer / PDF
+                    </button>
+                  </div>
+                </div>
+                <iframe name="sicFullPreview" src={`/api/sic/deliverable?format=full`} style="width:100%;height:800px;border:none;" title="Livrable SIC Complet"></iframe>
+              </section>
 
               <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
                 <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2 mb-4">

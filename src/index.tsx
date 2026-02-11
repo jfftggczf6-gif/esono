@@ -22,6 +22,7 @@ import {
 } from './module-content'
 import { getScoreLabel, getSectionName } from './ai-feedback'
 import { analyzeSIC, generateSicDiagnosticHtml, getSicScoreLabel, QUESTION_SECTION_MAP, SIC_SECTION_LABELS, type SicAnalysisResult } from './sic-engine'
+import { generateFullSicDeliverable, type SicDeliverableData } from './sic-deliverable-engine'
 import {
   analyzeInputs, generateInputsDiagnosticHtml, getInputsReadinessLabel,
   INPUT_TAB_ORDER, INPUT_TAB_LABELS, TAB_COACHING, TAB_FIELDS, scoreTab,
@@ -4314,6 +4315,55 @@ app.get('/api/sic/deliverable', async (c) => {
     // Get project info
     const project = await db.prepare(`SELECT name FROM projects WHERE id = ?`).bind(progress.project_id).first()
     const projectName = (project?.name as string) ?? 'Mon Projet'
+
+    if (format === 'full') {
+      // Full professional deliverable (matching SIC_GOTCHE_FINAL.pdf format)
+      // Get additional user data for the full deliverable
+      const answersResult = await db.prepare(`
+        SELECT question_number, user_response FROM questions WHERE progress_id = ? ORDER BY question_number
+      `).bind(progress.id).all()
+
+      const sicAnswers = new Map<number, string>()
+      for (const row of (answersResult.results ?? [])) {
+        const qNum = Number((row as any).question_number)
+        const resp = (row as any).user_response as string ?? ''
+        if (resp.trim()) sicAnswers.set(qNum, resp.trim())
+      }
+
+      // Get BMC answers for coherence
+      let bmcAnswers: Map<number, string> | undefined
+      const bmcModule = await db.prepare(`SELECT id FROM modules WHERE module_code = 'mod1_bmc'`).first()
+      if (bmcModule) {
+        const bmcProgress = await db.prepare(`SELECT id FROM progress WHERE user_id = ? AND module_id = ?`).bind(payload.userId, bmcModule.id).first()
+        if (bmcProgress) {
+          const bmcRes = await db.prepare(`SELECT question_number, user_response FROM questions WHERE progress_id = ? ORDER BY question_number`).bind(bmcProgress.id).all()
+          bmcAnswers = new Map<number, string>()
+          for (const row of (bmcRes.results ?? [])) {
+            const r = (row as any).user_response as string ?? ''
+            if (r.trim()) bmcAnswers.set(Number((row as any).question_number), r.trim())
+          }
+        }
+      }
+
+      // Get project details
+      const projectDetails = progress.project_id
+        ? await db.prepare(`SELECT name, sector, location, country FROM projects WHERE id = ?`).bind(progress.project_id).first()
+        : null
+
+      const deliverableData: SicDeliverableData = {
+        companyName: (projectDetails?.name as string) ?? projectName,
+        entrepreneurName: userName,
+        sector: (projectDetails?.sector as string) ?? '',
+        location: (projectDetails?.location as string) ?? '',
+        country: (projectDetails?.country as string) ?? 'Côte d\'Ivoire',
+        analysis,
+        answers: sicAnswers,
+        bmcAnswers
+      }
+
+      const fullHtml = generateFullSicDeliverable(deliverableData)
+      return c.html(fullHtml)
+    }
 
     if (format === 'html') {
       const html = generateSicDiagnosticHtml(analysis, projectName, userName)
