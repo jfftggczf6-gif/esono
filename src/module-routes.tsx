@@ -1,27 +1,114 @@
 import { Hono } from 'hono'
 import { getCookie } from 'hono/cookie'
 import { verifyToken } from './auth'
-import { businessModelCanvasContent, getModuleContent } from './module-content'
-import { generateMockFeedback, calculateOverallScore, getScoreLabel } from './ai-feedback'
+import {
+  businessModelCanvasContent,
+  financialAnalysisContent,
+  getGuidedQuestionsForModule,
+  getLearningModuleDefinition,
+  getLearningStageKeysForModule,
+  getModuleContentByCode,
+  getModuleVariant,
+  getStageRouteForModule,
+  LEARNING_STAGE_SEQUENCE,
+  LearningStageKey,
+  ModuleContent,
+  ModuleVariant
+} from './module-content'
+import { generateMockFeedback, calculateOverallScore, getScoreLabel, getSectionName } from './ai-feedback'
+
 
 type Bindings = {
   DB: D1Database
 }
 
-const formatDateTime = (value: string | null | undefined) => {
-  if (!value) return null
-  try {
-    return new Date(value).toLocaleString('fr-FR', {
-      dateStyle: 'long',
-      timeStyle: 'short'
-    })
-  } catch (error) {
-    console.warn('formatDateTime error:', error)
-    return value ?? null
-  }
+export const moduleRoutes = new Hono<{ Bindings: Bindings }>()
+
+const MIN_VALIDATION_SCORE = 60
+
+const MODULE_CONTENT_FALLBACK: Record<ModuleVariant, ModuleContent> = {
+  canvas: businessModelCanvasContent,
+  finance: financialAnalysisContent
 }
 
-type CanvasSectionDisplay = {
+const getModuleContent = (moduleCode: string): ModuleContent | null => {
+  const directContent = getModuleContentByCode(moduleCode)
+  if (directContent) {
+    return directContent
+  }
+
+  const variant = getModuleVariant(moduleCode)
+  return MODULE_CONTENT_FALLBACK[variant] ?? null
+}
+
+const ANALYSIS_PALETTES = {
+  green: {
+    gradient: 'from-green-500 to-green-600',
+    badge: 'bg-green-100',
+    badgeText: 'text-green-800',
+    text: 'text-green-600',
+    progress: 'bg-green-500',
+    border: 'border-green-200',
+    background: 'bg-green-50',
+    icon: 'text-green-500'
+  },
+  blue: {
+    gradient: 'from-blue-500 to-blue-600',
+    badge: 'bg-blue-100',
+    badgeText: 'text-blue-800',
+    text: 'text-blue-600',
+    progress: 'bg-blue-500',
+    border: 'border-blue-200',
+    background: 'bg-blue-50',
+    icon: 'text-blue-500'
+  },
+  yellow: {
+    gradient: 'from-yellow-400 to-yellow-500',
+    badge: 'bg-yellow-100',
+    badgeText: 'text-yellow-800',
+    text: 'text-yellow-600',
+    progress: 'bg-yellow-400',
+    border: 'border-yellow-200',
+    background: 'bg-yellow-50',
+    icon: 'text-yellow-500'
+  },
+  red: {
+    gradient: 'from-red-500 to-red-600',
+    badge: 'bg-red-100',
+    badgeText: 'text-red-800',
+    text: 'text-red-600',
+    progress: 'bg-red-500',
+    border: 'border-red-200',
+    background: 'bg-red-50',
+    icon: 'text-red-500'
+  }
+} as const
+
+export type AnalysisPaletteKey = keyof typeof ANALYSIS_PALETTES
+
+export const getAnalysisPalette = (paletteKey: string) =>
+  ANALYSIS_PALETTES[(paletteKey as AnalysisPaletteKey)] ?? ANALYSIS_PALETTES.blue
+
+const parseDateValue = (value?: string | null) => {
+  if (!value) return null
+  const normalized = value.includes('T') ? value : value.replace(' ', 'T')
+  const withTimezone = normalized.endsWith('Z') ? normalized : `${normalized}Z`
+  const date = new Date(withTimezone)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+const formatDateValue = (value?: string | null, fallback = 'Non disponible') => {
+  const date = parseDateValue(value)
+  return date
+    ? date.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })
+    : fallback
+}
+
+const getGuidedQuestions = (moduleCode: string) => {
+  return getGuidedQuestionsForModule(moduleCode)
+}
+
+type CanvasSection = {
   order: number
   questionId: number
   section: string
@@ -30,87 +117,773 @@ type CanvasSectionDisplay = {
   score: number | null
   scoreLabel: string
   suggestions: string[]
-  clarifications: string[]
+  questions: string[]
 }
 
-const normalizeFeedbackEntries = (value: unknown): string[] => {
-  if (!value) return []
-  if (Array.isArray(value)) {
-    return value
-      .map((entry) => {
-        if (!entry) return ''
-        if (typeof entry === 'string') return entry.trim()
-        if (typeof (entry as any).message === 'string') return (entry as any).message.trim()
-        return String(entry ?? '').trim()
-      })
-      .filter((item) => item.length > 0)
+const SCORE_BADGE_STYLES = {
+  Excellent: { badge: 'bg-green-100 text-green-700', icon: 'fas fa-star' },
+  Bien: { badge: 'bg-blue-100 text-blue-700', icon: 'fas fa-thumbs-up' },
+  "À améliorer": { badge: 'bg-yellow-100 text-yellow-700', icon: 'fas fa-lightbulb' },
+  Insuffisant: { badge: 'bg-red-100 text-red-700', icon: 'fas fa-triangle-exclamation' },
+  default: { badge: 'bg-gray-100 text-gray-700', icon: 'fas fa-circle-info' }
+} as const
+
+const SCORE_TONES = {
+  Excellent: {
+    barColor: 'var(--esono-success)',
+    badgeBackground: 'var(--esono-success-light)',
+    badgeColor: 'var(--esono-success)',
+    borderColor: 'rgba(5, 150, 105, 0.3)',
+    backgroundColor: 'rgba(5, 150, 105, 0.08)',
+    iconColor: 'var(--esono-success)'
+  },
+  Bien: {
+    barColor: 'var(--esono-info)',
+    badgeBackground: 'var(--esono-info-light)',
+    badgeColor: 'var(--esono-info)',
+    borderColor: 'rgba(2, 132, 199, 0.3)',
+    backgroundColor: 'rgba(2, 132, 199, 0.08)',
+    iconColor: 'var(--esono-info)'
+  },
+  "À améliorer": {
+    barColor: 'var(--esono-warning)',
+    badgeBackground: 'var(--esono-warning-light)',
+    badgeColor: 'var(--esono-warning)',
+    borderColor: 'rgba(217, 119, 6, 0.3)',
+    backgroundColor: 'rgba(217, 119, 6, 0.08)',
+    iconColor: 'var(--esono-warning)'
+  },
+  Insuffisant: {
+    barColor: 'var(--esono-danger)',
+    badgeBackground: 'var(--esono-danger-light)',
+    badgeColor: 'var(--esono-danger)',
+    borderColor: 'rgba(220, 38, 38, 0.3)',
+    backgroundColor: 'rgba(220, 38, 38, 0.08)',
+    iconColor: 'var(--esono-danger)'
+  },
+  default: {
+    barColor: 'var(--esono-secondary)',
+    badgeBackground: 'var(--esono-gray-100)',
+    badgeColor: 'var(--esono-secondary)',
+    borderColor: 'rgba(58, 95, 149, 0.3)',
+    backgroundColor: 'rgba(58, 95, 149, 0.08)',
+    iconColor: 'var(--esono-secondary)'
   }
-  if (typeof value === 'string') {
-    return value
-      .split(/[\n•-]/)
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0)
-  }
-  return []
+} as const
+
+type ScoreToneKey = keyof typeof SCORE_TONES
+
+const getScoreToneStyles = (label: string) =>
+  SCORE_TONES[(label as ScoreToneKey)] ?? SCORE_TONES.default
+
+type NavItem = {
+  id: string
+  label: string
+  icon: string
+  href: string
 }
 
-const parseFeedbackPayload = (raw: unknown) => {
-  const base = {
-    strengths: [] as string[],
-    suggestions: [] as string[],
-    questions: [] as string[],
-    percentage: null as number | null,
-    scoreLabel: 'Analyse IA à compléter'
+type BreadcrumbItem = {
+  label: string
+  href?: string
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { id: 'dashboard', label: 'Tableau de bord', icon: 'fas fa-chart-line', href: '/dashboard' },
+  { id: 'mod1_bmc', label: '1. BMC', icon: 'fas fa-diagram-project', href: '/module/mod1_bmc' },
+  { id: 'mod2_sic', label: '2. Impact Social', icon: 'fas fa-hand-holding-heart', href: '/module/mod2_sic' },
+  { id: 'mod3_inputs', label: '3. Inputs Financiers', icon: 'fas fa-calculator', href: '/module/mod3_inputs' },
+  { id: 'mod4_framework', label: '4. Framework', icon: 'fas fa-chart-bar', href: '/module/mod4_framework' },
+  { id: 'mod5_diagnostic', label: '5. Diagnostic', icon: 'fas fa-stethoscope', href: '/module/mod5_diagnostic' },
+  { id: 'mod6_ovo', label: '6. Plan OVO', icon: 'fas fa-file-excel', href: '/module/mod6_ovo' },
+  { id: 'mod7_business_plan', label: '7. Business Plan', icon: 'fas fa-file-word', href: '/module/mod7_business_plan' },
+  { id: 'mod8_odd', label: '8. ODD', icon: 'fas fa-globe-africa', href: '/module/mod8_odd' },
+  { id: 'livrables', label: 'Livrables', icon: 'fas fa-download', href: '/livrables' }
+]
+
+const FINANCE_NAV_ITEMS: NavItem[] = [
+  { id: 'dashboard', label: 'Tableau de bord', icon: 'fas fa-chart-line', href: '/dashboard' },
+  { id: 'mod3_inputs', label: '3. Inputs Financiers', icon: 'fas fa-calculator', href: '/module/mod3_inputs' },
+  { id: 'module_finance_inputs', label: 'Saisie données', icon: 'fas fa-keyboard', href: '/module/mod3_inputs/inputs' },
+  { id: 'module_finance_analysis', label: 'Analyse IA', icon: 'fas fa-robot', href: '/module/mod3_inputs/analysis' },
+  { id: 'module_finance_validation', label: 'Validation', icon: 'fas fa-badge-check', href: '/module/mod3_inputs/validate' },
+  { id: 'module_finance_deliverable', label: 'Livrable', icon: 'fas fa-file-signature', href: '/module/mod3_inputs/download' },
+  { id: 'livrables', label: 'Livrables', icon: 'fas fa-download', href: '/livrables' }
+]
+
+const ensureUserDefaultProject = async (db: D1Database, userId: number): Promise<number | null> => {
+  const existing = await db.prepare(`
+    SELECT id
+    FROM projects
+    WHERE user_id = ?
+    ORDER BY created_at ASC
+    LIMIT 1
+  `).bind(userId).first()
+
+  if (existing?.id) {
+    return Number(existing.id)
   }
 
+  const result = await db.prepare(`
+    INSERT INTO projects (user_id, name, description)
+    VALUES (?, ?, ?)
+  `).bind(userId, 'Projet principal', 'Projet généré automatiquement').run()
+
+  return typeof result.meta.last_row_id === 'number' ? result.meta.last_row_id : null
+}
+
+const ensureProgressRecord = async (db: D1Database, userId: number, moduleId: number) => {
+  const existing = await db.prepare(`
+    SELECT id, project_id, status
+    FROM progress
+    WHERE user_id = ? AND module_id = ?
+    LIMIT 1
+  `).bind(userId, moduleId).first()
+
+  if (existing?.id) {
+    const progressId = Number(existing.id)
+    let projectId = existing.project_id !== undefined && existing.project_id !== null ? Number(existing.project_id) : null
+
+    if (!projectId) {
+      projectId = await ensureUserDefaultProject(db, userId)
+      if (projectId) {
+        await db.prepare(`
+          UPDATE progress
+          SET project_id = ?
+          WHERE id = ?
+        `).bind(projectId, progressId).run()
+      }
+    }
+
+    return {
+      id: progressId,
+      project_id: projectId,
+      status: typeof existing.status === 'string' ? existing.status : null
+    }
+  }
+
+  const projectId = await ensureUserDefaultProject(db, userId)
+  const result = await db.prepare(`
+    INSERT INTO progress (
+      user_id,
+      project_id,
+      module_id,
+      status,
+      started_at,
+      updated_at,
+      created_at
+    ) VALUES (?, ?, ?, 'in_progress', datetime('now'), datetime('now'), datetime('now'))
+  `).bind(userId, projectId, moduleId).run()
+
+  return {
+    id: Number(result.meta.last_row_id),
+    project_id: projectId,
+    status: 'in_progress'
+  }
+}
+
+const getFinancialInputsRow = async (db: D1Database, userId: number, moduleId: number) => {
+  const row = await db.prepare(`
+    SELECT *
+    FROM financial_inputs
+    WHERE user_id = ? AND module_id = ?
+    LIMIT 1
+  `).bind(userId, moduleId).first()
+
+  return row ? (row as Record<string, unknown>) : null
+}
+
+type FinancialFieldType = 'currency' | 'percent' | 'number' | 'text' | 'textarea'
+
+type FinancialFieldConfig = {
+  key: string
+  label: string
+  type: FinancialFieldType
+  placeholder?: string
+  hint?: string
+}
+
+type FinancialSectionConfig = {
+  id: string
+  title: string
+  icon: string
+  description: string
+  fields: FinancialFieldConfig[]
+}
+
+const FINANCIAL_SECTIONS: FinancialSectionConfig[] = [
+  {
+    id: 'revenues',
+    title: "Chiffre d'affaires & marges",
+    icon: 'fas fa-chart-line',
+    description: 'Structurez vos revenus et calculs de marge brute.',
+    fields: [
+      { key: 'period_label', label: 'Période analysée', type: 'text', placeholder: 'Ex : Janvier - Décembre 2025' },
+      { key: 'currency', label: 'Devise principale', type: 'text', placeholder: 'Ex : XOF, EUR, USD', hint: 'Code ISO sur 3 lettres.' },
+      { key: 'revenue_total', label: "Chiffre d'affaires total", type: 'currency', placeholder: 'Ex : 18500000' },
+      { key: 'revenue_recurring', label: 'Revenus récurrents', type: 'currency', placeholder: 'Ex : 12500000' },
+      { key: 'revenue_one_time', label: 'Revenus ponctuels', type: 'currency', placeholder: 'Ex : 6000000' },
+      { key: 'cogs_total', label: 'Coûts variables (COGS)', type: 'currency', placeholder: 'Ex : 7200000' },
+      { key: 'gross_margin_pct', label: 'Marge brute (%)', type: 'percent', placeholder: 'Ex : 58' }
+    ]
+  },
+  {
+    id: 'costs',
+    title: 'Structure de coûts & dépenses',
+    icon: 'fas fa-wallet',
+    description: 'Précisez vos principaux postes de dépenses fixes et variables.',
+    fields: [
+      { key: 'operating_expenses', label: 'Charges opérationnelles', type: 'currency', placeholder: 'Ex : 4500000' },
+      { key: 'payroll_expenses', label: 'Masse salariale', type: 'currency', placeholder: 'Ex : 3200000' },
+      { key: 'marketing_expenses', label: 'Marketing & acquisition', type: 'currency', placeholder: 'Ex : 2100000' },
+      { key: 'other_expenses', label: 'Autres charges', type: 'currency', placeholder: 'Ex : 900000' }
+    ]
+  },
+  {
+    id: 'profitability',
+    title: 'Rentabilité & performance',
+    icon: 'fas fa-chart-pie',
+    description: 'Mesurez la profitabilité opérationnelle de votre activité.',
+    fields: [
+      { key: 'ebitda', label: 'EBITDA', type: 'currency', placeholder: 'Ex : 2100000' },
+      { key: 'net_income', label: 'Résultat net', type: 'currency', placeholder: 'Ex : 1250000' }
+    ]
+  },
+  {
+    id: 'cash',
+    title: 'Trésorerie & dette',
+    icon: 'fas fa-piggy-bank',
+    description: 'Évaluez votre trésorerie disponible et la pression liée à la dette.',
+    fields: [
+      { key: 'cash_on_hand', label: 'Trésorerie disponible', type: 'currency', placeholder: 'Ex : 9500000' },
+      { key: 'runway_months', label: 'Runway (mois)', type: 'number', placeholder: 'Ex : 7.5' },
+      { key: 'debt_total', label: 'Dette totale', type: 'currency', placeholder: 'Ex : 6000000' },
+      { key: 'debt_service', label: 'Service de la dette (mensuel)', type: 'currency', placeholder: 'Ex : 350000' }
+    ]
+  },
+  {
+    id: 'unit',
+    title: 'Unit Economics & notes',
+    icon: 'fas fa-gauge-high',
+    description: 'Suivez vos indicateurs CAC, LTV et hypothèses clés.',
+    fields: [
+      { key: 'ltv', label: 'LTV (valeur vie client)', type: 'currency', placeholder: 'Ex : 168000' },
+      { key: 'cac', label: "CAC (coût d'acquisition)", type: 'currency', placeholder: 'Ex : 42000' },
+      { key: 'arpu', label: 'ARPU / panier moyen', type: 'currency', placeholder: 'Ex : 52000' },
+      { key: 'notes', label: 'Notes et hypothèses', type: 'textarea', placeholder: 'Hypothèses clés, saisonnalité, éléments à investiguer.' }
+    ]
+  }
+]
+
+const STAGE_LABEL_FALLBACKS: Record<LearningStageKey, string> = {
+  microLearning: 'Micro-learning',
+  quiz: 'Quiz',
+  inputs: 'Inputs',
+  analysis: 'Analyse IA',
+  iteration: 'Itération',
+  validation: 'Validation',
+  deliverable: 'Livrable'
+}
+
+const STAGE_ICON_MAP: Record<LearningStageKey, string> = {
+  microLearning: 'fas fa-circle-play',
+  quiz: 'fas fa-clipboard-check',
+  inputs: 'fas fa-pen-to-square',
+  analysis: 'fas fa-robot',
+  iteration: 'fas fa-repeat',
+  validation: 'fas fa-badge-check',
+  deliverable: 'fas fa-file-signature'
+}
+
+const getStageNavId = (moduleCode: string, stage: LearningStageKey) => `module_${moduleCode}_${stage}`
+
+const buildNavItemsForModule = (moduleCode: string): NavItem[] | null => {
+  const definition = getLearningModuleDefinition(moduleCode)
+  const stageKeys = getLearningStageKeysForModule(moduleCode)
+
+  if (!definition || stageKeys.length === 0) {
+    return null
+  }
+
+  const stageNavItems = stageKeys.map((stage) => {
+    const stageDefinition = definition.flow?.[stage]
+    return {
+      id: getStageNavId(moduleCode, stage),
+      label: stageDefinition?.label ?? STAGE_LABEL_FALLBACKS[stage],
+      icon: STAGE_ICON_MAP[stage] ?? 'fas fa-circle',
+      href: getStageRouteForModule(moduleCode, stage)
+    }
+  })
+
+  return [
+    { id: 'dashboard', label: 'Tableau de bord', icon: 'fas fa-chart-line', href: '/dashboard' },
+    ...stageNavItems
+  ]
+}
+
+const resolveNavigationForStage = (moduleCode: string, stage?: LearningStageKey) => {
+  const navItems = buildNavItemsForModule(moduleCode)
+
+  if (!navItems) {
+    const variant = getModuleVariant(moduleCode)
+
+    const legacyStageMapping: Partial<Record<LearningStageKey, string>> = variant === 'finance'
+      ? {
+          microLearning: 'module_finance_overview',
+          quiz: 'module_finance_overview',
+          inputs: 'module_finance_inputs',
+          analysis: 'module_finance_analysis',
+          iteration: 'module_finance_analysis',
+          validation: 'module_finance_validation',
+          deliverable: 'module_finance_deliverable'
+        }
+      : {
+          microLearning: 'module_overview',
+          quiz: 'module_overview',
+          inputs: 'module_overview',
+          analysis: 'module_analysis',
+          iteration: 'module_analysis',
+          validation: 'module_validation',
+          deliverable: 'module_deliverable'
+        }
+
+    return {
+      navItems: variant === 'finance' ? FINANCE_NAV_ITEMS : undefined,
+      activeNav: stage ? legacyStageMapping[stage] ?? (variant === 'finance' ? 'module_finance_overview' : 'module_overview') : (variant === 'finance' ? 'module_finance_overview' : 'module_overview')
+    }
+  }
+
+  const availableStages = getLearningStageKeysForModule(moduleCode)
+  const resolvedStage = stage && availableStages.includes(stage)
+    ? stage
+    : availableStages[0] ?? 'microLearning'
+
+  return {
+    navItems,
+    activeNav: getStageNavId(moduleCode, resolvedStage)
+  }
+}
+
+type ActivityFieldConfig = {
+  key: string
+  label: string
+  placeholder?: string
+  hint?: string
+  rows?: number
+}
+
+type ActivitySectionConfig = {
+  id: string
+  title: string
+  icon: string
+  description: string
+  fields: ActivityFieldConfig[]
+}
+
+const ACTIVITY_INPUT_SECTIONS: ActivitySectionConfig[] = [
+  {
+    id: 'vision-mission',
+    title: 'Vision & mission',
+    icon: 'fas fa-bullseye',
+    description: 'Clarifiez votre ambition et ce que vous réalisez au quotidien.',
+    fields: [
+      {
+        key: 'vision',
+        label: 'Vision',
+        placeholder: 'Vision : Offrir un accès universel à l’énergie solaire hors réseau en Afrique de l’Ouest.',
+        hint: 'Décrivez l’impact à 5-10 ans que vous visez.'
+      },
+      {
+        key: 'mission',
+        label: 'Mission',
+        placeholder: 'Mission : Concevoir et distribuer des kits solaires abordables via un réseau de revendeurs ruraux.',
+        hint: 'Explique ce que vous faites chaque jour pour atteindre votre vision.'
+      }
+    ]
+  },
+  {
+    id: 'problem-solution',
+    title: 'Problème client & solution',
+    icon: 'fas fa-lightbulb',
+    description: 'Présentez le problème critique et votre réponse unique.',
+    fields: [
+      {
+        key: 'problem_statement',
+        label: 'Problème client',
+        placeholder: '60 % des agriculteurs perdent 25 % de leur récolte faute de chaîne du froid...'
+      },
+      {
+        key: 'solution',
+        label: 'Solution proposée',
+        placeholder: 'Plateforme SaaS multi-canal qui automatise la collecte de données et envoie des recommandations...'
+      },
+      {
+        key: 'differentiation',
+        label: 'Différenciation',
+        placeholder: 'Comparatif : Nous – abonnement 15 €/mois, déploiement en 48h. Concurrence A – frais initiaux 200 €...'
+      }
+    ]
+  },
+  {
+    id: 'market',
+    title: 'Marché & clients',
+    icon: 'fas fa-chart-area',
+    description: 'Identifiez précisément vos segments et la taille de marché.',
+    fields: [
+      {
+        key: 'customer_segments',
+        label: 'Segments clients',
+        placeholder: '100 000 PME agro en Côte d’Ivoire. Cible initiale : coopératives de 50-200 membres dans 3 régions.'
+      },
+      {
+        key: 'market_size',
+        label: 'Taille de marché (TAM/SAM/SOM)',
+        placeholder: 'TAM 450 M€ ; SAM 22 M€ ; SOM ciblé 4,5 M€ sur 24 mois.'
+      },
+      {
+        key: 'market_trends',
+        label: 'Tendances & dynamiques',
+        placeholder: 'Digitalisation rapide du secteur, politiques publiques favorables, hausse des prix énergétiques.'
+      }
+    ]
+  },
+  {
+    id: 'competition-traction',
+    title: 'Concurrence, traction & preuves',
+    icon: 'fas fa-trophy',
+    description: 'Montrez votre avantage compétitif et vos preuves terrain.',
+    fields: [
+      {
+        key: 'competition',
+        label: 'Concurrence & alternatives',
+        placeholder: 'Comparatif sur prix/déploiement/expérience. Aucun acteur ne propose de support en langues locales.'
+      },
+      {
+        key: 'traction',
+        label: 'Traction',
+        placeholder: '1 200 utilisateurs actifs/mois, churn 3 %, 4 contrats cadres avec ONG, 92 % de satisfaction.'
+      },
+      {
+        key: 'proof_points',
+        label: 'Preuves & indicateurs',
+        placeholder: 'Prix d’innovation 2024, 3 études d’impact, certifications qualité ISO 9001.'
+      }
+    ]
+  },
+  {
+    id: 'business-model',
+    title: "Modèle économique & go-to-market",
+    icon: 'fas fa-diagram-project',
+    description: 'Expliquez comment vous gagnez de l’argent et atteignez vos clients.',
+    fields: [
+      {
+        key: 'business_model',
+        label: "Modèle d'affaires",
+        placeholder: 'Abonnement SaaS + commissions marketplace + services premium.'
+      },
+      {
+        key: 'revenue_streams',
+        label: 'Sources de revenus',
+        placeholder: 'Abonnement 49 €/mois, commission 3 %, services de formation 500 €/session.'
+      },
+      {
+        key: 'pricing_strategy',
+        label: 'Stratégie de prix',
+        placeholder: 'Tarification dégressive selon volume, bundle annuel avec remise 15 %.'
+      },
+      {
+        key: 'go_to_market',
+        label: 'Go-to-market',
+        placeholder: '60 % inbound contenu, 40 % intégrateurs ; cycle de vente moyen 21 jours.'
+      }
+    ]
+  },
+  {
+    id: 'team',
+    title: 'Équipe & gouvernance',
+    icon: 'fas fa-users',
+    description: 'Montrez l’adéquation équipe / ambition et les besoins clés.',
+    fields: [
+      {
+        key: 'team_summary',
+        label: 'Équipe clé',
+        placeholder: 'CEO ex-ONG microfinance (10 ans), CTO ex-Google (8 ans), advisory board de 3 experts.'
+      },
+      {
+        key: 'team_gaps',
+        label: 'Compétences à renforcer',
+        placeholder: 'Besoin d’un directeur financier et d’un responsable ventes grands comptes.'
+      }
+    ]
+  },
+  {
+    id: 'funding',
+    title: 'Besoins financiers',
+    icon: 'fas fa-seedling',
+    description: 'Précisez les montants recherchés et l’usage des fonds.',
+    fields: [
+      {
+        key: 'financial_needs',
+        label: 'Montant recherché',
+        placeholder: 'Levée 400 K€ pour 18 mois de runway.'
+      },
+      {
+        key: 'fund_usage',
+        label: 'Allocation des fonds',
+        placeholder: '45 % produit, 30 % go-to-market, 15 % capital de travail, 10 % gouvernance/compliance.'
+      }
+    ]
+  },
+  {
+    id: 'risks',
+    title: 'Risques & notes',
+    icon: 'fas fa-triangle-exclamation',
+    description: 'Anticipez les risques et ajoutez des notes utiles.',
+    fields: [
+      {
+        key: 'risks',
+        label: 'Risques et plans de mitigation',
+        placeholder: 'Risque réglementaire : suivi via cabinet local. Risque change : couverture 50 % des flux.'
+      },
+      {
+        key: 'notes',
+        label: 'Notes supplémentaires',
+        placeholder: 'Informations complémentaires à partager avec le coach ou le comité.',
+        rows: 3
+      }
+    ]
+  }
+]
+
+const ACTIVITY_INPUT_FIELD_KEYS = ACTIVITY_INPUT_SECTIONS.flatMap((section) => section.fields.map((field) => field.key))
+
+const getActivityReportInputsRow = async (db: D1Database, userId: number, moduleId: number) => {
+  const row = await db.prepare(`
+    SELECT *
+    FROM activity_report_inputs
+    WHERE user_id = ? AND module_id = ?
+    LIMIT 1
+  `).bind(userId, moduleId).first()
+
+  return row ? (row as Record<string, unknown>) : null
+}
+
+type RenderLayoutOptions = {
+  pageTitle: string
+  pageDescription?: string
+  breadcrumb?: BreadcrumbItem[]
+  activeNav?: string
+  content: JSX.Element
+  headerActions?: JSX.Element
+  extraHead?: JSX.Element | JSX.Element[]
+  extraScripts?: string
+  bodyClass?: string
+  navItems?: NavItem[]
+}
+
+export const renderEsanoLayout = ({
+  pageTitle,
+  pageDescription,
+  breadcrumb,
+  activeNav = 'dashboard',
+  content,
+  headerActions,
+  extraHead,
+  extraScripts,
+  bodyClass,
+  navItems
+}: RenderLayoutOptions) => {
+  const headItems = Array.isArray(extraHead) ? extraHead : extraHead ? [extraHead] : []
+  const sidebarItems = navItems ?? NAV_ITEMS
+  const showDefaultDeliverableLink = false // Livrables maintenant inclus dans NAV_ITEMS
+
+  return (
+    <html lang="fr">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>{pageTitle} • ESONO</title>
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" />
+        <link rel="stylesheet" href="/static/esono.css" />
+        {headItems}
+      </head>
+      <body class={bodyClass ?? ''}>
+        <header class="esono-header">
+          <div class="esono-header__brand">
+            <span class="esono-header__logo">ESONO</span>
+            <span class="esono-header__subtitle">Investment Readiness</span>
+          </div>
+          <div class="esono-header__actions">
+            <button class="esono-header__icon-btn" title="Centre d’aide">
+              <i class="fas fa-circle-question"></i>
+            </button>
+            <button class="esono-header__icon-btn" title="Notifications">
+              <i class="fas fa-bell"></i>
+            </button>
+          </div>
+        </header>
+
+        <aside class="esono-sidebar">
+          <nav class="esono-nav">
+            {sidebarItems.map((item) => (
+              <a
+                key={item.id}
+                href={item.href}
+                class={`esono-nav__item ${item.id === activeNav ? 'active' : ''}`}
+              >
+                <span class="esono-nav__icon">
+                  <i class={item.icon}></i>
+                </span>
+                <span>{item.label}</span>
+              </a>
+            ))}
+
+            {showDefaultDeliverableLink && (
+              <>
+                <div class="esono-nav__divider"></div>
+
+                <a href="/module/step1_business_model/download" class="esono-nav__item">
+                  <span class="esono-nav__icon">
+                    <i class="fas fa-file-pdf"></i>
+                  </span>
+                  <span>Livrables</span>
+                </a>
+              </>
+            )}
+          </nav>
+        </aside>
+
+        <main class="esono-main">
+          {breadcrumb && breadcrumb.length > 0 && (
+            <div class="esono-text-sm esono-text-muted esono-mb-lg">
+              {breadcrumb.map((item, index) => (
+                <span key={`breadcrumb-${index}`}>
+                  {item.href ? (
+                    <a href={item.href} class="esono-text-muted">
+                      {item.label}
+                    </a>
+                  ) : (
+                    <span>{item.label}</span>
+                  )}
+                  {index < breadcrumb.length - 1 && <span class="esono-text-muted"> &rsaquo; </span>}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div class="esono-page-header">
+            <div class="esono-page-header__main">
+              <h1 class="esono-page-title">{pageTitle}</h1>
+              {pageDescription && (
+                <p class="esono-page-description">{pageDescription}</p>
+              )}
+            </div>
+            {headerActions && (
+              <div class="esono-page-header__actions">{headerActions}</div>
+            )}
+          </div>
+
+          {content}
+        </main>
+
+        {extraScripts && (
+          <script dangerouslySetInnerHTML={{ __html: extraScripts }} />
+        )}
+      </body>
+    </html>
+  )
+}
+
+const extractAiFeedbackPayload = (raw: unknown) => {
   if (!raw) {
-    return base
+    return {
+      suggestions: [] as string[],
+      questions: [] as string[],
+      percentage: null as number | null,
+      scoreLabel: null as string | null
+    }
   }
 
   try {
-    const payload = typeof raw === 'string' ? JSON.parse(raw) : raw ?? {}
-    return {
-      strengths: normalizeFeedbackEntries((payload as any).strengths),
-      suggestions: normalizeFeedbackEntries((payload as any).suggestions),
-      questions: normalizeFeedbackEntries((payload as any).questions),
-      percentage: typeof (payload as any).percentage === 'number' ? Math.round((payload as any).percentage) : null,
-      scoreLabel: typeof (payload as any).scoreLabel === 'string' ? (payload as any).scoreLabel : 'Analyse IA à compléter'
-    }
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw as any
+    const suggestions = Array.isArray(parsed?.suggestions)
+      ? parsed.suggestions.map((entry: any) => {
+          if (!entry) return ''
+          if (typeof entry === 'string') return entry
+          if (typeof entry?.message === 'string') return entry.message
+          return String(entry)
+        }).filter((item: string) => item.length > 0)
+      : []
+
+    const questions = Array.isArray(parsed?.questions)
+      ? parsed.questions.map((entry: any) => {
+          if (!entry) return ''
+          if (typeof entry === 'string') return entry
+          if (typeof entry?.message === 'string') return entry.message
+          return String(entry)
+        }).filter((item: string) => item.length > 0)
+      : []
+
+    const percentage = typeof parsed?.percentage === 'number' ? Math.round(parsed.percentage) : null
+    const scoreLabel = typeof parsed?.scoreLabel === 'string' ? parsed.scoreLabel : null
+
+    return { suggestions, questions, percentage, scoreLabel }
   } catch (error) {
-    console.warn('parseFeedbackPayload error', error)
-    return base
+    console.warn('extractAiFeedbackPayload error', error)
+    return {
+      suggestions: [] as string[],
+      questions: [] as string[],
+      percentage: null as number | null,
+      scoreLabel: null as string | null
+    }
   }
 }
 
-const SCORE_BADGE_STYLES: Record<string, { badgeClass: string; icon: string; barColor: string }> = {
-  Excellent: {
-    badgeClass: 'bg-emerald-100 text-emerald-700',
-    icon: 'fas fa-trophy',
-    barColor: '#34d399'
-  },
-  Bien: {
-    badgeClass: 'bg-sky-100 text-sky-700',
-    icon: 'fas fa-circle-check',
-    barColor: '#38bdf8'
-  },
-  'À améliorer': {
-    badgeClass: 'bg-amber-100 text-amber-700',
-    icon: 'fas fa-lightbulb',
-    barColor: '#fbbf24'
-  },
-  Insuffisant: {
-    badgeClass: 'bg-rose-100 text-rose-700',
-    icon: 'fas fa-triangle-exclamation',
-    barColor: '#fb7185'
-  },
-  default: {
-    badgeClass: 'bg-slate-200 text-slate-700',
-    icon: 'fas fa-circle',
-    barColor: '#cbd5f5'
-  }
-}
+const buildCanvasSectionsFromQuestions = (moduleCode: string, questionRows: any[]): CanvasSection[] => {
+  const guided = getGuidedQuestions(moduleCode)
+  const rowsByNumber = new Map<number, any>()
 
-export const moduleRoutes = new Hono<{ Bindings: Bindings }>()
+  questionRows.forEach((row) => {
+    const id = Number(row.question_number)
+    if (!Number.isNaN(id)) {
+      rowsByNumber.set(id, row)
+    }
+  })
+
+  const baseQuestions = guided.length
+    ? guided.map((q) => ({ id: q.id, section: q.section, question: q.question }))
+    : questionRows.map((row: any) => {
+        const id = Number(row.question_number)
+        return {
+          id,
+          section: row.question_text ?? getSectionName(id),
+          question: row.question_text ?? `Question ${id}`
+        }
+      })
+
+  return baseQuestions.map((info, index) => {
+    const row = rowsByNumber.get(info.id)
+    const answer = (row?.user_response as string | null)?.trim() ?? ''
+    const feedback = extractAiFeedbackPayload(row?.ai_feedback)
+    const qualityScore = typeof row?.quality_score === 'number' ? Number(row.quality_score) : null
+    const score = qualityScore ?? feedback.percentage
+    const scoreLabel = score !== null
+      ? getScoreLabel(score).label
+      : feedback.scoreLabel ?? 'Analyse IA à générer'
+
+    return {
+      order: index + 1,
+      questionId: info.id,
+      section: info.section,
+      question: info.question,
+      answer,
+      score,
+      scoreLabel,
+      suggestions: feedback.suggestions,
+      questions: feedback.questions
+    }
+  })
+}
 
 // B1 - Écran vidéo pédagogique
 moduleRoutes.get('/module/:code/video', async (c) => {
@@ -129,6 +902,8 @@ moduleRoutes.get('/module/:code/video', async (c) => {
 
     if (!module) return c.redirect('/dashboard')
 
+    const variant = getModuleVariant(moduleCode)
+
     // Get or create progress
     const progress = await c.env.DB.prepare(`
       SELECT * FROM progress 
@@ -142,147 +917,167 @@ moduleRoutes.get('/module/:code/video', async (c) => {
       `).bind(payload.userId, module.id).run()
     }
 
-    // Get content based on module
-    const content = moduleCode === 'step1_business_model' ? businessModelCanvasContent : null
+    const content = getModuleContent(moduleCode)
     if (!content || !content.video_url) {
       return c.redirect(`/module/${moduleCode}`)
     }
 
-    return c.html(
-      <html lang="fr">
-        <head>
-          <meta charset="UTF-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <title>{module.title as string} - Vidéo</title>
-          <script src="https://cdn.tailwindcss.com"></script>
-          <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet" />
-          <link href="/static/style.css" rel="stylesheet" />
-        </head>
-        <body class="bg-gray-50">
-          <div class="min-h-screen py-8 px-4">
-            <div class="max-w-5xl mx-auto">
-              {/* Header */}
-              <div class="mb-6 flex items-center justify-between">
-                <a href="/dashboard" class="text-blue-600 hover:text-blue-700 font-medium">
-                  <i class="fas fa-arrow-left mr-2"></i>Retour au dashboard
-                </a>
-                <div class="text-sm text-gray-600">
-                  <i class="fas fa-video mr-2"></i>Étape 1/7 - Vidéo pédagogique
+    const moduleTitle = module.title as string
+    const moduleDescription = (module.description as string | null) ?? ''
+    const progressPercentage = Math.round((1 / 7) * 100)
+    const videoDurationMinutes = Math.max(1, Math.round((content.video_duration ?? 480) / 60))
+    const heroDescription = moduleDescription.length > 0
+      ? moduleDescription
+      : variant === 'finance'
+        ? 'Prenez quelques minutes pour revoir les fondamentaux financiers avant de renseigner vos chiffres et ratios clés.'
+        : 'Prenez quelques minutes pour comprendre la logique du Business Model Canvas avant de formaliser vos réponses.'
+
+    const objectives = variant === 'finance'
+      ? [
+          'Comprendre les états financiers clés (compte de résultat, trésorerie, bilan).',
+          'Identifier les ratios indispensables pour convaincre bailleurs et investisseurs.',
+          'Préparer la collecte de vos données financières pour l’analyse automatique.'
+        ]
+      : [
+          'Comprendre la structure des 9 blocs du Business Model Canvas.',
+          'Visualiser les interactions entre vos segments et votre proposition de valeur.',
+          'Préparer la collecte d’informations pour les étapes B2 à B5.'
+        ]
+
+    const coachTips = variant === 'finance'
+      ? [
+          'Rassemblez vos chiffres récents (12 derniers mois lorsque c’est possible).',
+          'Repérez d’avance les points de vigilance sur vos marges, cashflow et dettes.',
+          'Notez les hypothèses à challenger avant de lancer l’analyse IA.'
+        ]
+      : [
+          'Notez vos idées clés pendant la vidéo.',
+          'Identifiez les preuves et données que vous pourrez partager avec les bailleurs.',
+          'Repérez les points qui nécessiteront des validations chiffrées.'
+        ]
+
+    const { navItems: resolvedNavItems, activeNav } = resolveNavigationForStage(moduleCode, 'microLearning')
+
+    const pageContent = (
+      <div class="esono-grid">
+        <section class="esono-hero esono-hero--vision">
+          <div class="esono-hero__header">
+            <div>
+              <h2 class="esono-hero__title">{moduleTitle}</h2>
+              <p class="esono-hero__description">
+                {heroDescription}
+              </p>
+            </div>
+            <span class="esono-hero__badge">
+              <i class="fas fa-circle-play"></i>
+              Étape 1 / 7
+            </span>
+          </div>
+          <div class="esono-hero__metrics">
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">{progressPercentage}%</p>
+              <p class="esono-hero__metric-label">Progression</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">{videoDurationMinutes} min</p>
+              <p class="esono-hero__metric-label">Durée vidéo</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">B1</p>
+              <p class="esono-hero__metric-label">Module</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">Coach &amp; IA</p>
+              <p class="esono-hero__metric-label">Validation</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="esono-card">
+          <div class="esono-card__header">
+            <h2 class="esono-card__title">
+              <i class="fas fa-play esono-card__title-icon"></i>
+              Vidéo pédagogique
+            </h2>
+            <span class="esono-badge esono-badge--info">
+              <i class="fas fa-graduation-cap"></i>
+              Indispensable
+            </span>
+          </div>
+          <div class="esono-card__body">
+            <div class="esono-progress esono-mb-lg">
+              <div class="esono-progress__bar" style={`width: ${progressPercentage}%`}></div>
+            </div>
+
+            <div style="position: relative; padding-top: 56.25%; border-radius: var(--border-radius-lg); overflow: hidden; box-shadow: var(--shadow-md); margin-bottom: var(--spacing-lg);">
+              <iframe
+                src={content.video_url}
+                title="Vidéo pédagogique"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowfullscreen
+                style="position: absolute; inset: 0; width: 100%; height: 100%; border: 0;"
+              ></iframe>
+            </div>
+
+            <div class="esono-grid esono-grid--2">
+              <div class="esono-synthesis">
+                <div class="esono-synthesis__header">
+                  <span class="esono-synthesis__title">
+                    <i class="fas fa-lightbulb esono-synthesis__icon--ai"></i>
+                    Objectifs pédagogiques
+                  </span>
                 </div>
+                <ul class="esono-synthesis__list">
+                  {objectives.map((item) => (
+                    <li>{item}</li>
+                  ))}
+                </ul>
               </div>
 
-              {/* Progress Bar */}
-              <div class="mb-8 bg-white rounded-lg shadow-sm p-4">
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-sm font-medium text-gray-700">Progression du module</span>
-                  <span class="text-sm text-gray-600">1/7</span>
+              <div class="esono-synthesis">
+                <div class="esono-synthesis__header">
+                  <span class="esono-synthesis__title">
+                    <i class="fas fa-compass esono-synthesis__icon--coach"></i>
+                    Conseils du coach
+                  </span>
                 </div>
-                <div class="w-full bg-gray-200 rounded-full h-2">
-                  <div class="bg-blue-600 h-2 rounded-full" style="width: 14%"></div>
-                </div>
-              </div>
-
-              {/* Main Content */}
-              <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-                {/* Title */}
-                <div class="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-6">
-                  <h1 class="text-2xl font-bold mb-2">{module.title as string}</h1>
-                  <p class="text-blue-100">{module.description as string}</p>
-                </div>
-
-                {/* Video Player */}
-                <div class="p-6">
-                  <div class="aspect-video bg-black rounded-lg overflow-hidden mb-6">
-                    <iframe
-                      width="100%"
-                      height="100%"
-                      src={content.video_url}
-                      title="Vidéo pédagogique"
-                      frameborder="0"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowfullscreen
-                    ></iframe>
-                  </div>
-
-                  {/* Video Info */}
-                  <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-                    <div class="flex items-start gap-3">
-                      <i class="fas fa-info-circle text-blue-600 mt-1"></i>
-                      <div>
-                        <h3 class="font-semibold text-gray-900 mb-2">Objectifs de cette vidéo</h3>
-                        <ul class="text-sm text-gray-700 space-y-1">
-                          <li>• Comprendre les 9 blocs du Business Model Canvas</li>
-                          <li>• Apprendre à cartographier votre modèle économique</li>
-                          <li>• Identifier les liens entre les différents blocs</li>
-                          <li>• Préparer votre réflexion stratégique</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Key Points */}
-                  <div class="bg-gray-50 rounded-lg p-6 mb-6">
-                    <h3 class="font-semibold text-gray-900 mb-4">Points clés à retenir</h3>
-                    <div class="grid md:grid-cols-2 gap-4">
-                      <div class="flex items-start gap-3">
-                        <div class="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                          <i class="fas fa-users text-blue-600"></i>
-                        </div>
-                        <div>
-                          <h4 class="font-medium text-gray-900 mb-1">Clients</h4>
-                          <p class="text-sm text-gray-600">Identifiez précisément vos segments de clientèle cibles</p>
-                        </div>
-                      </div>
-                      <div class="flex items-start gap-3">
-                        <div class="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                          <i class="fas fa-gift text-green-600"></i>
-                        </div>
-                        <div>
-                          <h4 class="font-medium text-gray-900 mb-1">Valeur</h4>
-                          <p class="text-sm text-gray-600">Définissez votre proposition de valeur unique</p>
-                        </div>
-                      </div>
-                      <div class="flex items-start gap-3">
-                        <div class="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                          <i class="fas fa-route text-purple-600"></i>
-                        </div>
-                        <div>
-                          <h4 class="font-medium text-gray-900 mb-1">Canaux</h4>
-                          <p class="text-sm text-gray-600">Choisissez vos canaux de distribution et communication</p>
-                        </div>
-                      </div>
-                      <div class="flex items-start gap-3">
-                        <div class="w-8 h-8 bg-yellow-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                          <i class="fas fa-dollar-sign text-yellow-600"></i>
-                        </div>
-                        <div>
-                          <h4 class="font-medium text-gray-900 mb-1">Revenus</h4>
-                          <p class="text-sm text-gray-600">Déterminez vos sources de revenus</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Next Step Button */}
-                  <div class="flex items-center justify-between">
-                    <div class="text-sm text-gray-600">
-                      <i class="far fa-clock mr-2"></i>
-                      Durée estimée : {Math.floor(content.video_duration! / 60)} minutes
-                    </div>
-                    <a
-                      href={`/module/${moduleCode}/quiz`}
-                      class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors inline-flex items-center gap-2"
-                    >
-                      Passer au quiz
-                      <i class="fas fa-arrow-right"></i>
-                    </a>
-                  </div>
-                </div>
+                <ul class="esono-synthesis__list">
+                  {coachTips.map((item) => (
+                    <li>{item}</li>
+                  ))}
+                </ul>
               </div>
             </div>
           </div>
-        </body>
-      </html>
+          <div class="esono-card__footer">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-md); flex-wrap: wrap;">
+              <span class="esono-text-sm esono-text-muted">
+                <i class="fas fa-clock"></i>
+                Durée estimée : {videoDurationMinutes} min
+              </span>
+              <a href={`/module/${moduleCode}/quiz`} class="esono-btn esono-btn--primary">
+                Passer au quiz
+                <i class="fas fa-arrow-right"></i>
+              </a>
+            </div>
+          </div>
+        </section>
+      </div>
+    )
+
+    return c.html(
+      renderEsanoLayout({
+        pageTitle: moduleTitle,
+        pageDescription: 'Étape 1 — Vidéo pédagogique',
+        breadcrumb: [
+          { label: 'Tableau de bord', href: '/dashboard' },
+          { label: moduleTitle, href: `/module/${moduleCode}` },
+          { label: 'Vidéo' }
+        ],
+        activeNav,
+        navItems: resolvedNavItems,
+        content: pageContent
+      })
     )
   } catch (error) {
     console.error('Video error:', error)
@@ -307,219 +1102,934 @@ moduleRoutes.get('/module/:code/quiz', async (c) => {
 
     if (!module) return c.redirect('/dashboard')
 
-    const content = moduleCode === 'step1_business_model' ? businessModelCanvasContent : null
+    const variant = getModuleVariant(moduleCode)
+    const content = getModuleContent(moduleCode)
     if (!content || !content.quiz_questions) {
       return c.redirect(`/module/${moduleCode}`)
     }
 
-    return c.html(
-      <html lang="fr">
-        <head>
-          <meta charset="UTF-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <title>{module.title as string} - Quiz</title>
-          <script src="https://cdn.tailwindcss.com"></script>
-          <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet" />
-          <link href="/static/style.css" rel="stylesheet" />
-        </head>
-        <body class="bg-gray-50">
-          <div class="min-h-screen py-8 px-4">
-            <div class="max-w-4xl mx-auto">
-              {/* Header */}
-              <div class="mb-6 flex items-center justify-between">
-                <a href="/dashboard" class="text-blue-600 hover:text-blue-700 font-medium">
-                  <i class="fas fa-arrow-left mr-2"></i>Retour au dashboard
-                </a>
-                <div class="text-sm text-gray-600">
-                  <i class="fas fa-question-circle mr-2"></i>Étape 2/7 - Quiz de validation
-                </div>
-              </div>
+    const moduleTitle = module.title as string
+    const quizQuestions = content.quiz_questions
+    const questionCount = quizQuestions.length
+    const progressPercentage = Math.round((2 / 7) * 100)
+    const heroDescription = variant === 'finance'
+      ? 'Validez votre compréhension des notions financières essentielles avant de renseigner vos chiffres. Un score minimal de 80 % est requis pour poursuivre.'
+      : 'Validez les fondamentaux avant de passer aux questions guidées. Un score minimal de 80 % est requis pour poursuivre.'
+    const useInputsRoute = variant === 'finance' || moduleCode === 'step1_activity_report'
+    const nextStepPath = useInputsRoute
+      ? `/module/${moduleCode}/inputs`
+      : `/module/${moduleCode}/questions`
+    const nextStepLabel = variant === 'finance'
+      ? 'Continuer vers les inputs financiers'
+      : useInputsRoute
+        ? 'Continuer vers les inputs narratifs'
+        : 'Continuer vers les questions guidées'
+    const { navItems: resolvedNavItems, activeNav } = resolveNavigationForStage(moduleCode, 'quiz')
 
-              {/* Progress Bar */}
-              <div class="mb-8 bg-white rounded-lg shadow-sm p-4">
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-sm font-medium text-gray-700">Progression du module</span>
-                  <span class="text-sm text-gray-600">2/7</span>
-                </div>
-                <div class="w-full bg-gray-200 rounded-full h-2">
-                  <div class="bg-blue-600 h-2 rounded-full" style="width: 29%"></div>
-                </div>
-              </div>
-
-              {/* Main Content */}
-              <div class="bg-white rounded-xl shadow-lg p-8">
-                <div class="mb-8">
-                  <h1 class="text-2xl font-bold text-gray-900 mb-2">Quiz de Validation</h1>
-                  <p class="text-gray-600">
-                    Répondez à ces 5 questions pour valider votre compréhension du Business Model Canvas.
-                    Vous devez obtenir au moins 80% de bonnes réponses pour continuer.
-                  </p>
-                </div>
-
-                {/* Quiz Form */}
-                <form id="quizForm" class="space-y-8">
-                  {content.quiz_questions!.map((q, index) => (
-                    <div class="border-b border-gray-200 pb-8 last:border-0">
-                      <div class="flex items-start gap-3 mb-4">
-                        <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                          <span class="text-blue-600 font-bold">{index + 1}</span>
-                        </div>
-                        <div class="flex-1">
-                          <h3 class="font-semibold text-gray-900 mb-4">{q.question}</h3>
-                          <div class="space-y-3">
-                            {q.options.map((option, optIndex) => (
-                              <label class="flex items-start gap-3 p-4 border-2 border-gray-200 rounded-lg hover:border-blue-300 cursor-pointer transition-colors">
-                                <input
-                                  type="radio"
-                                  name={`question_${q.id}`}
-                                  value={optIndex}
-                                  required
-                                  class="mt-1 w-4 h-4 text-blue-600"
-                                />
-                                <span class="text-gray-700">{option}</span>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                      <div id={`explanation_${q.id}`} class="hidden mt-4 ml-11 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                        <p class="text-sm text-gray-700">{q.explanation}</p>
-                      </div>
-                    </div>
-                  ))}
-
-                  {/* Results */}
-                  <div id="quizResults" class="hidden">
-                    <div id="successMessage" class="hidden bg-green-50 border border-green-200 rounded-lg p-6 mb-6">
-                      <div class="flex items-start gap-3">
-                        <i class="fas fa-check-circle text-2xl text-green-600"></i>
-                        <div>
-                          <h3 class="font-bold text-green-900 mb-2">Félicitations ! 🎉</h3>
-                          <p class="text-green-800 mb-4">
-                            Vous avez obtenu <span id="scoreValue" class="font-bold"></span>%.
-                            Vous pouvez maintenant passer à l'étape suivante.
-                          </p>
-                          <a
-                            href={`/module/${moduleCode}/questions`}
-                            class="inline-flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg transition-colors"
-                          >
-                            Continuer vers les questions guidées
-                            <i class="fas fa-arrow-right"></i>
-                          </a>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div id="failMessage" class="hidden bg-red-50 border border-red-200 rounded-lg p-6 mb-6">
-                      <div class="flex items-start gap-3">
-                        <i class="fas fa-times-circle text-2xl text-red-600"></i>
-                        <div>
-                          <h3 class="font-bold text-red-900 mb-2">Pas tout à fait...</h3>
-                          <p class="text-red-800 mb-4">
-                            Vous avez obtenu <span id="scoreValueFail" class="font-bold"></span>%.
-                            Vous devez obtenir au moins 80% pour continuer. Revoyez la vidéo et réessayez.
-                          </p>
-                          <button
-                            type="button"
-                            onclick="window.location.reload()"
-                            class="inline-flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg transition-colors"
-                          >
-                            <i class="fas fa-redo"></i>
-                            Recommencer le quiz
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Submit Button */}
-                  <div id="submitSection" class="flex justify-end">
-                    <button
-                      type="submit"
-                      class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
-                    >
-                      Valider mes réponses
-                    </button>
-                  </div>
-                </form>
-              </div>
+    const pageContent = (
+      <div class="esono-grid">
+        <section class="esono-hero">
+          <div class="esono-hero__header">
+            <div>
+              <h2 class="esono-hero__title">Quiz de validation</h2>
+              <p class="esono-hero__description">
+                {heroDescription}
+              </p>
+            </div>
+            <span class="esono-hero__badge">
+              <i class="fas fa-list-check"></i>
+              Étape 2 / 7
+            </span>
+          </div>
+          <div class="esono-hero__metrics">
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">{progressPercentage}%</p>
+              <p class="esono-hero__metric-label">Progression</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">80%</p>
+              <p class="esono-hero__metric-label">Score minimum</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">{questionCount}</p>
+              <p class="esono-hero__metric-label">Questions</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">B2</p>
+              <p class="esono-hero__metric-label">Module</p>
             </div>
           </div>
+        </section>
 
-          <script dangerouslySetInnerHTML={{__html: `
-            const quizData = ${JSON.stringify(content.quiz_questions)};
-            const moduleCode = '${moduleCode}';
-            const form = document.getElementById('quizForm');
-            
-            form.addEventListener('submit', async (e) => {
-              e.preventDefault();
-              
-              // Calculate score
-              let correct = 0;
-              const total = quizData.length;
-              
-              quizData.forEach(q => {
-                const selected = document.querySelector('input[name="question_' + q.id + '"]:checked');
-                if (selected && parseInt(selected.value) === q.correct_answer) {
-                  correct++;
-                }
-                
-                // Show explanation
-                document.getElementById('explanation_' + q.id).classList.remove('hidden');
-                
-                // Highlight correct/incorrect
-                const options = document.querySelectorAll('input[name="question_' + q.id + '"]');
-                options.forEach((opt, idx) => {
-                  const label = opt.closest('label');
-                  if (idx === q.correct_answer) {
-                    label.classList.add('border-green-500', 'bg-green-50');
-                    label.classList.remove('border-gray-200');
-                  } else if (opt.checked) {
-                    label.classList.add('border-red-500', 'bg-red-50');
-                    label.classList.remove('border-gray-200');
-                  }
-                });
-              });
-              
-              const score = Math.round((correct / total) * 100);
-              
-              // Save score
-              try {
-                await fetch('/api/module/quiz', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    module_code: moduleCode,
-                    score: score,
-                    passed: score >= 80,
-                    answers: Array.from(form.elements).filter(e => e.type === 'radio' && e.checked).map(e => e.value)
-                  })
-                });
-              } catch (err) {
-                console.error('Error saving quiz:', err);
-              }
-              
-              // Show results
-              document.getElementById('quizResults').classList.remove('hidden');
-              document.getElementById('submitSection').classList.add('hidden');
-              
-              if (score >= 80) {
-                document.getElementById('successMessage').classList.remove('hidden');
-                document.getElementById('scoreValue').textContent = score;
-              } else {
-                document.getElementById('failMessage').classList.remove('hidden');
-                document.getElementById('scoreValueFail').textContent = score;
-              }
-              
-              // Scroll to results
-              document.getElementById('quizResults').scrollIntoView({ behavior: 'smooth' });
-            });
-          `}} />
-        </body>
-      </html>
+        <section class="esono-card">
+          <div class="esono-card__header">
+            <h2 class="esono-card__title">
+              <i class="fas fa-clipboard-check esono-card__title-icon"></i>
+              Quiz de validation
+            </h2>
+            <span class="esono-note esono-note--info">
+              <i class="fas fa-clock"></i>
+              ~5 minutes
+            </span>
+          </div>
+          <div class="esono-card__body">
+            <div class="esono-form__meta esono-mb-lg">
+              <span>
+                <i class="fas fa-bullseye"></i>
+                Objectif : atteindre 80% ou plus
+              </span>
+              <span>
+                <i class="fas fa-robot"></i>
+                L’IA analysera vos réponses pour la suite
+              </span>
+            </div>
+
+            <div class="esono-progress esono-mb-lg">
+              <div class="esono-progress__bar" style={`width: ${progressPercentage}%`}></div>
+            </div>
+
+            <form id="quizForm" class="esono-quiz">
+              {quizQuestions.map((q, index) => (
+                <div class="esono-quiz-question">
+                  <div class="esono-quiz-question__header">
+                    <span class="esono-quiz-question__number">{index + 1}</span>
+                    <div>
+                      <h3 class="esono-quiz-question__title">{q.question}</h3>
+                    </div>
+                  </div>
+                  <div class="esono-quiz-options">
+                    {q.options.map((option, optIndex) => (
+                      <label class="esono-radio-option">
+                        <input
+                          type="radio"
+                          name={`question_${q.id}`}
+                          value={optIndex}
+                          required
+                        />
+                        <span class="esono-radio-option__label">{option}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div
+                    id={`explanation_${q.id}`}
+                    class="esono-quiz-explanation"
+                    style="display: none;"
+                  >
+                    {q.explanation ?? 'Consultez les notes du coach pour approfondir cette notion.'}
+                  </div>
+                </div>
+              ))}
+
+              <div id="quizResults" class="esono-quiz-results" style="display: none;">
+                <div id="successMessage" class="esono-alert esono-alert--success" style="display: none;">
+                  <span class="esono-alert__icon">
+                    <i class="fas fa-check-circle"></i>
+                  </span>
+                  <div class="esono-alert__content">
+                    <h3 class="esono-alert__title">Félicitations !</h3>
+                    <p class="esono-alert__text">
+                      Score obtenu&nbsp;: <strong data-score>0</strong>%. Vous pouvez passer à la structuration de votre livrable.
+                    </p>
+                    <div class="esono-alert__actions">
+                      <a
+                        href={nextStepPath}
+                        class="esono-btn esono-btn--primary esono-btn--sm"
+                      >
+                        {nextStepLabel}
+                        <i class="fas fa-arrow-right"></i>
+                      </a>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="failMessage" class="esono-alert esono-alert--danger" style="display: none;">
+                  <span class="esono-alert__icon">
+                    <i class="fas fa-triangle-exclamation"></i>
+                  </span>
+                  <div class="esono-alert__content">
+                    <h3 class="esono-alert__title">Pas encore validé</h3>
+                    <p class="esono-alert__text">
+                      Score obtenu&nbsp;: <strong data-score>0</strong>%. Revoyez la vidéo ou vos notes puis relancez le quiz.
+                    </p>
+                    <div class="esono-alert__actions">
+                      <a href={`/module/${moduleCode}/video`} class="esono-btn esono-btn--ghost esono-btn--sm">
+                        <i class="fas fa-play-circle"></i>
+                        Revoir la vidéo
+                      </a>
+                      <button type="button" class="esono-btn esono-btn--secondary esono-btn--sm" onclick="window.location.reload()">
+                        <i class="fas fa-rotate-right"></i>
+                        Recommencer
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div id="submitSection" class="esono-form__actions">
+                <button type="submit" class="esono-btn esono-btn--primary">
+                  Valider mes réponses
+                  <i class="fas fa-check"></i>
+                </button>
+              </div>
+            </form>
+          </div>
+        </section>
+      </div>
+    )
+
+    const extraScripts = `
+(() => {
+  const quizData = ${JSON.stringify(quizQuestions)};
+  const moduleCode = ${JSON.stringify(moduleCode)};
+  const form = document.getElementById('quizForm');
+  if (!form) {
+    return;
+  }
+  const resultWrapper = document.getElementById('quizResults');
+  const successMessage = document.getElementById('successMessage');
+  const failMessage = document.getElementById('failMessage');
+  const submitSection = document.getElementById('submitSection');
+
+  const registerSelection = (input) => {
+    const groupName = input.name;
+    document.querySelectorAll('input[name="' + groupName + '"]').forEach((radio) => {
+      const container = radio.closest('.esono-radio-option');
+      if (container) {
+        container.classList.remove('is-selected');
+      }
+    });
+    const container = input.closest('.esono-radio-option');
+    if (container) {
+      container.classList.add('is-selected');
+    }
+  };
+
+  document.querySelectorAll('.esono-radio-option input[type="radio"]').forEach((input) => {
+    input.addEventListener('change', () => registerSelection(input));
+  });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+
+    if (successMessage) {
+      successMessage.style.display = 'none';
+    }
+    if (failMessage) {
+      failMessage.style.display = 'none';
+    }
+
+    let correct = 0;
+    const answers = [];
+
+    quizData.forEach((question) => {
+      const radios = document.querySelectorAll('input[name="question_' + question.id + '"]');
+      let selectedIndex = null;
+
+      radios.forEach((radio, index) => {
+        const container = radio.closest('.esono-radio-option');
+        if (container) {
+          container.classList.remove('is-correct', 'is-incorrect');
+        }
+        if (radio.checked) {
+          selectedIndex = index;
+        }
+      });
+
+      const explanation = document.getElementById('explanation_' + question.id);
+      if (explanation) {
+        explanation.style.display = 'block';
+      }
+
+      radios.forEach((radio, index) => {
+        const container = radio.closest('.esono-radio-option');
+        if (!container) {
+          return;
+        }
+        if (index === question.correct_answer) {
+          container.classList.add('is-correct');
+        } else if (radio.checked) {
+          container.classList.add('is-incorrect');
+        }
+      });
+
+      if (selectedIndex !== null) {
+        answers.push(selectedIndex);
+        if (selectedIndex === question.correct_answer) {
+          correct += 1;
+        }
+      } else {
+        answers.push(null);
+      }
+    });
+
+    const score = Math.round((correct / quizData.length) * 100);
+
+    try {
+      await fetch('/api/module/quiz', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          module_code: moduleCode,
+          score,
+          passed: score >= 80,
+          answers
+        })
+      });
+    } catch (error) {
+      console.error('Error saving quiz:', error);
+    }
+
+    if (resultWrapper) {
+      resultWrapper.style.display = 'flex';
+      resultWrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    if (submitSection) {
+      submitSection.style.display = 'none';
+    }
+
+    if (score >= 80) {
+      if (successMessage) {
+        successMessage.style.display = 'flex';
+        const holder = successMessage.querySelector('[data-score]');
+        if (holder) {
+          holder.textContent = String(score);
+        }
+      }
+    } else if (failMessage) {
+      failMessage.style.display = 'flex';
+      const holder = failMessage.querySelector('[data-score]');
+      if (holder) {
+        holder.textContent = String(score);
+      }
+    }
+  });
+})();
+`
+
+    return c.html(
+      renderEsanoLayout({
+        pageTitle: moduleTitle,
+        pageDescription: 'Étape 2 — Quiz de validation',
+        breadcrumb: [
+          { label: 'Tableau de bord', href: '/dashboard' },
+          { label: moduleTitle, href: `/module/${moduleCode}` },
+          { label: 'Quiz' }
+        ],
+        activeNav,
+        navItems: resolvedNavItems,
+        content: pageContent,
+        headerActions: (
+          <a href={`/module/${moduleCode}/video`} class="esono-btn esono-btn--ghost">
+            <i class="fas fa-circle-play"></i>
+            Revoir la vidéo
+          </a>
+        ),
+        extraScripts
+      })
     )
   } catch (error) {
     console.error('Quiz error:', error)
+    return c.redirect('/dashboard')
+  }
+})
+
+moduleRoutes.get('/module/:code/inputs', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.redirect('/login')
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.redirect('/login')
+
+    const moduleCode = c.req.param('code')
+    const variant = getModuleVariant(moduleCode)
+
+    const module = await c.env.DB.prepare(`
+      SELECT *
+      FROM modules
+      WHERE module_code = ?
+    `).bind(moduleCode).first()
+
+    if (!module) {
+      return c.redirect('/dashboard')
+    }
+
+    const moduleId = Number(module.id)
+    if (Number.isNaN(moduleId)) {
+      return c.redirect('/dashboard')
+    }
+
+    if (moduleCode === 'step1_activity_report') {
+      const progress = await ensureProgressRecord(c.env.DB, payload.userId, moduleId)
+      const inputsRecord = (await getActivityReportInputsRow(c.env.DB, payload.userId, moduleId)) ?? {}
+
+      const getFieldValue = (key: string) => {
+        const raw = (inputsRecord as Record<string, unknown>)[key]
+        if (raw === null || raw === undefined) {
+          return ''
+        }
+        return typeof raw === 'string' ? raw : String(raw)
+      }
+
+      const totalFields = ACTIVITY_INPUT_FIELD_KEYS.length
+      const filledFieldCount = ACTIVITY_INPUT_FIELD_KEYS.reduce((count, key) => {
+        const value = getFieldValue(key).trim()
+        return count + (value.length > 0 ? 1 : 0)
+      }, 0)
+
+      const completionRate = totalFields > 0 ? Math.round((filledFieldCount / totalFields) * 100) : 0
+      const progressPercentage = Math.round((3 / 7) * 100)
+      const lastUpdatedRaw = typeof (inputsRecord as Record<string, unknown>).updated_at === 'string'
+        ? (inputsRecord as Record<string, unknown>).updated_at as string
+        : null
+      const lastUpdatedDisplay = lastUpdatedRaw ? formatDateValue(lastUpdatedRaw, 'Jamais renseigné') : 'Jamais renseigné'
+      const statusLabel = progress.status === 'validated'
+        ? 'Validé'
+        : progress.status === 'not_started'
+          ? 'À démarrer'
+          : 'En cours'
+      const { navItems: resolvedNavItems, activeNav } = resolveNavigationForStage(moduleCode, 'inputs')
+
+      const instructions = [
+        'Rédigez un argumentaire clair et chiffré pour chaque bloc.',
+        'Appuyez-vous sur des preuves (clients, chiffres, récompenses) pour gagner en crédibilité.',
+        "Préparez-vous à lancer l’analyse IA (B4) une fois les blocs complétés."
+      ]
+
+      const pageContent = (
+        <div class="esono-grid">
+          <section class="esono-hero esono-hero--vision">
+            <div class="esono-hero__header">
+              <div>
+                <h2 class="esono-hero__title">Inputs narratifs</h2>
+                <p class="esono-hero__description">
+                  Structurez votre rapport d’activité pour convaincre les bailleurs et investisseurs.
+                </p>
+              </div>
+              <span class="esono-hero__badge">
+                <i class="fas fa-pen-to-square"></i>
+                Étape 3 / 7
+              </span>
+            </div>
+            <div class="esono-hero__metrics">
+              <div class="esono-hero__metric">
+                <p class="esono-hero__metric-value">{progressPercentage}%</p>
+                <p class="esono-hero__metric-label">Progression</p>
+              </div>
+              <div class="esono-hero__metric">
+                <p class="esono-hero__metric-value" id="activityCompletionValue">{completionRate}%</p>
+                <p class="esono-hero__metric-label">Champs complétés</p>
+              </div>
+              <div class="esono-hero__metric">
+                <p class="esono-hero__metric-value" id="activityLastUpdated">{lastUpdatedDisplay}</p>
+                <p class="esono-hero__metric-label">Dernière mise à jour</p>
+              </div>
+              <div class="esono-hero__metric">
+                <p class="esono-hero__metric-value">{statusLabel}</p>
+                <p class="esono-hero__metric-label">Statut</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="esono-card esono-card--info">
+            <div class="esono-card__header">
+              <h2 class="esono-card__title">
+                <i class="fas fa-info-circle esono-card__title-icon"></i>
+                Comment compléter votre rapport
+              </h2>
+            </div>
+            <div class="esono-card__body">
+              <ul class="esono-list">
+                {instructions.map((item) => (
+                  <li class="esono-list__item">
+                    <i class="fas fa-check esono-list__icon"></i>
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </section>
+
+          <form id="activityInputsForm" class="esono-form" data-module={moduleCode}>
+            {ACTIVITY_INPUT_SECTIONS.map((section) => (
+              <section class="esono-card" id={`section-${section.id}`}>
+                <div class="esono-card__header">
+                  <h2 class="esono-card__title">
+                    <i class={`${section.icon} esono-card__title-icon`}></i>
+                    {section.title}
+                  </h2>
+                  <span class="esono-note esono-note--info">{section.description}</span>
+                </div>
+                <div class="esono-card__body">
+                  <div class="esono-form__grid esono-form__grid--2">
+                    {section.fields.map((field) => {
+                      const fieldId = `activity-${field.key}`
+                      const value = getFieldValue(field.key)
+                      const rows = field.rows ?? 5
+
+                      return (
+                        <label class={`esono-form__field ${rows >= 6 ? 'esono-form__field--full' : ''}`} htmlFor={fieldId}>
+                          <span class="esono-form__label">{field.label}</span>
+                          <textarea
+                            id={fieldId}
+                            name={field.key}
+                            rows={rows}
+                            placeholder={field.placeholder ?? ''}
+                            data-field-input
+                            class="esono-textarea"
+                          >{value}</textarea>
+                          {field.hint && <span class="esono-form__hint">{field.hint}</span>}
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              </section>
+            ))}
+
+            <div id="activitySaveStatus" class="esono-alert" style="display: none;"></div>
+
+            <div class="esono-form__actions">
+              <button type="submit" class="esono-btn esono-btn--primary">
+                <i class="fas fa-save"></i>
+                Enregistrer mes réponses
+              </button>
+              <a href={`/module/${moduleCode}/analysis`} class="esono-btn esono-btn--secondary">
+                <i class="fas fa-robot"></i>
+                Lancer l’analyse IA
+              </a>
+            </div>
+          </form>
+        </div>
+      )
+
+      const extraScripts = `
+(() => {
+  const form = document.getElementById('activityInputsForm');
+  if (!form) {
+    return;
+  }
+  const moduleCode = form.dataset.module;
+  const statusEl = document.getElementById('activitySaveStatus');
+  const completionEl = document.getElementById('activityCompletionValue');
+  const lastUpdatedEl = document.getElementById('activityLastUpdated');
+  const submitBtn = form.querySelector('button[type="submit"]');
+  const totalFields = ${ACTIVITY_INPUT_FIELD_KEYS.length};
+
+  const computeCompletion = () => {
+    let filled = 0;
+    form.querySelectorAll('[data-field-input]').forEach((element) => {
+      const value = element.value ?? '';
+      if (typeof value === 'string' && value.trim().length) {
+        filled += 1;
+      }
+    });
+    return totalFields > 0 ? Math.round((filled / totalFields) * 100) : 0;
+  };
+
+  const updateCompletion = () => {
+    if (completionEl) {
+      completionEl.textContent = computeCompletion() + '%';
+    }
+  };
+
+  form.addEventListener('input', updateCompletion);
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!moduleCode) {
+      return;
+    }
+
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.classList.add('is-loading');
+    }
+
+    if (statusEl) {
+      statusEl.style.display = 'none';
+      statusEl.classList.remove('esono-alert--success', 'esono-alert--danger');
+      statusEl.textContent = '';
+      statusEl.classList.add('esono-alert');
+    }
+
+    const formData = new FormData(form);
+    const payload = {};
+    formData.forEach((value, key) => {
+      payload[key] = typeof value === 'string' ? value : '';
+    });
+
+    try {
+      const response = await fetch('/api/activity-report/inputs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ moduleCode, payload })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'Sauvegarde impossible');
+      }
+
+      if (statusEl) {
+        statusEl.textContent = 'Narratif enregistré.';
+        statusEl.classList.add('esono-alert--success');
+        statusEl.style.display = 'flex';
+      }
+
+      const updated = data?.inputs;
+      if (updated && lastUpdatedEl && updated.updated_at) {
+        try {
+          const date = new Date(updated.updated_at);
+          lastUpdatedEl.textContent = date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+        } catch (err) {
+          console.warn('Impossible de formater la date', err);
+        }
+      }
+
+      updateCompletion();
+    } catch (error) {
+      console.error('Activity inputs save error:', error);
+      if (statusEl) {
+        statusEl.textContent = error instanceof Error ? error.message : 'Erreur lors de la sauvegarde.';
+        statusEl.classList.add('esono-alert--danger');
+        statusEl.style.display = 'flex';
+      }
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.classList.remove('is-loading');
+      }
+    }
+  });
+})();
+`.replace(/</g, '\\u003c')
+
+      return c.html(
+        renderEsanoLayout({
+          pageTitle: module.title as string,
+          pageDescription: 'Étape 3 — Inputs narratifs',
+          breadcrumb: [
+            { label: 'Tableau de bord', href: '/dashboard' },
+            { label: module.title as string, href: `/module/${moduleCode}` },
+            { label: 'Inputs narratifs' }
+          ],
+          activeNav,
+          navItems: resolvedNavItems,
+          content: pageContent,
+          extraScripts
+        })
+      )
+    }
+
+    if (variant !== 'finance') {
+      return c.redirect(`/module/${moduleCode}/questions`)
+    }
+
+    await ensureProgressRecord(c.env.DB, payload.userId, moduleId)
+    const inputsRaw = await getFinancialInputsRow(c.env.DB, payload.userId, moduleId)
+    const inputsRecord = (inputsRaw ?? {}) as Record<string, unknown>
+
+    const getFieldValue = (key: string) => {
+      const raw = inputsRecord[key]
+      if (raw === null || raw === undefined) {
+        return ''
+      }
+      return typeof raw === 'number' ? String(raw) : String(raw)
+    }
+
+    const totalFieldCount = FINANCIAL_SECTIONS.reduce((sum, section) => sum + section.fields.length, 0)
+    const filledFieldCount = FINANCIAL_SECTIONS.reduce((sum, section) => (
+      sum + section.fields.reduce((inner, field) => {
+        const raw = inputsRecord[field.key]
+        return inner + (raw !== null && raw !== undefined && String(raw).trim().length > 0 ? 1 : 0)
+      }, 0)
+    ), 0)
+
+    const completionRate = totalFieldCount > 0 ? Math.round((filledFieldCount / totalFieldCount) * 100) : 0
+    const progressPercentage = Math.round((3 / 7) * 100)
+
+    const lastUpdatedRaw = typeof inputsRecord.updated_at === 'string' ? inputsRecord.updated_at : null
+    const lastUpdatedDisplay = lastUpdatedRaw ? formatDateValue(lastUpdatedRaw, 'Jamais renseigné') : 'Jamais renseigné'
+    const currencyDisplay = typeof inputsRecord.currency === 'string' && (inputsRecord.currency as string).trim().length
+      ? String(inputsRecord.currency).toUpperCase()
+      : 'XOF'
+
+    const moduleTitle = (module.title as string) ?? 'Analyse financière'
+
+    const instructions = [
+      'Renseignez vos données réelles sur les 6 à 12 derniers mois.',
+      "Laissez vide ce qui n’est pas applicable ; vous pourrez compléter plus tard.",
+      'Sauvegardez régulièrement avant de lancer une nouvelle analyse IA.'
+    ]
+
+    const { navItems: resolvedNavItems, activeNav } = resolveNavigationForStage(moduleCode, 'inputs')
+
+    const pageContent = (
+      <div class="esono-grid">
+        <section class="esono-hero esono-hero--vision">
+          <div class="esono-hero__header">
+            <div>
+              <h2 class="esono-hero__title">Inputs financiers</h2>
+              <p class="esono-hero__description">
+                Collectez vos indicateurs financiers clés pour générer un diagnostic crédible auprès des bailleurs et investisseurs.
+              </p>
+            </div>
+            <span class="esono-hero__badge">
+              <i class="fas fa-file-invoice-dollar"></i>
+              Étape 3 / 7
+            </span>
+          </div>
+          <div class="esono-hero__metrics">
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">{progressPercentage}%</p>
+              <p class="esono-hero__metric-label">Progression</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value" id="financeCompletionValue">{completionRate}%</p>
+              <p class="esono-hero__metric-label">Champs complétés</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value" id="financeLastUpdated">{lastUpdatedDisplay}</p>
+              <p class="esono-hero__metric-label">Dernière mise à jour</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value" id="financeCurrencyValue">{currencyDisplay}</p>
+              <p class="esono-hero__metric-label">Devise</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="esono-card esono-card--info">
+          <div class="esono-card__header">
+            <h2 class="esono-card__title">
+              <i class="fas fa-info-circle esono-card__title-icon"></i>
+              Comment remplir vos chiffres
+            </h2>
+          </div>
+          <div class="esono-card__body">
+            <ul class="esono-list">
+              {instructions.map((item) => (
+                <li class="esono-list__item">
+                  <i class="fas fa-check esono-list__icon"></i>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
+        <form id="financeInputsForm" class="esono-form" data-module={moduleCode}>
+          {FINANCIAL_SECTIONS.map((section) => (
+            <section class="esono-card" id={`section-${section.id}`}>
+              <div class="esono-card__header">
+                <h2 class="esono-card__title">
+                  <i class={`${section.icon} esono-card__title-icon`}></i>
+                  {section.title}
+                </h2>
+                <span class="esono-note esono-note--info">{section.description}</span>
+              </div>
+              <div class="esono-card__body">
+                <div class="esono-form__grid esono-form__grid--2">
+                  {section.fields.map((field) => {
+                    const fieldId = `finance-${field.key}`
+                    const value = getFieldValue(field.key)
+
+                    if (field.type === 'textarea') {
+                      return (
+                        <label class="esono-form__field esono-form__field--full" htmlFor={fieldId}>
+                          <span class="esono-form__label">{field.label}</span>
+                          <textarea
+                            id={fieldId}
+                            name={field.key}
+                            rows={4}
+                            placeholder={field.placeholder ?? ''}
+                            data-field-input
+                            class="esono-textarea"
+                          >{value}</textarea>
+                          {field.hint && <span class="esono-form__hint">{field.hint}</span>}
+                        </label>
+                      )
+                    }
+
+                    const inputType = field.type === 'text' ? 'text' : 'number'
+                    const stepValue = field.type === 'percent' ? '0.1' : field.type === 'number' ? '0.1' : '0.01'
+
+                    return (
+                      <label class={`esono-form__field ${field.type === 'percent' ? 'esono-form__field--compact' : ''}`} htmlFor={fieldId}>
+                        <span class="esono-form__label">{field.label}</span>
+                        <div class="esono-input-group">
+                          {field.type === 'currency' && (
+                            <span class="esono-input-group__prefix">
+                              <i class="fas fa-coins"></i>
+                            </span>
+                          )}
+                          <input
+                            id={fieldId}
+                            name={field.key}
+                            type={inputType}
+                            value={value}
+                            step={inputType === 'number' ? stepValue : undefined}
+                            inputmode={inputType === 'number' ? 'decimal' : undefined}
+                            placeholder={field.placeholder ?? ''}
+                            class="esono-input"
+                            data-field-input
+                          />
+                          {field.type === 'percent' && (
+                            <span class="esono-input-group__suffix">%</span>
+                          )}
+                        </div>
+                        {field.hint && <span class="esono-form__hint">{field.hint}</span>}
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            </section>
+          ))}
+
+          <div id="saveStatus" class="esono-alert" style="display: none;"></div>
+
+          <div class="esono-form__actions">
+            <button type="submit" class="esono-btn esono-btn--primary">
+              <i class="fas fa-save"></i>
+              Enregistrer mes données
+            </button>
+            <a href={`/module/${moduleCode}/analysis`} class="esono-btn esono-btn--secondary">
+              <i class="fas fa-robot"></i>
+              Lancer l’analyse IA
+            </a>
+          </div>
+        </form>
+      </div>
+    )
+
+    const extraScripts = `
+(() => {
+  const form = document.getElementById('financeInputsForm');
+  if (!form) {
+    return;
+  }
+  const moduleCode = form.dataset.module;
+  const statusEl = document.getElementById('saveStatus');
+  const lastUpdatedEl = document.getElementById('financeLastUpdated');
+  const completionEl = document.getElementById('financeCompletionValue');
+  const currencyEl = document.getElementById('financeCurrencyValue');
+  const submitBtn = form.querySelector('button[type="submit"]');
+  const totalFields = ${totalFieldCount};
+
+  const computeCompletion = () => {
+    if (!form) return 0;
+    let filled = 0;
+    form.querySelectorAll('[data-field-input]').forEach((element) => {
+      const value = element.value ?? '';
+      if (typeof value === 'string' && value.trim().length) {
+        filled += 1;
+      }
+    });
+    return totalFields > 0 ? Math.round((filled / totalFields) * 100) : 0;
+  };
+
+  const updateCompletion = () => {
+    if (completionEl) {
+      completionEl.textContent = computeCompletion() + '%';
+    }
+  };
+
+  form.addEventListener('input', updateCompletion);
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!moduleCode) {
+      return;
+    }
+
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.classList.add('is-loading');
+    }
+
+    if (statusEl) {
+      statusEl.style.display = 'none';
+      statusEl.classList.remove('esono-alert--success', 'esono-alert--danger');
+      statusEl.textContent = '';
+      statusEl.classList.add('esono-alert');
+    }
+
+    const formData = new FormData(form);
+    const payload = {};
+    formData.forEach((value, key) => {
+      payload[key] = typeof value === 'string' ? value : '';
+    });
+
+    try {
+      const response = await fetch('/api/finance/inputs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ moduleCode, payload })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'Sauvegarde impossible');
+      }
+
+      if (statusEl) {
+        statusEl.textContent = 'Données financières enregistrées.';
+        statusEl.classList.add('esono-alert--success');
+        statusEl.style.display = 'flex';
+      }
+
+      const updated = data?.inputs;
+      if (updated) {
+        if (lastUpdatedEl && updated.updated_at) {
+          try {
+            const date = new Date(updated.updated_at);
+            lastUpdatedEl.textContent = date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+          } catch (err) {
+            console.warn('Impossible de formater la date', err);
+          }
+        }
+        if (currencyEl && updated.currency) {
+          currencyEl.textContent = String(updated.currency).toUpperCase();
+        }
+      }
+
+      updateCompletion();
+    } catch (error) {
+      console.error('Finance inputs save error:', error);
+      if (statusEl) {
+        statusEl.textContent = error instanceof Error ? error.message : 'Erreur lors de la sauvegarde.';
+        statusEl.classList.add('esono-alert--danger');
+        statusEl.style.display = 'flex';
+      }
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.classList.remove('is-loading');
+      }
+    }
+  });
+})();
+`.replace(/</g, '\\u003c')
+
+    return c.html(
+      renderEsanoLayout({
+        pageTitle: moduleTitle,
+        pageDescription: 'Étape 3 — Inputs financiers',
+        breadcrumb: [
+          { label: 'Tableau de bord', href: '/dashboard' },
+          { label: moduleTitle, href: `/module/${moduleCode}` },
+          { label: 'Inputs financiers' }
+        ],
+        activeNav,
+        navItems: resolvedNavItems,
+        content: pageContent,
+        extraScripts
+      })
+    )
+  } catch (error) {
+    console.error('Finance inputs page error:', error)
     return c.redirect('/dashboard')
   }
 })
@@ -561,268 +2071,353 @@ moduleRoutes.get('/module/:code/questions', async (c) => {
       return c.redirect(`/module/${moduleCode}`)
     }
 
-    return c.html(
-      <html lang="fr">
-        <head>
-          <meta charset="UTF-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <title>{module.title as string} - Questions Guidées</title>
-          <script src="https://cdn.tailwindcss.com"></script>
-          <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet" />
-          <link href="/static/style.css" rel="stylesheet" />
-        </head>
-        <body class="bg-gray-50">
-          <div class="min-h-screen py-8 px-4">
-            <div class="max-w-6xl mx-auto">
-              {/* Header */}
-              <div class="mb-6 flex items-center justify-between">
-                <a href="/dashboard" class="text-blue-600 hover:text-blue-700 font-medium">
-                  <i class="fas fa-arrow-left mr-2"></i>Retour au dashboard
-                </a>
-                <div class="text-sm text-gray-600">
-                  <i class="fas fa-edit mr-2"></i>Étape 3/7 - Questions guidées
-                </div>
-              </div>
+    const moduleTitle = module.title as string
+    const guidedQuestions = content.guided_questions!
+    const progressPercentage = Math.round((3 / 7) * 100)
+    const { navItems: resolvedNavItems, activeNav } = resolveNavigationForStage(moduleCode, 'inputs')
 
-              {/* Progress Bar */}
-              <div class="mb-8 bg-white rounded-lg shadow-sm p-4">
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-sm font-medium text-gray-700">Progression du module</span>
-                  <span class="text-sm text-gray-600">3/7</span>
-                </div>
-                <div class="w-full bg-gray-200 rounded-full h-2">
-                  <div class="bg-blue-600 h-2 rounded-full transition-all" style="width: 43%"></div>
-                </div>
-              </div>
-
-              {/* Main Content */}
-              <div class="bg-white rounded-xl shadow-lg p-8 mb-6">
-                <div class="mb-8">
-                  <h1 class="text-3xl font-bold text-gray-900 mb-3">Business Model Canvas - 9 Blocs</h1>
-                  <p class="text-gray-600 mb-4">
-                    Complétez chaque bloc de votre Business Model Canvas. Prenez le temps de réfléchir à chaque question,
-                    les exemples et conseils vous guideront.
-                  </p>
-                  <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                    <div class="flex items-start gap-3">
-                      <i class="fas fa-lightbulb text-blue-600 mt-1"></i>
-                      <div class="text-sm">
-                        <p class="text-blue-900 font-medium mb-1">Conseil :</p>
-                        <p class="text-blue-800">Vos réponses seront sauvegardées automatiquement. Soyez précis et concret dans vos descriptions.</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <form id="canvasForm" class="space-y-8">
-                  {content.guided_questions!.map((q, index) => (
-                    <div class="border-b border-gray-200 pb-8 last:border-0">
-                      <div class="grid md:grid-cols-3 gap-6">
-                        {/* Question Panel */}
-                        <div class="md:col-span-2">
-                          <div class="flex items-start gap-3 mb-4">
-                            <div class="w-10 h-10 bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-lg flex items-center justify-center flex-shrink-0 font-bold">
-                              {index + 1}
-                            </div>
-                            <div class="flex-1">
-                              <h3 class="text-xl font-bold text-gray-900 mb-2">{q.section}</h3>
-                              <p class="text-gray-700 font-medium mb-4">{q.question}</p>
-                              
-                              <textarea
-                                id={`question_${q.id}`}
-                                name={`question_${q.id}`}
-                                rows={6}
-                                required
-                                class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all resize-y"
-                                placeholder={q.placeholder}
-                              >{answersMap.get(q.id) || ''}</textarea>
-                              
-                              <div class="flex items-center justify-between mt-3">
-                                <span class="text-sm text-gray-500">
-                                  <i class="far fa-keyboard mr-1"></i>
-                                  <span id={`charCount_${q.id}`}>0</span> caractères
-                                </span>
-                                <button
-                                  type="button"
-                                  onclick={`saveAnswer(${q.id}, '${moduleCode}')`}
-                                  class="text-sm text-blue-600 hover:text-blue-700 font-medium"
-                                >
-                                  <i class="fas fa-save mr-1"></i>Sauvegarder
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Help Panel */}
-                        <div class="space-y-4">
-                          {/* Help Text */}
-                          <div class="bg-purple-50 border border-purple-200 rounded-lg p-4">
-                            <h4 class="flex items-center gap-2 font-semibold text-purple-900 mb-2">
-                              <i class="fas fa-info-circle"></i>
-                              Aide
-                            </h4>
-                            <p class="text-sm text-purple-800">{q.help_text}</p>
-                          </div>
-
-                          {/* Example */}
-                          <div class="bg-green-50 border border-green-200 rounded-lg p-4">
-                            <h4 class="flex items-center gap-2 font-semibold text-green-900 mb-2">
-                              <i class="fas fa-check-circle"></i>
-                              Exemple
-                            </h4>
-                            <p class="text-sm text-green-800">{q.example}</p>
-                          </div>
-
-                          {/* Common Mistake */}
-                          <div class="bg-red-50 border border-red-200 rounded-lg p-4">
-                            <h4 class="flex items-center gap-2 font-semibold text-red-900 mb-2">
-                              <i class="fas fa-exclamation-triangle"></i>
-                              À éviter
-                            </h4>
-                            <p class="text-sm text-red-800">{q.common_mistake}</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-
-                  {/* Save Status */}
-                  <div id="saveStatus" class="hidden">
-                    <div class="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
-                      <i class="fas fa-check-circle text-green-600 text-xl"></i>
-                      <span class="text-green-800 font-medium">Réponses sauvegardées avec succès !</span>
-                    </div>
-                  </div>
-
-                  {/* Submit Button */}
-                  <div class="flex items-center justify-between pt-6 border-t border-gray-200">
-                    <div class="text-sm text-gray-600">
-                      <i class="fas fa-clock mr-2"></i>
-                      Temps estimé : 30-45 minutes
-                    </div>
-                    <button
-                      type="submit"
-                      class="px-8 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold rounded-lg transition-all shadow-md hover:shadow-lg"
-                    >
-                      Soumettre pour analyse
-                      <i class="fas fa-arrow-right ml-2"></i>
-                    </button>
-                  </div>
-                </form>
-              </div>
+    const pageContent = (
+      <div class="esono-grid">
+        <section class="esono-hero">
+          <div class="esono-hero__header">
+            <div>
+              <h2 class="esono-hero__title">Questions guidées</h2>
+              <p class="esono-hero__description">
+                Formalisez chaque bloc du Business Model Canvas avec des réponses précises et actionnables.
+              </p>
+            </div>
+            <span class="esono-hero__badge">
+              <i class="fas fa-pen-to-square"></i>
+              Étape 3 / 7
+            </span>
+          </div>
+          <div class="esono-hero__metrics">
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">{progressPercentage}%</p>
+              <p class="esono-hero__metric-label">Progression</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">{guidedQuestions.length}</p>
+              <p class="esono-hero__metric-label">Blocs à compléter</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">Auto-save</p>
+              <p class="esono-hero__metric-label">Sécurisé</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">B3</p>
+              <p class="esono-hero__metric-label">Module</p>
             </div>
           </div>
+        </section>
 
-          <script dangerouslySetInnerHTML={{__html: `
-            const moduleCode = '${moduleCode}';
-            const progressId = ${progress?.id || 0};
-            
-            // Character counter
-            document.querySelectorAll('textarea').forEach(textarea => {
-              const id = textarea.id.replace('question_', '');
-              const counter = document.getElementById('charCount_' + id);
-              
-              function updateCounter() {
-                counter.textContent = textarea.value.length;
-              }
-              
-              textarea.addEventListener('input', updateCounter);
-              updateCounter();
-            });
-            
-            // Auto-save function
-            async function saveAnswer(questionId, moduleCode) {
-              const textarea = document.getElementById('question_' + questionId);
-              const answer = textarea.value.trim();
-              
-              if (!answer) {
-                alert('Veuillez écrire une réponse avant de sauvegarder.');
-                return;
-              }
-              
-              try {
-                const response = await fetch('/api/module/answer', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    module_code: moduleCode,
-                    question_number: questionId,
-                    answer: answer
-                  })
-                });
-                
-                if (response.ok) {
-                  // Show save status
-                  const status = document.getElementById('saveStatus');
-                  status.classList.remove('hidden');
-                  setTimeout(() => status.classList.add('hidden'), 3000);
-                  
-                  // Visual feedback
-                  textarea.classList.add('border-green-500');
-                  setTimeout(() => textarea.classList.remove('border-green-500'), 2000);
-                }
-              } catch (err) {
-                console.error('Save error:', err);
-                alert('Erreur lors de la sauvegarde. Veuillez réessayer.');
-              }
-            }
-            
-            // Form submission
-            document.getElementById('canvasForm').addEventListener('submit', async (e) => {
-              e.preventDefault();
-              
-              // Check all questions answered
-              const textareas = document.querySelectorAll('textarea[required]');
-              let allAnswered = true;
-              
-              textareas.forEach(textarea => {
-                if (!textarea.value.trim()) {
-                  allAnswered = false;
-                  textarea.classList.add('border-red-500');
-                }
-              });
-              
-              if (!allAnswered) {
-                alert('Veuillez répondre à toutes les questions avant de soumettre.');
-                return;
-              }
-              
-              // Save all answers
-              const answers = [];
-              textareas.forEach(textarea => {
-                const id = parseInt(textarea.id.replace('question_', ''));
-                answers.push({
-                  question_number: id,
-                  answer: textarea.value.trim()
-                });
-              });
-              
-              try {
-                const response = await fetch('/api/module/submit-answers', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    module_code: moduleCode,
-                    answers: answers
-                  })
-                });
-                
-                if (response.ok) {
-                  // Redirect to next step (B4 - Analysis)
-                  window.location.href = '/module/' + moduleCode + '/analysis';
-                }
-              } catch (err) {
-                console.error('Submit error:', err);
-                alert('Erreur lors de la soumission. Veuillez réessayer.');
-              }
-            });
-            
-            // Make saveAnswer global
-            window.saveAnswer = saveAnswer;
-          `}} />
-        </body>
-      </html>
+        <section class="esono-card">
+          <div class="esono-card__header">
+            <h2 class="esono-card__title">
+              <i class="fas fa-diagram-project esono-card__title-icon"></i>
+              Business Model Canvas – 9 blocs
+            </h2>
+            <span class="esono-note esono-note--info">
+              <i class="fas fa-shield-check"></i>
+              Sauvegarde automatique à la demande
+            </span>
+          </div>
+          <div class="esono-card__body">
+            <div class="esono-form__meta esono-mb-lg">
+              <span>
+                <i class="fas fa-circle-info"></i>
+                Détaillez des éléments concrets pour préparer l’analyse IA
+              </span>
+              <span>
+                <i class="fas fa-stopwatch"></i>
+                Temps estimé : 30 — 45 min
+              </span>
+            </div>
+
+            <div id="saveStatus" class="esono-alert esono-alert--success" style="display: none;">
+              <span class="esono-alert__icon">
+                <i class="fas fa-circle-check"></i>
+              </span>
+              <div class="esono-alert__content">
+                <h3 class="esono-alert__title" id="saveStatusTitle">Réponse sauvegardée</h3>
+                <p class="esono-alert__text" id="saveStatusText">
+                  Votre réponse est enregistrée et prête pour l’analyse.
+                </p>
+              </div>
+            </div>
+
+            <div class="esono-progress esono-mb-lg">
+              <div class="esono-progress__bar esono-progress__bar--accent" style={`width: ${progressPercentage}%`}></div>
+            </div>
+
+            <form id="canvasForm" class="esono-form">
+              {guidedQuestions.map((q, index) => (
+                <div class="esono-card esono-mb-lg">
+                  <div class="esono-card__body">
+                    <div class="esono-split esono-split--2-1">
+                      <div>
+                        <div class="esono-form__group">
+                          <span class="esono-badge esono-badge--accent">
+                            Bloc {index + 1}
+                          </span>
+                          <h3 class="esono-page-title" style="font-size: 1.125rem; margin-top: var(--spacing-sm);">
+                            {q.section}
+                          </h3>
+                          <p class="esono-text-muted" style="margin: 0;">
+                            {q.question}
+                          </p>
+                        </div>
+
+                        <div class="esono-form__group esono-mt-lg">
+                          <label class="esono-form__label" for={`question_${q.id}`}>
+                            <i class="fas fa-pen"></i>
+                            Votre réponse
+                          </label>
+                          <textarea
+                            id={`question_${q.id}`}
+                            name={`question_${q.id}`}
+                            class="esono-textarea js-question-textarea"
+                            data-question-id={q.id}
+                            rows={6}
+                            required
+                            placeholder={q.placeholder}
+                          >{(answersMap.get(q.id) as string | undefined) ?? ''}</textarea>
+                          <div class="esono-form__meta">
+                            <span>
+                              <i class="far fa-keyboard"></i>
+                              <span data-char-counter={q.id}>0</span> caractères
+                            </span>
+                            <button
+                              type="button"
+                              class="esono-btn esono-btn--secondary esono-btn--sm js-save-answer"
+                              data-question-id={q.id}
+                            >
+                              <i class="fas fa-cloud-arrow-up"></i>
+                              Sauvegarder ce bloc
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style="display: flex; flex-direction: column; gap: var(--spacing-md);">
+                        <div class="esono-note esono-note--info">
+                          <strong style="display: block; margin-bottom: 4px;">Conseil du coach</strong>
+                          <span>{q.help_text}</span>
+                        </div>
+                        <div class="esono-note esono-note--success">
+                          <strong style="display: block; margin-bottom: 4px;">Exemple inspirant</strong>
+                          <span>{q.example}</span>
+                        </div>
+                        <div class="esono-note esono-note--danger">
+                          <strong style="display: block; margin-bottom: 4px;">À éviter</strong>
+                          <span>{q.common_mistake}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              <div class="esono-form__actions">
+                <button type="submit" class="esono-btn esono-btn--primary">
+                  Soumettre pour analyse IA
+                  <i class="fas fa-arrow-right"></i>
+                </button>
+              </div>
+            </form>
+          </div>
+        </section>
+      </div>
+    )
+
+    const extraScripts = `
+(() => {
+  const moduleCode = ${JSON.stringify(moduleCode)};
+  const saveStatus = document.getElementById('saveStatus');
+  const saveStatusTitle = document.getElementById('saveStatusTitle');
+  const saveStatusText = document.getElementById('saveStatusText');
+  const form = document.getElementById('canvasForm');
+  if (!form) {
+    return;
+  }
+
+  const textareas = Array.from(document.querySelectorAll('.js-question-textarea'));
+  let statusTimeout = null;
+
+  const setStatus = (type, title, message) => {
+    if (!saveStatus) {
+      return;
+    }
+
+    saveStatus.style.display = 'flex';
+    saveStatus.classList.remove('esono-alert--success', 'esono-alert--danger', 'esono-alert--info');
+
+    let targetClass = 'esono-alert--success';
+    if (type === 'error') {
+      targetClass = 'esono-alert--danger';
+    } else if (type === 'info') {
+      targetClass = 'esono-alert--info';
+    }
+    saveStatus.classList.add(targetClass);
+
+    if (saveStatusTitle) {
+      saveStatusTitle.textContent = title;
+    }
+    if (saveStatusText) {
+      saveStatusText.textContent = message;
+    }
+
+    if (statusTimeout) {
+      window.clearTimeout(statusTimeout);
+    }
+    statusTimeout = window.setTimeout(() => {
+      saveStatus.style.display = 'none';
+    }, 4000);
+  };
+
+  const updateCounter = (textarea) => {
+    const questionId = textarea.dataset.questionId;
+    if (!questionId) {
+      return;
+    }
+    const counter = document.querySelector('[data-char-counter="' + questionId + '"]');
+    if (counter) {
+      counter.textContent = textarea.value.length;
+    }
+  };
+
+  textareas.forEach((textarea) => {
+    updateCounter(textarea);
+    textarea.addEventListener('input', () => {
+      textarea.classList.remove('is-error');
+      updateCounter(textarea);
+    });
+  });
+
+  async function saveAnswer(questionId) {
+    const textarea = document.querySelector('.js-question-textarea[data-question-id="' + questionId + '"]');
+    if (!textarea) {
+      return;
+    }
+
+    const value = textarea.value.trim();
+    if (!value) {
+      textarea.classList.add('is-error');
+      setStatus('error', 'Réponse requise', 'Veuillez renseigner ce bloc avant de sauvegarder.');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/module/answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          module_code: moduleCode,
+          question_number: Number(questionId),
+          answer: value
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('request_failed');
+      }
+
+      textarea.classList.remove('is-error');
+      textarea.classList.add('is-success');
+      setStatus('success', 'Réponse sauvegardée', 'Votre bloc est bien enregistré.');
+      window.setTimeout(() => {
+        textarea.classList.remove('is-success');
+      }, 2000);
+    } catch (error) {
+      console.error('Save error:', error);
+      setStatus('error', 'Erreur de sauvegarde', 'Impossible de sauvegarder pour le moment. Réessayez plus tard.');
+    }
+  }
+
+  document.querySelectorAll('.js-save-answer').forEach((button) => {
+    button.addEventListener('click', () => {
+      const questionId = button.getAttribute('data-question-id');
+      if (questionId) {
+        saveAnswer(questionId);
+      }
+    });
+  });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+
+    let allAnswered = true;
+    const answers = [];
+
+    textareas.forEach((textarea) => {
+      const questionId = Number(textarea.dataset.questionId);
+      const value = textarea.value.trim();
+      if (!value) {
+        allAnswered = false;
+        textarea.classList.add('is-error');
+      } else {
+        answers.push({
+          question_number: questionId,
+          answer: value
+        });
+      }
+    });
+
+    if (!allAnswered) {
+      setStatus('error', 'Champs manquants', 'Complétez tous les blocs avant de soumettre pour analyse.');
+      return;
+    }
+
+    try {
+      setStatus('info', 'Analyse IA en cours', 'Nous envoyons vos réponses à l’IA pour analyse.');
+      const response = await fetch('/api/module/submit-answers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          module_code: moduleCode,
+          answers
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('submit_failed');
+      }
+
+      window.location.href = '/module/' + moduleCode + '/analysis';
+    } catch (error) {
+      console.error('Submit error:', error);
+      setStatus('error', 'Soumission impossible', 'Une erreur est survenue lors de l’envoi. Veuillez réessayer.');
+    }
+  });
+})();
+`
+
+    return c.html(
+      renderEsanoLayout({
+        pageTitle: moduleTitle,
+        pageDescription: 'Étape 3 — Questions guidées',
+        breadcrumb: [
+          { label: 'Tableau de bord', href: '/dashboard' },
+          { label: moduleTitle, href: `/module/${moduleCode}` },
+          { label: 'Questions guidées' }
+        ],
+        activeNav,
+        navItems: resolvedNavItems,
+        content: pageContent,
+        headerActions: (
+          <div class="esono-form__actions">
+            <a href={`/module/${moduleCode}/quiz`} class="esono-btn esono-btn--ghost">
+              <i class="fas fa-circle-arrow-left"></i>
+              Revoir le quiz
+            </a>
+            <a href={`/module/${moduleCode}/analysis`} class="esono-btn esono-btn--primary">
+              Prévisualiser l’analyse IA
+              <i class="fas fa-arrow-right"></i>
+            </a>
+          </div>
+        ),
+        extraScripts
+      })
     )
   } catch (error) {
     console.error('Questions error:', error)
@@ -840,6 +2435,11 @@ moduleRoutes.get('/module/:code/analysis', async (c) => {
     if (!payload) return c.redirect('/login')
 
     const moduleCode = c.req.param('code')
+    const variant = getModuleVariant(moduleCode)
+
+    if (variant === 'finance') {
+      return c.redirect(`/module/${moduleCode}/inputs`)
+    }
     
     const module = await c.env.DB.prepare(`
       SELECT * FROM modules WHERE module_code = ?
@@ -847,100 +2447,315 @@ moduleRoutes.get('/module/:code/analysis', async (c) => {
 
     if (!module) return c.redirect('/dashboard')
 
-    // Get progress and answers
     const progress = await c.env.DB.prepare(`
       SELECT * FROM progress WHERE user_id = ? AND module_id = ?
     `).bind(payload.userId, module.id).first()
 
-    const answers = await c.env.DB.prepare(`
-      SELECT question_number, user_response FROM questions WHERE progress_id = ?
-      ORDER BY question_number
-    `).bind(progress?.id || 0).all()
+    if (!progress) {
+      return c.redirect(`/module/${moduleCode}/questions`)
+    }
 
-    // Generate feedback
-    const answersMap = new Map()
-    answers.results.forEach((a: any) => {
-      answersMap.set(a.question_number, a.user_response)
+    const answers = await c.env.DB.prepare(`
+      SELECT question_number, user_response
+      FROM questions
+      WHERE progress_id = ?
+      ORDER BY question_number
+    `).bind(progress.id).all()
+
+    if (!answers.results.length || answers.results.every((a: any) => !a.user_response || !a.user_response.trim())) {
+      return c.redirect(`/module/${moduleCode}/questions`)
+    }
+
+    const content = moduleCode === 'step1_business_model' ? businessModelCanvasContent : null
+    const sectionDetailsMap = new Map<number, { section: string, question: string }>()
+    content?.guided_questions?.forEach((q) => {
+      sectionDetailsMap.set(q.id, { section: q.section, question: q.question })
     })
+
+    const answersMap = new Map<number, string>()
+    answers.results.forEach((a: any) => {
+      if (a.user_response && a.user_response.trim()) {
+        answersMap.set(a.question_number, a.user_response)
+      }
+    })
+
+    if (!answersMap.size) {
+      return c.redirect(`/module/${moduleCode}/questions`)
+    }
     
     const feedback = generateMockFeedback(answersMap)
     const overallScore = calculateOverallScore(feedback)
     const scoreInfo = getScoreLabel(overallScore)
 
-    return c.html(
-      <html lang="fr">
-        <head>
-          <meta charset="UTF-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <title>{module.title as string} - Analyse IA</title>
-          <script src="https://cdn.tailwindcss.com"></script>
-          <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet" />
-          <link href="/static/style.css" rel="stylesheet" />
-        </head>
-        <body class="bg-gray-50">
-          <div class="min-h-screen py-8 px-4">
-            <div class="max-w-5xl mx-auto">
-              {/* Header */}
-              <div class="mb-6 flex items-center justify-between">
-                <a href="/dashboard" class="text-blue-600 hover:text-blue-700 font-medium">
-                  <i class="fas fa-arrow-left mr-2"></i>Retour au dashboard
-                </a>
-                <div class="text-sm text-gray-600">
-                  <i class="fas fa-robot mr-2"></i>Étape 4/7 - Analyse IA
+    const overallPalette = getAnalysisPalette(scoreInfo.color)
+
+    const sectionSummaries = answers.results
+      .filter((a: any) => a.user_response && a.user_response.trim())
+      .map((a: any) => {
+        const sectionName = getSectionName(a.question_number)
+        const details = sectionDetailsMap.get(a.question_number)
+        const sectionFeedbackItems = feedback.filter((item) => item.section === sectionName)
+        const strengths = sectionFeedbackItems.filter((item) => item.type === 'strength')
+        const suggestions = sectionFeedbackItems.filter((item) => item.type === 'suggestion')
+        const questionsItems = sectionFeedbackItems.filter((item) => item.type === 'question')
+        const averageScore = sectionFeedbackItems.length
+          ? Math.round(sectionFeedbackItems.reduce((sum, item) => sum + item.score, 0) / sectionFeedbackItems.length)
+          : 0
+        const percentage = Math.round((averageScore / 5) * 100)
+        const sectionScoreInfo = getScoreLabel(percentage)
+
+        return {
+          questionId: a.question_number,
+          sectionName,
+          questionText: details?.question,
+          answer: a.user_response,
+          strengths,
+          suggestions,
+          questions: questionsItems,
+          percentage,
+          scoreInfo: sectionScoreInfo,
+          palette: getAnalysisPalette(sectionScoreInfo.color)
+        }
+      })
+
+    const strengthsCount = feedback.filter((item) => item.type === 'strength').length
+    const suggestionsCount = feedback.filter((item) => item.type === 'suggestion').length
+    const questionsCount = feedback.filter((item) => item.type === 'question').length
+    const sectionsNeedingWork = sectionSummaries.filter((section) => section.suggestions.length || section.questions.length).length
+
+    const topSuggestions = sectionSummaries
+      .flatMap((section) => section.suggestions.map((item) => ({
+        section: section.sectionName,
+        questionId: section.questionId,
+        message: item.message,
+        score: item.score
+      })))
+      .sort((a, b) => a.score - b.score)
+      .slice(0, 3)
+
+    const summaryPayload = {
+      overallScore,
+      overallLabel: scoreInfo.label,
+      palette: scoreInfo.color,
+      strengthsCount,
+      suggestionsCount,
+      questionsCount,
+      sectionsNeedingWork,
+      topSuggestions
+    }
+
+    const sanitizeItems = (items: typeof sectionSummaries[number]['strengths']) =>
+      items.map((item) => ({ message: item.message, score: item.score }))
+
+    for (const section of sectionSummaries) {
+      const payload = {
+        sectionName: section.sectionName,
+        questionId: section.questionId,
+        questionText: section.questionText,
+        percentage: section.percentage,
+        scoreLabel: section.scoreInfo.label,
+        strengths: sanitizeItems(section.strengths),
+        suggestions: sanitizeItems(section.suggestions),
+        questions: sanitizeItems(section.questions)
+      }
+
+      await c.env.DB.prepare(`
+        UPDATE questions
+        SET ai_feedback = ?,
+            quality_score = ?,
+            feedback_updated_at = datetime('now')
+        WHERE progress_id = ? AND question_number = ?
+      `)
+        .bind(JSON.stringify(payload), section.percentage, progress.id, section.questionId)
+        .run()
+    }
+
+    await c.env.DB.prepare(`
+      UPDATE progress
+      SET ai_score = ?,
+          ai_feedback_json = ?,
+          ai_last_analysis = datetime('now'),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `)
+      .bind(overallScore, JSON.stringify(summaryPayload), progress.id)
+      .run()
+
+    const moduleTitle = module.title as string
+    const scoreIcon = (SCORE_BADGE_STYLES[scoreInfo.label as keyof typeof SCORE_BADGE_STYLES] ?? SCORE_BADGE_STYLES.default).icon
+    const overallTone = getScoreToneStyles(scoreInfo.label)
+    const { navItems: resolvedNavItems, activeNav } = resolveNavigationForStage(moduleCode, 'analysis')
+
+    const pageContent = (
+      <div class="esono-grid">
+        <section class="esono-hero">
+          <div class="esono-hero__header">
+            <div>
+              <h2 class="esono-hero__title">Analyse IA du Canvas</h2>
+              <p class="esono-hero__description">
+                L’IA a passé en revue vos réponses et met en évidence vos forces ainsi que les axes à renforcer avant validation.
+              </p>
+            </div>
+            <span class="esono-hero__badge">
+              <i class="fas fa-robot"></i>
+              Étape 4 / 7
+            </span>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: var(--spacing-xl); align-items: center;">
+            <div class="esono-hero__score-central" style={`background: ${overallTone.barColor};`}>
+              <i class={scoreIcon} style="display: block; color: rgba(255, 255, 255, 0.85); font-size: 1.25rem; margin-bottom: var(--spacing-sm);"></i>
+              <div class="esono-hero__score-value">{overallScore}%</div>
+              <div class="esono-hero__score-label">{scoreInfo.label}</div>
+            </div>
+            <div class="esono-hero__metrics" style="flex: 1; min-width: 260px;">
+              <div class="esono-hero__metric esono-hero__metric--success">
+                <p class="esono-hero__metric-value">{strengthsCount}</p>
+                <p class="esono-hero__metric-label">Forces détectées</p>
+              </div>
+              <div class="esono-hero__metric esono-hero__metric--warning">
+                <p class="esono-hero__metric-value">{suggestionsCount}</p>
+                <p class="esono-hero__metric-label">Axes d’amélioration</p>
+              </div>
+              <div class="esono-hero__metric esono-hero__metric--info">
+                <p class="esono-hero__metric-value">{questionsCount}</p>
+                <p class="esono-hero__metric-label">Questions ouvertes</p>
+              </div>
+              <div class="esono-hero__metric">
+                <p class="esono-hero__metric-value">{sectionsNeedingWork}</p>
+                <p class="esono-hero__metric-label">Blocs à consolider</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="esono-card">
+          <div class="esono-card__body">
+            <div class="esono-grid esono-grid--3 esono-mb-lg">
+              <div class="esono-kpi-card">
+                <div class="esono-kpi-card__header">
+                  <span class="esono-kpi-card__label">Forces principales</span>
+                  <span class="esono-kpi-card__icon esono-kpi-card__icon--success">
+                    <i class="fas fa-arrow-trend-up"></i>
+                  </span>
+                </div>
+                <div class="esono-kpi-card__value">{strengthsCount}</div>
+                <div class="esono-kpi-card__footer">
+                  Observations positives relevées par l’IA.
                 </div>
               </div>
-
-              {/* Progress Bar */}
-              <div class="mb-8 bg-white rounded-lg shadow-sm p-4">
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-sm font-medium text-gray-700">Progression du module</span>
-                  <span class="text-sm text-gray-600">4/7</span>
+              <div class="esono-kpi-card">
+                <div class="esono-kpi-card__header">
+                  <span class="esono-kpi-card__label">Axes à renforcer</span>
+                  <span class="esono-kpi-card__icon esono-kpi-card__icon--warning">
+                    <i class="fas fa-lightbulb"></i>
+                  </span>
                 </div>
-                <div class="w-full bg-gray-200 rounded-full h-2">
-                  <div class="bg-blue-600 h-2 rounded-full transition-all" style="width: 57%"></div>
-                </div>
-              </div>
-
-              {/* Overall Score Card */}
-              <div class={`mb-8 bg-gradient-to-br from-${scoreInfo.color}-500 to-${scoreInfo.color}-600 text-white rounded-xl shadow-lg p-8`}>
-                <div class="flex items-center justify-between">
-                  <div>
-                    <h1 class="text-3xl font-bold mb-2">Analyse de votre Canvas</h1>
-                    <p class="text-white/90">Notre IA a analysé vos réponses et vous propose des améliorations</p>
-                  </div>
-                  <div class="text-right">
-                    <div class="text-6xl font-bold mb-2">{overallScore}%</div>
-                    <div class="text-xl font-semibold">{scoreInfo.label}</div>
-                  </div>
+                <div class="esono-kpi-card__value">{suggestionsCount}</div>
+                <div class="esono-kpi-card__footer">
+                  Recommandations IA pour clarifier ou chiffrer vos blocs.
                 </div>
               </div>
+              <div class="esono-kpi-card">
+                <div class="esono-kpi-card__header">
+                  <span class="esono-kpi-card__label">Questions de suivi</span>
+                  <span class="esono-kpi-card__icon esono-kpi-card__icon--primary">
+                    <i class="fas fa-question-circle"></i>
+                  </span>
+                </div>
+                <div class="esono-kpi-card__value">{questionsCount}</div>
+                <div class="esono-kpi-card__footer">
+                  Points à détailler auprès du coach ou des bailleurs.
+                </div>
+              </div>
+            </div>
 
-              {/* Feedback by Section */}
-              <div class="space-y-6 mb-8">
-                {feedback.map((item, index) => {
-                  const iconMap = {
-                    strength: { icon: 'check-circle', color: 'green', bg: 'green-50', border: 'green-200' },
-                    suggestion: { icon: 'lightbulb', color: 'yellow', bg: 'yellow-50', border: 'yellow-200' },
-                    question: { icon: 'question-circle', color: 'blue', bg: 'blue-50', border: 'blue-200' }
-                  }
-                  const style = iconMap[item.type]
-                  
+            <div class="esono-split esono-split--3-2">
+              <div style="display: flex; flex-direction: column; gap: var(--spacing-lg);">
+                {sectionSummaries.map((section) => {
+                  const tone = getScoreToneStyles(section.scoreInfo.label)
+                  const sectionIcon = (SCORE_BADGE_STYLES[section.scoreInfo.label as keyof typeof SCORE_BADGE_STYLES] ?? SCORE_BADGE_STYLES.default).icon
                   return (
-                    <div class={`bg-${style.bg} border border-${style.border} rounded-lg p-6`}>
-                      <div class="flex items-start gap-4">
-                        <div class={`w-12 h-12 bg-${style.color}-100 rounded-lg flex items-center justify-center flex-shrink-0`}>
-                          <i class={`fas fa-${style.icon} text-2xl text-${style.color}-600`}></i>
+                    <div
+                      class="esono-card"
+                      key={`section-${section.questionId}`}
+                      style={`border-color: ${tone.borderColor}; box-shadow: var(--shadow-sm);`}
+                    >
+                      <div
+                        class="esono-card__header"
+                        style={`background: ${tone.backgroundColor}; border-bottom: 1px solid ${tone.borderColor};`}
+                      >
+                        <div>
+                          <h3 class="esono-card__title" style={`color: ${tone.badgeColor};`}>
+                            <i class={sectionIcon} style={`color: ${tone.badgeColor};`}></i>
+                            {section.sectionName}
+                          </h3>
+                          {section.questionText && (
+                            <p class="esono-text-sm esono-text-muted" style="margin-top: 4px;">
+                              {section.questionText}
+                            </p>
+                          )}
                         </div>
-                        <div class="flex-1">
-                          <div class="flex items-center justify-between mb-2">
-                            <h3 class={`font-bold text-${style.color}-900`}>{item.section}</h3>
-                            <div class="flex gap-1">
-                              {[1, 2, 3, 4, 5].map(star => (
-                                <i class={`fas fa-star text-sm ${star <= item.score ? `text-${style.color}-500` : 'text-gray-300'}`}></i>
-                              ))}
-                            </div>
+                        <div style="text-align: right;">
+                          <span
+                            class="esono-badge"
+                            style={`background: ${tone.badgeBackground}; color: ${tone.badgeColor};`}
+                          >
+                            {section.percentage}% · {section.scoreInfo.label}
+                          </span>
+                          <div class="esono-progress esono-mt-lg" style="width: 220px;">
+                            <div
+                              class="esono-progress__bar"
+                              style={`width: ${section.percentage}%; background: ${tone.barColor};`}
+                            ></div>
                           </div>
-                          <p class={`text-${style.color}-800`}>{item.message}</p>
+                        </div>
+                      </div>
+
+                      <div class="esono-card__body" style="display: flex; flex-direction: column; gap: var(--spacing-md);">
+                        <div class="esono-note">
+                          <strong style="display: block; margin-bottom: 4px;">Réponse actuelle</strong>
+                          <span style="white-space: pre-line;">{section.answer}</span>
+                        </div>
+
+                        <div style="display: grid; gap: var(--spacing-md); grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+                          {section.strengths.length > 0 && (
+                            <div class="esono-note esono-note--success">
+                              <strong style="display: block; margin-bottom: 4px;">Forces détectées</strong>
+                              <ul style="margin: 0; padding-left: var(--spacing-md);">
+                                {section.strengths.map((item, idx) => (
+                                  <li key={`strength-${section.questionId}-${idx}`} class="esono-text-sm">
+                                    {item.message}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {section.suggestions.length > 0 && (
+                            <div class="esono-note esono-note--warning">
+                              <strong style="display: block; margin-bottom: 4px;">Axes d’amélioration</strong>
+                              <ul style="margin: 0; padding-left: var(--spacing-md);">
+                                {section.suggestions.map((item, idx) => (
+                                  <li key={`suggestion-${section.questionId}-${idx}`} class="esono-text-sm">
+                                    {item.message}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {section.questions.length > 0 && (
+                            <div class="esono-note esono-note--info">
+                              <strong style="display: block; margin-bottom: 4px;">Points à clarifier</strong>
+                              <ul style="margin: 0; padding-left: var(--spacing-md);">
+                                {section.questions.map((item, idx) => (
+                                  <li key={`question-${section.questionId}-${idx}`} class="esono-text-sm">
+                                    {item.message}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -948,70 +2763,132 @@ moduleRoutes.get('/module/:code/analysis', async (c) => {
                 })}
               </div>
 
-              {/* Action Cards */}
-              <div class="grid md:grid-cols-2 gap-6 mb-8">
-                <div class="bg-white rounded-xl shadow-md p-6 border-2 border-transparent hover:border-blue-300 transition-all">
-                  <div class="flex items-start gap-4">
-                    <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <i class="fas fa-edit text-2xl text-blue-600"></i>
-                    </div>
-                    <div class="flex-1">
-                      <h3 class="text-lg font-bold text-gray-900 mb-2">Améliorer mes réponses</h3>
-                      <p class="text-gray-600 text-sm mb-4">
-                        Prenez en compte les suggestions et améliorez vos réponses
-                      </p>
-                      <a
-                        href={`/module/${moduleCode}/improve`}
-                        class="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 font-semibold"
+              <aside style="display: flex; flex-direction: column; gap: var(--spacing-lg);">
+                <div class="esono-card">
+                  <div class="esono-card__header">
+                    <h3 class="esono-card__title">
+                      <i class="fas fa-list-check esono-card__title-icon"></i>
+                      Priorités d’amélioration
+                    </h3>
+                  </div>
+                  <div class="esono-card__body">
+                    {topSuggestions.length ? (
+                      <ol
+                        style="margin: 0; padding-left: var(--spacing-lg); display: flex; flex-direction: column; gap: var(--spacing-sm);"
+                        class="esono-text-sm"
                       >
-                        Commencer les améliorations
-                        <i class="fas fa-arrow-right"></i>
-                      </a>
-                    </div>
+                        {topSuggestions.map((item, idx) => (
+                          <li key={`top-suggestion-${idx}`}>
+                            <strong>{item.section}</strong>
+                            <span style="display: block; margin-top: 2px;">{item.message}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p class="esono-text-sm esono-text-muted">
+                        Aucune priorité critique détectée. Vous pouvez avancer vers l’amélioration ou la validation.
+                      </p>
+                    )}
                   </div>
                 </div>
 
-                <div class="bg-white rounded-xl shadow-md p-6 border-2 border-transparent hover:border-green-300 transition-all">
-                  <div class="flex items-start gap-4">
-                    <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <i class="fas fa-check-double text-2xl text-green-600"></i>
-                    </div>
-                    <div class="flex-1">
-                      <h3 class="text-lg font-bold text-gray-900 mb-2">Passer à la validation</h3>
-                      <p class="text-gray-600 text-sm mb-4">
-                        Vos réponses sont déjà bonnes ? Passez directement à la validation
-                      </p>
-                      <a
-                        href={`/module/${moduleCode}/validate`}
-                        class="inline-flex items-center gap-2 text-green-600 hover:text-green-700 font-semibold"
-                      >
-                        Valider mon Canvas
-                        <i class="fas fa-arrow-right"></i>
-                      </a>
-                    </div>
+                <div class="esono-card esono-card--ai">
+                  <div class="esono-card__header">
+                    <h3 class="esono-card__title">
+                      <i class="fas fa-sparkles esono-card__title-icon"></i>
+                      Conseils IA
+                    </h3>
                   </div>
-                </div>
-              </div>
-
-              {/* Tips */}
-              <div class="bg-purple-50 border border-purple-200 rounded-lg p-6">
-                <div class="flex items-start gap-3">
-                  <i class="fas fa-info-circle text-purple-600 text-xl mt-1"></i>
-                  <div>
-                    <h4 class="font-semibold text-purple-900 mb-2">Conseils pour améliorer votre score</h4>
-                    <ul class="text-sm text-purple-800 space-y-1">
-                      <li>• Ajoutez des chiffres et métriques concrètes</li>
-                      <li>• Soyez spécifique : évitez "tout le monde", préférez des segments précis</li>
-                      <li>• Détaillez avec des exemples concrets de votre contexte</li>
-                      <li>• Montrez que vous connaissez votre marché et vos concurrents</li>
+                  <div class="esono-card__body">
+                    <ul
+                      class="esono-text-sm"
+                      style="margin: 0; padding-left: var(--spacing-md); list-style: disc; color: var(--esono-info);"
+                    >
+                      <li>Quantifiez vos éléments clés (marché, revenus, coûts) dès que possible.</li>
+                      <li>Illustrez vos réponses par des preuves terrain adaptées à votre contexte.</li>
+                      <li>Vérifiez la cohérence entre segments clients, proposition de valeur et canaux.</li>
+                      <li>Mettez en avant votre différenciation face aux concurrents.</li>
                     </ul>
                   </div>
                 </div>
+              </aside>
+            </div>
+          </div>
+        </section>
+
+        <section class="esono-grid esono-grid--2">
+          <div class="esono-card">
+            <div class="esono-card__body" style="display: flex; gap: var(--spacing-md); align-items: flex-start;">
+              <span
+                class="esono-btn esono-btn--icon"
+                style={`background: ${overallTone.badgeBackground}; color: ${overallTone.badgeColor};`}
+                aria-hidden="true"
+              >
+                <i class="fas fa-pen"></i>
+              </span>
+              <div style="display: flex; flex-direction: column; gap: var(--spacing-sm);">
+                <h3 class="esono-page-title" style="font-size: 1rem;">Améliorer mes réponses</h3>
+                <p class="esono-text-sm esono-text-muted">
+                  Intégrez les recommandations IA bloc par bloc pour faire progresser votre score global.
+                </p>
+                <a href={`/module/${moduleCode}/improve`} class="esono-btn esono-btn--secondary esono-btn--sm">
+                  Commencer les améliorations
+                  <i class="fas fa-arrow-right"></i>
+                </a>
               </div>
             </div>
           </div>
-        </body>
-      </html>
+
+          <div class="esono-card">
+            <div class="esono-card__body" style="display: flex; gap: var(--spacing-md); align-items: flex-start;">
+              <span
+                class="esono-btn esono-btn--icon"
+                style="background: var(--esono-success-light); color: var(--esono-success);"
+                aria-hidden="true"
+              >
+                <i class="fas fa-check-double"></i>
+              </span>
+              <div style="display: flex; flex-direction: column; gap: var(--spacing-sm);">
+                <h3 class="esono-page-title" style="font-size: 1rem;">Passer à la validation</h3>
+                <p class="esono-text-sm esono-text-muted">
+                  Si vos réponses sont satisfaisantes, lancez la validation coach / IA pour accéder au livrable.
+                </p>
+                <a href={`/module/${moduleCode}/validate`} class="esono-btn esono-btn--primary esono-btn--sm">
+                  Valider mon Canvas
+                  <i class="fas fa-arrow-right"></i>
+                </a>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    )
+
+    return c.html(
+      renderEsanoLayout({
+        pageTitle: moduleTitle,
+        pageDescription: 'Étape 4 — Analyse IA',
+        breadcrumb: [
+          { label: 'Tableau de bord', href: '/dashboard' },
+          { label: moduleTitle, href: `/module/${moduleCode}` },
+          { label: 'Analyse IA' }
+        ],
+        activeNav,
+        navItems: resolvedNavItems,
+        content: pageContent,
+        headerActions: (
+          <div class="esono-form__actions">
+            <a href={`/module/${moduleCode}/questions`} class="esono-btn esono-btn--ghost">
+              <i class="fas fa-circle-arrow-left"></i>
+              Revoir les blocs
+            </a>
+            <a href={`/module/${moduleCode}/improve`} class="esono-btn esono-btn--primary">
+              Passer aux améliorations
+              <i class="fas fa-arrow-right"></i>
+            </a>
+          </div>
+        )
+      })
     )
   } catch (error) {
     console.error('Analysis error:', error)
@@ -1029,230 +2906,653 @@ moduleRoutes.get('/module/:code/improve', async (c) => {
     if (!payload) return c.redirect('/login')
 
     const moduleCode = c.req.param('code')
-    
+
     const module = await c.env.DB.prepare(`
       SELECT * FROM modules WHERE module_code = ?
     `).bind(moduleCode).first()
 
     if (!module) return c.redirect('/dashboard')
 
+    const moduleTitle = (module.title as string) ?? 'Business Model Canvas'
+
     const progress = await c.env.DB.prepare(`
       SELECT * FROM progress WHERE user_id = ? AND module_id = ?
     `).bind(payload.userId, module.id).first()
 
+    if (!progress) {
+      return c.redirect(`/module/${moduleCode}/questions`)
+    }
+
+    if (!progress.ai_feedback_json) {
+      return c.redirect(`/module/${moduleCode}/analysis`)
+    }
+
+    let aiSummary: any = {}
+    try {
+      aiSummary = progress.ai_feedback_json ? JSON.parse(progress.ai_feedback_json as string) : {}
+    } catch (err) {
+      console.warn('Impossible de parser la synthèse IA du module', moduleCode, err)
+      aiSummary = {}
+    }
+
+    const overallScore = aiSummary?.overallScore ?? 0
+    const overallLabel = aiSummary?.overallLabel ?? 'Analyse IA à rafraîchir'
+    const overallTone = getScoreToneStyles(overallLabel)
+
     const answers = await c.env.DB.prepare(`
-      SELECT question_number, user_response, iteration_count FROM questions 
+      SELECT id, question_number, question_text, user_response, iteration_count, quality_score, ai_feedback, feedback_updated_at
+      FROM questions
       WHERE progress_id = ?
       ORDER BY question_number
-    `).bind(progress?.id || 0).all()
+    `).bind(progress.id).all()
 
-    const answersMap = new Map()
-    answers.results.forEach((a: any) => {
-      answersMap.set(a.question_number, {
-        response: a.user_response,
-        iterations: a.iteration_count || 0
-      })
+    const historyRows = await c.env.DB.prepare(`
+      SELECT q.question_number, h.previous_response, h.created_at
+      FROM question_history h
+      INNER JOIN questions q ON q.id = h.question_id
+      WHERE q.progress_id = ?
+      ORDER BY h.created_at DESC
+    `).bind(progress.id).all()
+
+    const historyMap = new Map<number, Array<{ response: string; createdAt: string }>>()
+    let latestHistoryTimestamp: number | null = null
+
+    historyRows.results.forEach((row: any) => {
+      if (!historyMap.has(row.question_number)) {
+        historyMap.set(row.question_number, [])
+      }
+      historyMap.get(row.question_number)!.push({ response: row.previous_response, createdAt: row.created_at })
+      if (row.created_at) {
+        const tsDate = parseDateValue(row.created_at)
+        if (tsDate) {
+          const ts = tsDate.getTime()
+          if (!latestHistoryTimestamp || ts > latestHistoryTimestamp) {
+            latestHistoryTimestamp = ts
+          }
+        }
+      }
     })
+
+    const answersMap = new Map<number, {
+      response: string
+      iterations: number
+      qualityScore: number | null
+      feedback: {
+        sectionName: string
+        questionText?: string
+        strengths: Array<{ message: string; score?: number }>
+        suggestions: Array<{ message: string; score?: number }>
+        questions: Array<{ message: string; score?: number }>
+        percentage: number | null
+        scoreLabel: string
+      }
+      feedbackUpdatedAt?: string | null
+    }>()
+
+    const normalizeFeedbackEntries = (entries: unknown) => {
+      if (!Array.isArray(entries)) return []
+      return (entries as any[])
+        .map((entry) => {
+          if (!entry) return null
+          if (typeof entry === 'string') {
+            const message = entry.trim()
+            return message.length > 0 ? { message, score: undefined as number | undefined } : null
+          }
+          const rawMessage = typeof entry.message === 'string' ? entry.message : String(entry)
+          const message = rawMessage.trim()
+          if (message.length === 0) return null
+          const score = typeof entry.score === 'number' ? entry.score : undefined
+          return { message, score }
+        })
+        .filter((entry): entry is { message: string; score?: number } => !!entry)
+    }
 
     const content = moduleCode === 'step1_business_model' ? businessModelCanvasContent : null
     if (!content) return c.redirect(`/module/${moduleCode}`)
 
-    return c.html(
-      <html lang="fr">
-        <head>
-          <meta charset="UTF-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <title>{module.title as string} - Amélioration</title>
-          <script src="https://cdn.tailwindcss.com"></script>
-          <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet" />
-          <link href="/static/style.css" rel="stylesheet" />
-        </head>
-        <body class="bg-gray-50">
-          <div class="min-h-screen py-8 px-4">
-            <div class="max-w-7xl mx-auto">
-              {/* Header */}
-              <div class="mb-6 flex items-center justify-between">
-                <a href={`/module/${moduleCode}/analysis`} class="text-blue-600 hover:text-blue-700 font-medium">
-                  <i class="fas fa-arrow-left mr-2"></i>Retour à l'analyse
-                </a>
-                <div class="text-sm text-gray-600">
-                  <i class="fas fa-sync-alt mr-2"></i>Étape 5/7 - Amélioration
-                </div>
-              </div>
+    const sectionDetailsMap = new Map<number, { section: string; question: string }>()
+    content.guided_questions?.forEach((q) => {
+      sectionDetailsMap.set(q.id, { section: q.section, question: q.question })
+    })
 
-              {/* Progress Bar */}
-              <div class="mb-8 bg-white rounded-lg shadow-sm p-4">
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-sm font-medium text-gray-700">Progression du module</span>
-                  <span class="text-sm text-gray-600">5/7</span>
-                </div>
-                <div class="w-full bg-gray-200 rounded-full h-2">
-                  <div class="bg-blue-600 h-2 rounded-full transition-all" style="width: 71%"></div>
-                </div>
-              </div>
+    answers.results.forEach((row: any) => {
+      const details = sectionDetailsMap.get(row.question_number)
+      let parsedFeedback: {
+        sectionName: string
+        questionText?: string
+        strengths: Array<{ message: string; score?: number }>
+        suggestions: Array<{ message: string; score?: number }>
+        questions: Array<{ message: string; score?: number }>
+        percentage: number | null
+        scoreLabel: string
+      }
 
-              {/* Instructions */}
-              <div class="bg-white rounded-xl shadow-lg p-8 mb-8">
-                <h1 class="text-3xl font-bold text-gray-900 mb-4">Améliorez vos réponses</h1>
-                <p class="text-gray-600 mb-6">
-                  Relisez vos réponses initiales et améliorez-les en tenant compte des suggestions de l'analyse IA.
-                  L'historique de vos modifications est conservé.
-                </p>
-                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <div class="flex items-start gap-3">
-                    <i class="fas fa-lightbulb text-blue-600 mt-1"></i>
-                    <div class="text-sm">
-                      <p class="text-blue-900 font-medium mb-1">Astuce :</p>
-                      <p class="text-blue-800">
-                        Vous pouvez modifier uniquement les sections qui nécessitent une amélioration.
-                        Cliquez sur "Sauvegarder" après chaque modification.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
+      try {
+        const feedbackPayload = row.ai_feedback ? JSON.parse(row.ai_feedback) : null
+        const strengths = normalizeFeedbackEntries(feedbackPayload?.strengths)
+        const suggestions = normalizeFeedbackEntries(feedbackPayload?.suggestions)
+        const questionsList = normalizeFeedbackEntries(feedbackPayload?.questions)
 
-              {/* Improvement Form */}
-              <form id="improveForm" class="space-y-6">
-                {content.guided_questions!.map((q, index) => {
-                  const answerData = answersMap.get(q.id)
-                  const currentAnswer = answerData?.response || ''
-                  const iterations = answerData?.iterations || 0
-                  
-                  return (
-                    <div class="bg-white rounded-xl shadow-md p-6">
-                      <div class="flex items-start justify-between mb-4">
-                        <div class="flex items-start gap-3">
-                          <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <span class="text-blue-600 font-bold">{index + 1}</span>
-                          </div>
-                          <div>
-                            <h3 class="text-xl font-bold text-gray-900">{q.section}</h3>
-                            <p class="text-gray-600 text-sm">{q.question}</p>
-                          </div>
-                        </div>
-                        {iterations > 0 && (
-                          <div class="bg-purple-100 px-3 py-1 rounded-full text-sm text-purple-700 font-medium">
-                            <i class="fas fa-history mr-1"></i>
-                            V{iterations + 1}
-                          </div>
-                        )}
-                      </div>
+        parsedFeedback = {
+          sectionName: feedbackPayload?.sectionName || (details?.section ?? getSectionName(row.question_number)),
+          questionText: feedbackPayload?.questionText || details?.question,
+          strengths,
+          suggestions,
+          questions: questionsList,
+          percentage: typeof feedbackPayload?.percentage === 'number' ? feedbackPayload.percentage : null,
+          scoreLabel: feedbackPayload?.scoreLabel || 'Analyse à compléter'
+        }
+      } catch (err) {
+        console.warn('Unable to parse AI feedback for question', row.question_number, err)
+        parsedFeedback = {
+          sectionName: details?.section ?? getSectionName(row.question_number),
+          questionText: details?.question,
+          strengths: [],
+          suggestions: [],
+          questions: [],
+          percentage: null,
+          scoreLabel: 'Analyse à compléter'
+        }
+      }
 
-                      <div class="space-y-4">
-                        {/* Original Answer */}
-                        <div>
-                          <label class="block text-sm font-medium text-gray-700 mb-2">
-                            Réponse actuelle
-                          </label>
-                          <div class="bg-gray-50 border-2 border-gray-200 rounded-lg p-4 text-gray-700 whitespace-pre-wrap">
-                            {currentAnswer || 'Pas encore de réponse'}
-                          </div>
-                        </div>
+      answersMap.set(row.question_number, {
+        response: row.user_response ?? '',
+        iterations: row.iteration_count ?? 0,
+        qualityScore: row.quality_score ?? null,
+        feedback: parsedFeedback,
+        feedbackUpdatedAt: row.feedback_updated_at ?? null
+      })
+    })
 
-                        {/* Improved Answer */}
-                        <div>
-                          <label class="block text-sm font-medium text-gray-700 mb-2">
-                            Version améliorée
-                          </label>
-                          <textarea
-                            id={`improved_${q.id}`}
-                            name={`improved_${q.id}`}
-                            rows={6}
-                            class="w-full px-4 py-3 border-2 border-blue-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all resize-y"
-                            placeholder="Écrivez votre version améliorée ici..."
-                          >{currentAnswer}</textarea>
-                        </div>
+    const cards = content.guided_questions!.map((question, index) => {
+      const data = answersMap.get(question.id)
+      const feedback = data?.feedback ?? {
+        sectionName: question.section,
+        questionText: question.question,
+        strengths: [],
+        suggestions: [],
+        questions: [],
+        percentage: null,
+        scoreLabel: 'Analyse à compléter'
+      }
 
-                        {/* Action Buttons */}
-                        <div class="flex items-center justify-between">
-                          <button
-                            type="button"
-                            onclick={`saveImprovement(${q.id}, '${moduleCode}')`}
-                            class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
-                          >
-                            <i class="fas fa-save mr-2"></i>
-                            Sauvegarder cette amélioration
-                          </button>
-                          <span id={`status_${q.id}`} class="text-sm text-gray-500"></span>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
+      const history = historyMap.get(question.id) ?? []
 
-                {/* Submit All */}
-                <div class="bg-white rounded-xl shadow-md p-6">
-                  <div class="flex items-center justify-between">
-                    <div>
-                      <h3 class="font-bold text-gray-900 mb-1">Prêt à continuer ?</h3>
-                      <p class="text-gray-600 text-sm">
-                        Une fois satisfait de vos améliorations, passez à la validation finale
-                      </p>
-                    </div>
-                    <a
-                      href={`/module/${moduleCode}/validate`}
-                      class="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold rounded-lg transition-all"
-                    >
-                      Passer à la validation
-                      <i class="fas fa-arrow-right ml-2"></i>
-                    </a>
-                  </div>
-                </div>
-              </form>
+      return {
+        order: index + 1,
+        questionId: question.id,
+        section: question.section,
+        questionText: question.question,
+        currentAnswer: data?.response ?? '',
+        iterations: data?.iterations ?? 0,
+        qualityScore: data?.qualityScore ?? null,
+        feedback,
+        history,
+        needsWork: (feedback.suggestions?.length ?? 0) > 0 || (feedback.questions?.length ?? 0) > 0,
+        feedbackUpdatedAt: data?.feedbackUpdatedAt
+      }
+    })
+
+    const totalIterations = cards.reduce((sum, card) => sum + card.iterations, 0)
+    const completedBlocks = cards.filter((card) => (card.qualityScore ?? 0) >= 60).length
+    const blocksNeedingWork = cards.filter((card) => card.needsWork).length
+
+    const summaryTopSuggestions = Array.isArray(aiSummary?.topSuggestions) && aiSummary.topSuggestions.length
+      ? aiSummary.topSuggestions
+      : cards.flatMap((card) =>
+          (card.feedback.suggestions || []).map((item) => ({
+            section: card.feedback.sectionName,
+            questionId: card.questionId,
+            message: item.message,
+            score: item.score ?? 3
+          }))
+        ).sort((a, b) => (a.score ?? 5) - (b.score ?? 5)).slice(0, 3)
+
+    const { navItems: resolvedNavItems, activeNav } = resolveNavigationForStage(moduleCode, 'iteration')
+
+    const lastAnalysisDate = parseDateValue(progress.ai_last_analysis as string | null)
+    const needsRefresh = !!(lastAnalysisDate && latestHistoryTimestamp && latestHistoryTimestamp > lastAnalysisDate.getTime())
+
+    const heroSection = (
+      <section class="esono-hero">
+        <div class="esono-hero__header">
+          <div>
+            <h2 class="esono-hero__title">Amélioration du Business Model Canvas</h2>
+            <p class="esono-hero__subtitle">
+              Étape 5/7 — renforcez vos réponses avant la validation coach.
+            </p>
+          </div>
+          <div class="esono-stack esono-stack--sm" style="align-items: flex-end;">
+            <span class="esono-hero__badge">
+              <i class="fas fa-robot"></i>
+              Analyse du {formatDateValue(progress.ai_last_analysis as string | null, 'à lancer')}
+            </span>
+            <span class="esono-text-sm esono-text-muted">
+              {totalIterations} itération{totalIterations > 1 ? 's' : ''}
+            </span>
+          </div>
+        </div>
+        <div class="esono-hero__metrics">
+          <div
+            class="esono-hero__metric"
+            style={`background: ${overallTone.backgroundColor}; border: 1px solid ${overallTone.borderColor};`}
+          >
+            <div class="esono-hero__metric-value">{overallScore}%</div>
+            <div class="esono-hero__metric-label">Score global</div>
+            <span
+              class="esono-badge"
+              style={`background: ${overallTone.badgeBackground}; color: ${overallTone.badgeColor};`}
+            >
+              {overallLabel}
+            </span>
+          </div>
+          <div class="esono-hero__metric esono-hero__metric--success">
+            <div class="esono-hero__metric-value">{completedBlocks}</div>
+            <div class="esono-hero__metric-label">Blocs solides</div>
+          </div>
+          <div class="esono-hero__metric esono-hero__metric--warning">
+            <div class="esono-hero__metric-value">{blocksNeedingWork}</div>
+            <div class="esono-hero__metric-label">Blocs à renforcer</div>
+          </div>
+          <div class="esono-hero__metric esono-hero__metric--info">
+            <div class="esono-hero__metric-value">{cards.length}</div>
+            <div class="esono-hero__metric-label">Blocs analysés</div>
+          </div>
+        </div>
+      </section>
+    )
+
+    const improvementCards = cards.map((card) => {
+      const tone = getScoreToneStyles(card.feedback.scoreLabel)
+      const statusBadge = card.needsWork
+        ? { className: 'esono-badge esono-badge--warning', icon: 'fas fa-exclamation-circle', label: 'Travail recommandé' }
+        : { className: 'esono-badge esono-badge--success', icon: 'fas fa-check-circle', label: 'Bloc satisfaisant' }
+
+      return (
+        <article class="esono-card" id={`card_${card.questionId}`} key={`improve-card-${card.questionId}`}>
+          <div
+            class="esono-card__header"
+            style={`background: ${tone.backgroundColor}; border-bottom: 1px solid ${tone.borderColor};`}
+          >
+            <div class="esono-stack esono-stack--sm">
+              <span class="esono-badge esono-badge--accent">
+                Bloc {card.order}
+              </span>
+              <h3 class="esono-card__title">
+                <i class="fas fa-layer-group esono-card__title-icon" style={`color: ${tone.badgeColor};`}></i>
+                {card.section}
+              </h3>
+              <p class="esono-text-sm esono-text-muted">{card.questionText}</p>
+            </div>
+            <div class="esono-stack esono-stack--sm" style="align-items: flex-end;">
+              <span
+                class="esono-badge"
+                style={`background: ${tone.badgeBackground}; color: ${tone.badgeColor};`}
+              >
+                <i class="fas fa-gauge"></i>
+                {card.feedback.scoreLabel}
+                {typeof card.feedback.percentage === 'number' ? ` · ${card.feedback.percentage}%` : ''}
+              </span>
+              {card.iterations > 0 && (
+                <span class="esono-badge esono-badge--info">
+                  <i class="fas fa-history"></i>
+                  V{card.iterations + 1}
+                </span>
+              )}
+              <span class={statusBadge.className}>
+                <i class={statusBadge.icon}></i>
+                {statusBadge.label}
+              </span>
             </div>
           </div>
+          <div class="esono-card__body">
+            <div class="esono-card__split">
+              <div class="esono-card__split-main">
+                <div class="esono-stack esono-stack--md">
+                  <div>
+                    <p class="esono-text-sm esono-font-semibold esono-text-muted">Réponse actuelle</p>
+                    <div class="esono-note">
+                      {card.currentAnswer || 'Pas encore de réponse sauvegardée.'}
+                    </div>
+                  </div>
+                  <div>
+                    <p class="esono-text-sm esono-font-semibold">Version améliorée</p>
+                    <textarea
+                      id={`improved_${card.questionId}`}
+                      name={`improved_${card.questionId}`}
+                      class="esono-textarea"
+                      rows={8}
+                      placeholder="Écrivez votre version améliorée en intégrant les retours IA..."
+                    >{card.currentAnswer}</textarea>
+                  </div>
+                  <div class="esono-form__meta">
+                    <span>
+                      Dernière analyse : {card.feedbackUpdatedAt ? formatDateValue(card.feedbackUpdatedAt) : 'à générer'}
+                    </span>
+                    <span id={`status_${card.questionId}`} class="esono-text-sm esono-text-muted"></span>
+                  </div>
+                  <div class="esono-form__actions" style="justify-content: flex-start;">
+                    <button
+                      type="button"
+                      class="esono-btn esono-btn--primary"
+                      onclick={`saveImprovement(${card.questionId})`}
+                    >
+                      <i class="fas fa-floppy-disk"></i>
+                      Sauvegarder cette amélioration
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <aside class="esono-card__split-aside">
+                {card.feedback.strengths.length > 0 && (
+                  <div class="esono-note esono-note--success">
+                    <strong>Forces détectées</strong>
+                    <ul style="margin: var(--spacing-sm) 0 0 var(--spacing-md); padding: 0; list-style: disc;">
+                      {card.feedback.strengths.map((item, idx) => (
+                        <li key={`strength-${card.questionId}-${idx}`} class="esono-text-sm">
+                          {item.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {card.feedback.suggestions.length > 0 && (
+                  <div class="esono-note esono-note--warning">
+                    <strong>Axes d'amélioration</strong>
+                    <ul style="margin: var(--spacing-sm) 0 0 var(--spacing-md); padding: 0; list-style: disc;">
+                      {card.feedback.suggestions.map((item, idx) => (
+                        <li key={`suggestion-${card.questionId}-${idx}`} class="esono-text-sm" style="display: flex; gap: var(--spacing-sm); align-items: center;">
+                          <span style="flex: 1;">{item.message}</span>
+                          <button
+                            type="button"
+                            class="esono-btn esono-btn--ghost esono-btn--sm"
+                            onclick={`useSuggestion(${card.questionId}, ${JSON.stringify(item.message)})`}
+                          >
+                            <i class="fas fa-plus-circle"></i>
+                            Insérer
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {card.feedback.questions.length > 0 && (
+                  <div class="esono-note esono-note--info">
+                    <strong>Points à clarifier</strong>
+                    <ul style="margin: var(--spacing-sm) 0 0 var(--spacing-md); padding: 0; list-style: disc;">
+                      {card.feedback.questions.map((item, idx) => (
+                        <li key={`question-${card.questionId}-${idx}`} class="esono-text-sm">
+                          {item.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <div class="esono-note">
+                  <strong>Historique</strong>
+                  {card.history.length > 0 ? (
+                    <ul style="margin: var(--spacing-sm) 0 0; padding-left: var(--spacing-md); list-style: disc; max-height: 220px; overflow: auto;">
+                      {card.history.map((entry, idx) => (
+                        <li key={`history-${card.questionId}-${idx}`} class="esono-text-sm">
+                          <span class="esono-font-semibold">{formatDateValue(entry.createdAt)}</span>
+                          <br />
+                          <span>{entry.response}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p class="esono-text-sm esono-text-muted">Aucune version précédente enregistrée.</p>
+                  )}
+                </div>
+              </aside>
+            </div>
+          </div>
+        </article>
+      )
+    })
 
-          <script dangerouslySetInnerHTML={{__html: `
-            async function saveImprovement(questionId, moduleCode) {
-              const textarea = document.getElementById('improved_' + questionId)
-              const status = document.getElementById('status_' + questionId)
-              const answer = textarea.value.trim()
-              
-              if (!answer) {
-                status.textContent = 'Veuillez écrire une amélioration'
-                status.className = 'text-sm text-red-600'
-                return
-              }
-              
-              status.textContent = 'Sauvegarde en cours...'
-              status.className = 'text-sm text-blue-600'
-              
-              try {
-                const response = await fetch('/api/module/improve-answer', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    module_code: moduleCode,
-                    question_number: questionId,
-                    improved_answer: answer
-                  })
-                })
-                
-                if (response.ok) {
-                  status.textContent = '✓ Sauvegardé'
-                  status.className = 'text-sm text-green-600'
-                  textarea.classList.add('border-green-500')
-                  setTimeout(() => {
-                    textarea.classList.remove('border-green-500')
-                    status.textContent = ''
-                  }, 2000)
-                } else {
-                  status.textContent = '✗ Erreur'
-                  status.className = 'text-sm text-red-600'
-                }
-              } catch (err) {
-                console.error('Save error:', err)
-                status.textContent = '✗ Erreur réseau'
-                status.className = 'text-sm text-red-600'
-              }
-            }
-            
-            window.saveImprovement = saveImprovement
-          `}} />
-        </body>
-      </html>
+    const pageContent = (
+      <div class="esono-stack esono-stack--xl">
+        {heroSection}
+        {needsRefresh && (
+          <div class="esono-banner esono-banner--warning">
+            <div class="esono-banner__icon">
+              <i class="fas fa-rotate"></i>
+            </div>
+            <div class="esono-banner__content">
+              <h3>Mise à jour recommandée</h3>
+              <p>Vous avez modifié certaines réponses après la dernière analyse IA. Relancez l’étape B4 afin de recalculer les scores.</p>
+            </div>
+            <div class="esono-banner__actions">
+              <a href={`/module/${moduleCode}/analysis`} class="esono-btn esono-btn--ghost">
+                <i class="fas fa-robot"></i>
+                Relancer l’analyse
+              </a>
+            </div>
+          </div>
+        )}
+        <section class="esono-split esono-split--3-2">
+          <div class="esono-card-list">
+            {cards.length > 0 ? improvementCards : (
+              <div class="esono-card">
+                <div class="esono-card__body">
+                  <p class="esono-text-sm esono-text-muted">
+                    Aucune question guidée n’a encore été générée. Complétez d’abord l’analyse IA.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+          <aside class="esono-stack esono-stack--lg">
+            <div class="esono-card">
+              <div class="esono-card__header">
+                <h3 class="esono-card__title">
+                  <i class="fas fa-list-check esono-card__title-icon"></i>
+                  Priorités d’amélioration
+                </h3>
+              </div>
+              <div class="esono-card__body">
+                {summaryTopSuggestions.length > 0 ? (
+                  <ol class="esono-stack esono-stack--sm" style="list-style: decimal; margin: 0; padding-left: var(--spacing-lg);">
+                    {summaryTopSuggestions.map((item, idx) => (
+                      <li key={`top-suggestion-${idx}`} class="esono-text-sm">
+                        <strong>{item.section}</strong>
+                        <br />
+                        <span>{item.message}</span>
+                        <div style="margin-top: var(--spacing-xs);">
+                          <button
+                            type="button"
+                            class="esono-btn esono-btn--ghost esono-btn--sm"
+                            onclick={`scrollToCard(${item.questionId})`}
+                          >
+                            <i class="fas fa-location-arrow"></i>
+                            Aller au bloc
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p class="esono-text-sm esono-text-muted">
+                    Aucune priorité critique détectée. Vous pouvez passer à la validation.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div class="esono-card esono-card--ai">
+              <div class="esono-card__header esono-card__header--ai">
+                <h3 class="esono-card__title">
+                  <i class="fas fa-sparkles esono-card__title-icon"></i>
+                  Conseils IA pour itérer
+                </h3>
+              </div>
+              <div class="esono-card__body">
+                <ul class="esono-stack esono-stack--sm" style="list-style: disc; margin: 0; padding-left: var(--spacing-lg);">
+                  <li class="esono-text-sm">Rédigez des phrases courtes et structurées pour clarifier vos messages clés.</li>
+                  <li class="esono-text-sm">Ajoutez au moins un indicateur chiffré par bloc (revenus, volumes, coûts).</li>
+                  <li class="esono-text-sm">Documentez les preuves terrain ou retours clients qui valident vos hypothèses.</li>
+                  <li class="esono-text-sm">Vérifiez la cohérence entre segments clients, proposition de valeur, canaux et revenus.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="esono-card">
+              <div class="esono-card__header">
+                <h3 class="esono-card__title">
+                  <i class="fas fa-flag-checkered esono-card__title-icon"></i>
+                  Étapes suivantes
+                </h3>
+              </div>
+              <div class="esono-card__body">
+                <ul class="esono-stack esono-stack--md" style="list-style: none; margin: 0; padding: 0;">
+                  <li class="esono-text-sm">
+                    <strong>Sauvegardez chaque bloc amélioré</strong>
+                    <br />
+                    <span class="esono-text-muted">Les coachs voient vos itérations dans l’historique détaillé.</span>
+                  </li>
+                  <li class="esono-text-sm">
+                    <strong>Relancez l’analyse IA</strong>
+                    <br />
+                    <span class="esono-text-muted">Comparez l’évolution de votre score global après vos améliorations.</span>
+                  </li>
+                  <li class="esono-text-sm">
+                    <strong>Préparez la validation coach</strong>
+                    <br />
+                    <span class="esono-text-muted">Assurez-vous que chaque bloc est argumenté, chiffré et cohérent.</span>
+                  </li>
+                </ul>
+                <div class="esono-form__actions" style="justify-content: flex-start; margin-top: var(--spacing-md);">
+                  <a href={`/module/${moduleCode}/validate`} class="esono-btn esono-btn--primary">
+                    Passer à la validation
+                    <i class="fas fa-arrow-right"></i>
+                  </a>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </section>
+      </div>
     )
+
+    const extraScripts = `
+(function() {
+  const MODULE_CODE = ${JSON.stringify(moduleCode)};
+
+  function scrollToCard(questionId) {
+    const container = document.getElementById('card_' + questionId);
+    if (container) {
+      container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      container.classList.add('esono-focus-glow');
+      setTimeout(() => container.classList.remove('esono-focus-glow'), 1600);
+    }
+    const textarea = document.getElementById('improved_' + questionId);
+    if (textarea) {
+      textarea.focus();
+    }
+  }
+
+  async function saveImprovement(questionId) {
+    const textarea = document.getElementById('improved_' + questionId);
+    const status = document.getElementById('status_' + questionId);
+    const container = document.getElementById('card_' + questionId);
+    if (!textarea || !status) {
+      return;
+    }
+
+    const answer = textarea.value.trim();
+    textarea.classList.remove('is-success', 'is-error');
+
+    if (!answer) {
+      status.textContent = 'Veuillez écrire une amélioration';
+      status.className = 'esono-text-sm esono-text-danger';
+      textarea.classList.add('is-error');
+      return;
+    }
+
+    status.textContent = 'Sauvegarde en cours...';
+    status.className = 'esono-text-sm esono-text-info';
+
+    try {
+      const response = await fetch('/api/module/improve-answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          module_code: MODULE_CODE,
+          question_number: questionId,
+          improved_answer: answer
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Erreur de sauvegarde');
+      }
+
+      status.textContent = '✓ Sauvegardé';
+      status.className = 'esono-text-sm esono-text-success';
+      textarea.classList.add('is-success');
+      if (container) {
+        container.classList.add('esono-focus-glow');
+        setTimeout(() => container.classList.remove('esono-focus-glow'), 1500);
+      }
+      setTimeout(() => {
+        status.textContent = '';
+        textarea.classList.remove('is-success');
+      }, 2000);
+    } catch (error) {
+      console.error('Save error:', error);
+      status.textContent = '✗ Erreur de sauvegarde';
+      status.className = 'esono-text-sm esono-text-danger';
+      textarea.classList.add('is-error');
+    }
+  }
+
+  function useSuggestion(questionId, suggestion) {
+    const textarea = document.getElementById('improved_' + questionId);
+    if (!textarea) {
+      return;
+    }
+    const currentValue = textarea.value.trim();
+    const bullet = suggestion.startsWith('-') || suggestion.startsWith('•') ? suggestion : '• ' + suggestion;
+    textarea.value = currentValue ? currentValue + '\\n' + bullet : bullet;
+    textarea.focus();
+    textarea.dispatchEvent(new Event('input'));
+  }
+
+  window.scrollToCard = scrollToCard;
+  window.saveImprovement = saveImprovement;
+  window.useSuggestion = useSuggestion;
+})();
+    `.replace(/</g, '\\u003c')
+
+    return c.html(
+      renderEsanoLayout({
+        pageTitle: moduleTitle,
+        pageDescription: 'Étape 5 — Amélioration continue',
+        breadcrumb: [
+          { label: 'Tableau de bord', href: '/dashboard' },
+          { label: moduleTitle, href: `/module/${moduleCode}` },
+          { label: 'Amélioration' }
+        ],
+        activeNav,
+        navItems: resolvedNavItems,
+        content: pageContent,
+        headerActions: (
+          <div class="esono-form__actions">
+            <a href={`/module/${moduleCode}/analysis`} class="esono-btn esono-btn--ghost">
+              <i class="fas fa-circle-arrow-left"></i>
+              Retour à l’analyse
+            </a>
+            <a href={`/module/${moduleCode}/validate`} class="esono-btn esono-btn--primary">
+              Passer à la validation
+              <i class="fas fa-arrow-right"></i>
+            </a>
+          </div>
+        ),
+        extraScripts
+      })
+    )
+
   } catch (error) {
     console.error('Improve error:', error)
     return c.redirect('/dashboard')
@@ -1264,7 +3564,7 @@ moduleRoutes.get('/module/:code/validate', async (c) => {
   try {
     const token = getCookie(c, 'auth_token')
     if (!token) return c.redirect('/login')
-    
+
     const payload = await verifyToken(token)
     if (!payload) return c.redirect('/login')
 
@@ -1275,12 +3575,173 @@ moduleRoutes.get('/module/:code/validate', async (c) => {
 
     if (!module) return c.redirect('/dashboard')
 
-    // Récupérer toutes les réponses sauvegardées
-    const responses = await c.env.DB.prepare(`
-      SELECT question_id, answer_text FROM user_answers 
-      WHERE user_id = ? AND module_code = ?
-      ORDER BY question_id
-    `).bind(payload.userId, moduleCode).all()
+    const moduleTitle = (module.title as string) ?? 'Business Model Canvas'
+    const content = moduleCode === 'step1_business_model' ? businessModelCanvasContent : null
+    if (!content) return c.redirect(`/module/${moduleCode}`)
+
+    const progress = await c.env.DB.prepare(`
+      SELECT *
+      FROM progress
+      WHERE user_id = ? AND module_id = ?
+    `).bind(payload.userId, module.id).first()
+
+    if (!progress) {
+      return c.redirect(`/module/${moduleCode}/questions`)
+    }
+
+    const questions = await c.env.DB.prepare(`
+      SELECT id, question_number, question_text, user_response, iteration_count, quality_score, ai_feedback, feedback_updated_at, updated_at
+      FROM questions
+      WHERE progress_id = ?
+      ORDER BY question_number
+    `).bind(progress.id).all()
+
+    const guidedQuestions = content.guided_questions ?? []
+    const questionRows = Array.isArray(questions.results) ? questions.results as any[] : []
+
+    let latestAnswerTimestamp: number | null = null
+
+    const cards = guidedQuestions.map((question, index) => {
+      const row = questionRows.find((r) => r.question_number === question.id)
+      const rawAnswer = (row?.user_response as string | null) ?? ''
+      const currentAnswer = rawAnswer.trim()
+      const iterations = Number(row?.iteration_count ?? 0)
+      const qualityScore = typeof row?.quality_score === 'number' ? Number(row.quality_score) : null
+      const updatedAt = row?.updated_at as string | null
+
+      if (updatedAt) {
+        const ts = parseDateValue(updatedAt)?.getTime()
+        if (ts && (!latestAnswerTimestamp || ts > latestAnswerTimestamp)) {
+          latestAnswerTimestamp = ts
+        }
+      }
+
+      let suggestionsCount = 0
+      let questionsCount = 0
+      let percentage: number | null = null
+      let scoreLabel = qualityScore !== null ? getScoreLabel(qualityScore).label : 'Analyse IA à générer'
+
+      try {
+        const payload = row?.ai_feedback ? JSON.parse(row.ai_feedback as string) : null
+        if (payload) {
+          suggestionsCount = Array.isArray(payload.suggestions) ? payload.suggestions.length : 0
+          questionsCount = Array.isArray(payload.questions) ? payload.questions.length : 0
+          percentage = typeof payload.percentage === 'number' ? payload.percentage : null
+          scoreLabel = payload.scoreLabel ?? scoreLabel
+        }
+      } catch (err) {
+        console.warn('Impossible de parser le feedback IA pour la question', question.id, err)
+      }
+
+      return {
+        order: index + 1,
+        questionId: question.id,
+        section: question.section,
+        questionText: question.question,
+        currentAnswer,
+        iterations,
+        qualityScore,
+        percentage,
+        scoreLabel,
+        suggestionsCount,
+        questionsCount,
+        hasAnswer: currentAnswer.length > 0
+      }
+    })
+
+    const totalQuestions = guidedQuestions.length
+    const answeredBlocks = cards.filter((card) => card.hasAnswer).length
+    const missingBlocks = cards.filter((card) => !card.hasAnswer)
+    const clarificationBlocks = cards.filter((card) => card.questionsCount > 0)
+    const qualityMissing = cards.filter((card) => card.qualityScore === null).length
+
+    const score = typeof progress.ai_score === 'number' ? Number(progress.ai_score) : 0
+    const scoreInfo = getScoreLabel(score)
+    const scoreTone = getScoreToneStyles(scoreInfo.label)
+
+    const lastAnalysisDate = parseDateValue(progress.ai_last_analysis as string | null)
+    const latestActivity = latestAnswerTimestamp ?? 0
+    const needsRefresh = !!(lastAnalysisDate && latestActivity && latestActivity > lastAnalysisDate.getTime())
+
+    const quizPassed = Number(progress.quiz_passed ?? 0) === 1
+    const quizScore = typeof progress.quiz_score === 'number' ? Number(progress.quiz_score) : null
+
+    const blockingReasons: string[] = []
+
+    if (!quizPassed) {
+      blockingReasons.push('Le quiz de validation (B2) doit être réussi avec un score d’au moins 80 %.')
+    }
+
+    if (!lastAnalysisDate) {
+      blockingReasons.push('L’analyse IA (B4) doit être lancée avant la validation.')
+    }
+
+    if (qualityMissing > 0) {
+      blockingReasons.push('Relancez l’analyse IA après vos améliorations pour obtenir un score sur chaque bloc.')
+    }
+
+    if (needsRefresh) {
+      blockingReasons.push('Certaines réponses ont été modifiées après la dernière analyse IA. Relancez l’étape B4 pour actualiser le score.')
+    }
+
+    if (missingBlocks.length > 0) {
+      blockingReasons.push(`${missingBlocks.length} bloc${missingBlocks.length > 1 ? 's' : ''} du Canvas n’est pas encore complété.`)
+    }
+
+    if (clarificationBlocks.length > 0) {
+      blockingReasons.push(`L’IA attend encore des précisions sur ${clarificationBlocks.length} bloc${clarificationBlocks.length > 1 ? 's' : ''}.`)
+    }
+
+    if (score < MIN_VALIDATION_SCORE) {
+      blockingReasons.push(`Le score IA doit atteindre au moins ${MIN_VALIDATION_SCORE} % (score actuel : ${score} %).`)
+    }
+
+    const readyForValidation = blockingReasons.length === 0
+
+    const status = progress.status as string | null
+    const isValidated = status === 'validated'
+    const validatedAt = progress.validated_at ? formatDateValue(progress.validated_at as string | null) : null
+    const deliverableUrl = `/module/${moduleCode}/download`
+
+    const requirements = [
+      {
+        key: 'quiz',
+        label: 'Quiz B2 réussi',
+        satisfied: quizPassed,
+        detail: quizPassed ? `Score obtenu : ${quizScore}%` : 'Un score d’au moins 80 % est requis.'
+      },
+      {
+        key: 'answers',
+        label: `${totalQuestions} blocs complétés`,
+        satisfied: missingBlocks.length === 0 && totalQuestions > 0,
+        detail: missingBlocks.length === 0
+          ? 'Toutes les réponses sont renseignées.'
+          : `${missingBlocks.length} bloc${missingBlocks.length > 1 ? 's' : ''} restent à compléter.`
+      },
+      {
+        key: 'analysis',
+        label: 'Analyse IA à jour',
+        satisfied: !!lastAnalysisDate && !needsRefresh && qualityMissing === 0,
+        detail: !lastAnalysisDate
+          ? 'Lancez l’analyse IA (B4) pour obtenir le score global.'
+          : needsRefresh
+            ? 'Relancez l’analyse après vos dernières modifications.'
+            : 'Dernière analyse réalisée le ' + formatDateValue(progress.ai_last_analysis as string | null)
+      },
+      {
+        key: 'score',
+        label: `Score IA ≥ ${MIN_VALIDATION_SCORE} %`,
+        satisfied: score >= MIN_VALIDATION_SCORE,
+        detail: `Score actuel : ${score}% (${scoreInfo.label}).`
+      }
+    ]
+
+    const validationContext = {
+      moduleCode,
+      readyForValidation,
+      blockingReasons,
+      deliverableUrl
+    }
 
     return c.html(
       <html lang="fr">
@@ -1290,184 +3751,319 @@ moduleRoutes.get('/module/:code/validate', async (c) => {
           <title>Validation - {module.title}</title>
           <script src="https://cdn.tailwindcss.com"></script>
           <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet" />
+          <link href="/static/style.css" rel="stylesheet" />
         </head>
         <body class="bg-gray-50">
-          {/* Header */}
           <nav class="bg-white shadow-sm border-b border-gray-200">
-            <div class="max-w-7xl mx-auto px-4 py-4">
+            <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
               <a href="/dashboard" class="text-blue-600 hover:text-blue-700 flex items-center gap-2">
                 <i class="fas fa-arrow-left"></i>
                 <span>Retour au dashboard</span>
               </a>
+              <span class="text-sm text-gray-500 flex items-center gap-2">
+                <i class="fas fa-badge-check"></i>
+                Étape 6/7 - Validation
+              </span>
             </div>
           </nav>
 
-          <div class="max-w-4xl mx-auto px-4 py-8">
-            {/* Breadcrumb */}
-            <div class="mb-6 text-sm text-gray-600">
-              <span>Étape 1</span> › <span>{module.title}</span> › <span class="font-semibold text-gray-900">B6 - Validation</span>
-            </div>
-
-            {/* Progress Bar */}
-            <div class="mb-8">
-              <div class="flex justify-between items-center mb-2">
-                <span class="text-sm font-medium text-gray-700">Progression</span>
-                <span class="text-sm text-gray-600">6/7</span>
-              </div>
-              <div class="w-full bg-gray-200 rounded-full h-2">
-                <div class="bg-green-500 h-2 rounded-full" style="width: 86%"></div>
-              </div>
-            </div>
-
-            {/* Titre */}
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-              <div class="flex items-center gap-3 mb-4">
-                <div class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
-                  <i class="fas fa-check-circle text-green-600 text-xl"></i>
-                </div>
+          <div class="max-w-6xl mx-auto px-4 py-8 space-y-8">
+            <div class={`rounded-2xl border border-gray-200 bg-white p-6 shadow-sm ${isValidated ? 'ring-2 ring-green-200' : ''}`}>
+              <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
                 <div>
-                  <h1 class="text-2xl font-bold text-gray-900">Validation Finale</h1>
-                  <p class="text-gray-600">Votre Business Model Canvas est prêt pour validation</p>
+                  <h1 class="text-2xl font-bold text-gray-900">Validation du Business Model Canvas</h1>
+                  <p class="text-gray-600 mt-2">
+                    {isValidated
+                      ? 'Votre livrable est validé et prêt à être partagé.'
+                      : 'Vérifiez les critères ci-dessous avant de soumettre le module à la validation coach/IA.'}
+                  </p>
+                  <div class="text-sm text-gray-500 mt-3 flex flex-wrap items-center gap-3">
+                    <span class="inline-flex items-center gap-2">
+                      <i class="fas fa-robot"></i>
+                      Analyse IA : {formatDateValue(progress.ai_last_analysis as string | null, 'à lancer')}
+                    </span>
+                    <span class="inline-flex items-center gap-2">
+                      <i class="fas fa-book"></i>
+                      Quiz : {quizPassed ? `${quizScore}%` : 'non validé'}
+                    </span>
+                    <span class="inline-flex items-center gap-2">
+                      <i class="fas fa-rotate"></i>
+                      Itérations totales : {cards.reduce((sum, card) => sum + card.iterations, 0)}
+                    </span>
+                  </div>
+                </div>
+                <div class={`rounded-2xl px-6 py-4 text-center text-white ${scorePalette.gradient}`}>
+                  <p class="text-xs uppercase tracking-wide text-white/80">Score IA</p>
+                  <p class="text-4xl font-extrabold">{score}%</p>
+                  <p class="text-sm font-medium text-white/90 mt-1">{scoreInfo.label}</p>
                 </div>
               </div>
             </div>
 
-            {/* Checklist de Validation */}
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-              <h2 class="text-lg font-semibold text-gray-900 mb-4">Checklist de Qualité</h2>
-              <div class="space-y-3">
-                <label class="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer">
-                  <input type="checkbox" class="w-5 h-5 text-green-600 rounded focus:ring-green-500" checked />
-                  <span class="text-gray-700">✓ Tous les 9 blocs du Canvas sont complétés</span>
-                </label>
-                <label class="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer">
-                  <input type="checkbox" class="w-5 h-5 text-green-600 rounded focus:ring-green-500" checked />
-                  <span class="text-gray-700">✓ Chaque bloc contient des informations concrètes</span>
-                </label>
-                <label class="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer">
-                  <input type="checkbox" class="w-5 h-5 text-green-600 rounded focus:ring-green-500" checked />
-                  <span class="text-gray-700">✓ Les améliorations suggérées par l'IA ont été intégrées</span>
-                </label>
-                <label class="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer">
-                  <input type="checkbox" class="w-5 h-5 text-green-600 rounded focus:ring-green-500" checked />
-                  <span class="text-gray-700">✓ Le Business Model est cohérent et réaliste</span>
-                </label>
+            {isValidated ? (
+              <div class="space-y-6">
+                <div class="rounded-2xl border border-green-200 bg-green-50 p-6">
+                  <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                      <h2 class="text-xl font-semibold text-green-900">🎉 Module validé</h2>
+                      <p class="text-green-800 text-sm mt-2">Validé le {validatedAt ?? 'aujourd’hui'}. Vous pouvez télécharger le livrable ou continuer à itérer.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-3">
+                      <a href={deliverableUrl} class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-medium">
+                        <i class="fas fa-download"></i>
+                        Télécharger le PDF
+                      </a>
+                      <a href={`/module/${moduleCode}/improve`} class="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-green-300 bg-white text-green-700 hover:bg-green-100 font-medium">
+                        <i class="fas fa-pen"></i>
+                        Améliorer à nouveau
+                      </a>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                  <h3 class="text-lg font-semibold text-gray-900 mb-4">Résumé des blocs</h3>
+                  <div class="grid gap-4 md:grid-cols-2">
+                    {cards.map((card) => (
+                      <div class="border border-gray-100 rounded-xl p-4" key={`validated-card-${card.questionId}`}>
+                        <div class="flex items-start justify-between gap-4 mb-3">
+                          <div>
+                            <p class="text-xs uppercase tracking-wide text-gray-500">Bloc #{card.order}</p>
+                            <p class="text-sm font-semibold text-gray-900">{card.section}</p>
+                          </div>
+                          <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-green-100 text-green-700 text-xs font-semibold">
+                            <i class="fas fa-check-circle"></i>
+                            Validé
+                          </span>
+                        </div>
+                        <p class="text-sm text-gray-600 whitespace-pre-line line-clamp-4">
+                          {card.currentAnswer || '—'}
+                        </p>
+                        <div class="mt-3 text-xs text-gray-500 flex flex-wrap gap-2">
+                          <span>Itérations : {card.iterations}</span>
+                          {card.percentage !== null && <span>Score bloc : {card.percentage}%</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div class="space-y-6">
+                <div class="grid gap-4 md:grid-cols-2">
+                  {requirements.map((req) => (
+                    <div
+                      key={req.key}
+                      class={`rounded-2xl border p-4 shadow-sm ${req.satisfied ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}
+                    >
+                      <div class="flex items-center justify-between">
+                        <h3 class="text-sm font-semibold text-gray-900">{req.label}</h3>
+                        <span class={`inline-flex items-center justify-center w-8 h-8 rounded-full text-white ${req.satisfied ? 'bg-green-500' : 'bg-red-500'}`}>
+                          <i class={req.satisfied ? 'fas fa-check' : 'fas fa-exclamation'}></i>
+                        </span>
+                      </div>
+                      <p class="text-sm text-gray-600 mt-3">
+                        {req.detail}
+                      </p>
+                    </div>
+                  ))}
+                </div>
 
-            {/* Récapitulatif */}
-            <div class="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
-              <h3 class="font-semibold text-blue-900 mb-3 flex items-center gap-2">
-                <i class="fas fa-info-circle"></i>
-                Récapitulatif de votre parcours
-              </h3>
-              <ul class="space-y-2 text-sm text-blue-800">
-                <li class="flex items-center gap-2">
-                  <i class="fas fa-check text-green-600"></i>
-                  <span>B1 - Vidéo pédagogique visionnée</span>
-                </li>
-                <li class="flex items-center gap-2">
-                  <i class="fas fa-check text-green-600"></i>
-                  <span>B2 - Quiz de validation réussi (≥80%)</span>
-                </li>
-                <li class="flex items-center gap-2">
-                  <i class="fas fa-check text-green-600"></i>
-                  <span>B3 - 9 questions guidées complétées</span>
-                </li>
-                <li class="flex items-center gap-2">
-                  <i class="fas fa-check text-green-600"></i>
-                  <span>B4 - Analyse IA effectuée avec suggestions</span>
-                </li>
-                <li class="flex items-center gap-2">
-                  <i class="fas fa-check text-green-600"></i>
-                  <span>B5 - Améliorations apportées et sauvegardées</span>
-                </li>
-              </ul>
-            </div>
+                {blockingReasons.length > 0 && (
+                  <div id="blocking-alert" class="rounded-2xl border border-red-200 bg-red-50 p-6 space-y-3">
+                    <h3 class="text-lg font-semibold text-red-900 flex items-center gap-2">
+                      <i class="fas fa-triangle-exclamation"></i>
+                      Points à corriger avant validation
+                    </h3>
+                    <ul class="list-disc list-inside text-sm text-red-800 space-y-2">
+                      {blockingReasons.map((reason, idx) => (
+                        <li key={`blocker-${idx}`}>{reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
-            {/* Statut de Validation */}
-            <div id="validationStatus" class="hidden mb-6"></div>
+                <div class="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                  <div class="flex items-start justify-between gap-4 mb-4">
+                    <div>
+                      <h3 class="text-lg font-semibold text-gray-900">Vue d’ensemble des blocs</h3>
+                      <p class="text-sm text-gray-600">Assurez-vous que chaque bloc est complet et crédible avant de soumettre le module.</p>
+                    </div>
+                    <a href={`/module/${moduleCode}/improve`} class="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 text-sm font-medium">
+                      <i class="fas fa-pen"></i>
+                      Retour aux améliorations
+                    </a>
+                  </div>
 
-            {/* Actions */}
-            <div class="flex gap-4">
-              <button 
-                onclick="submitForValidation()"
-                class="flex-1 bg-green-600 text-white py-3 px-6 rounded-lg font-medium hover:bg-green-700 transition flex items-center justify-center gap-2"
-              >
-                <i class="fas fa-check-circle"></i>
-                <span>Soumettre pour Validation</span>
-              </button>
-              <a 
-                href={`/module/${moduleCode}/improve`}
-                class="bg-gray-100 text-gray-700 py-3 px-6 rounded-lg font-medium hover:bg-gray-200 transition flex items-center justify-center gap-2"
-              >
-                <i class="fas fa-arrow-left"></i>
-                <span>Retour aux Améliorations</span>
-              </a>
-            </div>
+                  <div class="grid gap-4 md:grid-cols-2">
+                    {cards.map((card) => {
+                      const status = !card.hasAnswer
+                        ? { label: 'Bloc incomplet', className: 'bg-red-100 text-red-700', icon: 'fas fa-circle-xmark' }
+                        : card.questionsCount > 0
+                          ? { label: 'Précisions requises', className: 'bg-red-100 text-red-700', icon: 'fas fa-circle-question' }
+                          : card.suggestionsCount > 0
+                            ? { label: 'Peut être renforcé', className: 'bg-yellow-100 text-yellow-700', icon: 'fas fa-lightbulb' }
+                            : { label: 'Bloc prêt', className: 'bg-green-100 text-green-700', icon: 'fas fa-circle-check' }
+
+                      return (
+                        <div class="border border-gray-100 rounded-xl p-4" key={`pending-card-${card.questionId}`}>
+                          <div class="flex items-start justify-between gap-4 mb-3">
+                            <div>
+                              <p class="text-xs uppercase tracking-wide text-gray-500">Bloc #{card.order}</p>
+                              <p class="text-sm font-semibold text-gray-900">{card.section}</p>
+                            </div>
+                            <span class={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold ${status.className}`}>
+                              <i class={status.icon}></i>
+                              {status.label}
+                            </span>
+                          </div>
+                          <p class="text-sm text-gray-600 whitespace-pre-line line-clamp-4">
+                            {card.currentAnswer || 'Aucune réponse enregistrée.'}
+                          </p>
+                          <div class="mt-3 text-xs text-gray-500 flex flex-wrap gap-2">
+                            <span>Itérations : {card.iterations}</span>
+                            {card.percentage !== null && <span>Score bloc : {card.percentage}%</span>}
+                            {card.suggestionsCount > 0 && <span>{card.suggestionsCount} suggestion{card.suggestionsCount > 1 ? 's' : ''}</span>}
+                            {card.questionsCount > 0 && <span>{card.questionsCount} clarification{card.questionsCount > 1 ? 's' : ''}</span>}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div id="validationStatus"></div>
+
+                <div class="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm space-y-4">
+                  <div>
+                    <h3 class="text-lg font-semibold text-gray-900">Soumettre à la validation Coach / IA</h3>
+                    <p class="text-sm text-gray-600">Ajoutez un message facultatif pour le coach puis lancez la validation. Toute modification ultérieure renverra le module en amélioration.</p>
+                  </div>
+                  <div>
+                    <label for="validationNote" class="text-sm font-medium text-gray-700">Note (optionnelle)</label>
+                    <textarea
+                      id="validationNote"
+                      rows={4}
+                      class="mt-2 w-full border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+                      placeholder="Partagez une précision ou un point d’attention pour le coach..."
+                    ></textarea>
+                  </div>
+                  <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <button
+                      type="button"
+                      id="submitValidationButton"
+                      data-ready={readyForValidation ? 'true' : 'false'}
+                      onclick="submitForValidation(event)"
+                      class={`inline-flex items-center justify-center gap-2 px-5 py-3 rounded-lg text-white font-semibold transition ${
+                        readyForValidation ? 'bg-green-600 hover:bg-green-700 shadow' : 'bg-gray-400 cursor-not-allowed'
+                      }`}
+                    >
+                      <i class="fas fa-check-circle"></i>
+                      Soumettre pour validation
+                    </button>
+                    <p class="text-sm text-gray-500">
+                      Après validation, le livrable PDF sera généré automatiquement (étape B7).
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <script dangerouslySetInnerHTML={{__html: `
-            async function submitForValidation() {
-              const btn = event.target.closest('button')
-              const originalHTML = btn.innerHTML
-              btn.disabled = true
-              btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Validation en cours...'
-              
-              try {
-                const response = await fetch('/api/module/validate', {
+            (function() {
+              window.VALIDATION_CONTEXT = ${JSON.stringify(validationContext).replace(/</g, '\\u003c')};
+              const deliverableUrl = '${deliverableUrl}';
+
+              function submitForValidation(event) {
+                event.preventDefault();
+                const ctx = window.VALIDATION_CONTEXT || {};
+                const button = event.currentTarget;
+
+                if (ctx.readyForValidation !== true) {
+                  const alertBox = document.getElementById('blocking-alert');
+                  if (alertBox) {
+                    alertBox.classList.add('ring-2', 'ring-red-300');
+                    alertBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    setTimeout(() => alertBox.classList.remove('ring-2', 'ring-red-300'), 800);
+                  }
+                  button.classList.add('ring-2', 'ring-red-300', 'ring-offset-2');
+                  setTimeout(() => button.classList.remove('ring-2', 'ring-red-300', 'ring-offset-2'), 700);
+                  return;
+                }
+
+                if (button.dataset.loading === 'true') {
+                  return;
+                }
+
+                button.dataset.loading = 'true';
+                const originalHTML = button.innerHTML;
+                button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Soumission en cours...';
+
+                const textarea = document.getElementById('validationNote');
+                const comment = textarea ? textarea.value.trim() : '';
+
+                fetch('/api/module/validate', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ 
-                    moduleCode: '${moduleCode}'
+                  body: JSON.stringify({
+                    moduleCode: ctx.moduleCode,
+                    comment
                   })
                 })
-                
-                const result = await response.json()
-                
-                if (result.success) {
-                  // Afficher succès
-                  const status = document.getElementById('validationStatus')
-                  status.className = 'bg-green-50 border border-green-200 rounded-lg p-6 mb-6'
-                  status.innerHTML = \`
-                    <div class="flex items-start gap-3">
-                      <div class="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
-                        <i class="fas fa-trophy text-green-600 text-lg"></i>
-                      </div>
-                      <div class="flex-1">
-                        <h3 class="font-semibold text-green-900 mb-2">🎉 Félicitations !</h3>
-                        <p class="text-green-800 mb-4">Votre Business Model Canvas a été validé avec succès ! Vous pouvez maintenant télécharger votre livrable professionnel.</p>
-                        <div class="flex gap-3">
-                          <a href="/module/${moduleCode}/download" class="bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition inline-flex items-center gap-2">
-                            <i class="fas fa-download"></i>
-                            <span>Télécharger le PDF</span>
-                          </a>
-                          <a href="/dashboard" class="bg-white text-green-700 border border-green-300 py-2 px-4 rounded-lg hover:bg-green-50 transition inline-flex items-center gap-2">
-                            <i class="fas fa-home"></i>
-                            <span>Retour au Dashboard</span>
-                          </a>
-                        </div>
-                      </div>
-                    </div>
-                  \`
-                  status.classList.remove('hidden')
-                  
-                  // Masquer le bouton de validation
-                  btn.closest('.flex').classList.add('hidden')
-                } else {
-                  btn.disabled = false
-                  btn.innerHTML = originalHTML
-                  alert('Erreur: ' + (result.error || 'Validation échouée'))
-                }
-              } catch (err) {
-                console.error('Validation error:', err)
-                btn.disabled = false
-                btn.innerHTML = originalHTML
-                alert('Erreur de connexion au serveur')
+                  .then(async (res) => {
+                    const payload = await res.clone().json().catch(() => ({}));
+                    if (!res.ok || !payload.success) {
+                      throw payload;
+                    }
+
+                    const statusBox = document.getElementById('validationStatus');
+                    if (statusBox) {
+                      statusBox.className = 'rounded-2xl border border-green-200 bg-green-50 p-6 mb-6';
+                      statusBox.innerHTML = ''
+                        + '<div class="flex items-start gap-3">'
+                        +   '<div class="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">'
+                        +     '<i class="fas fa-trophy text-green-600"></i>'
+                        +   '</div>'
+                        +   '<div>'
+                        +     '<h3 class="text-lg font-semibold text-green-900 mb-1">Validation réussie !</h3>'
+                        +     '<p class="text-sm text-green-800 mb-4">Votre livrable est prêt. Vous allez être redirigé vers la version mise à jour.</p>'
+                        +     '<div class="flex flex-wrap gap-3">'
+                        +       '<a href="' + deliverableUrl + '" class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white">'
+                        +         '<i class="fas fa-download"></i>'
+                        +         '<span>Télécharger le PDF</span>'
+                        +       '</a>'
+                        +       '<a href="/dashboard" class="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-green-300 bg-white text-green-700 hover:bg-green-100">'
+                        +         '<i class="fas fa-home"></i>'
+                        +         '<span>Dashboard</span>'
+                        +       '</a>'
+                        +     '</div>'
+                        +   '</div>'
+                        + '</div>';
+                    }
+
+                    setTimeout(() => window.location.reload(), 1200);
+                  })
+                  .catch((err) => {
+                    console.error('Validation error', err);
+                    const statusBox = document.getElementById('validationStatus');
+                    if (statusBox) {
+                      const reasons = Array.isArray(err?.blockingReasons) ? err.blockingReasons : [];
+                      statusBox.className = 'rounded-2xl border border-red-200 bg-red-50 p-6 mb-6';
+                      statusBox.innerHTML = ''
+                        + '<h3 class="text-lg font-semibold text-red-900 mb-2">Validation impossible</h3>'
+                        + '<p class="text-sm text-red-800 mb-3">' + (err?.error || 'Merci de corriger les points en attente avant de soumettre.') + '</p>'
+                        + (reasons.length ? '<ul class="list-disc list-inside text-sm text-red-700 space-y-1">' + reasons.map((reason) => '<li>' + reason + '</li>').join('') + '</ul>' : '');
+                    }
+                  })
+                  .finally(() => {
+                    button.dataset.loading = 'false';
+                    button.innerHTML = originalHTML;
+                  });
               }
-            }
-            
-            window.submitForValidation = submitForValidation
+
+              window.submitForValidation = submitForValidation;
+            })();
           `}} />
         </body>
       </html>
@@ -1477,410 +4073,684 @@ moduleRoutes.get('/module/:code/validate', async (c) => {
     return c.redirect('/dashboard')
   }
 })
-
 // B7 - Téléchargement du Livrable PDF
+
 moduleRoutes.get('/module/:code/download', async (c) => {
   try {
     const token = getCookie(c, 'auth_token')
     if (!token) return c.redirect('/login')
-    
+
     const payload = await verifyToken(token)
     if (!payload) return c.redirect('/login')
 
     const moduleCode = c.req.param('code')
     const module = await c.env.DB.prepare(`
-      SELECT * FROM modules WHERE module_code = ?
+      SELECT id, title, module_code FROM modules WHERE module_code = ?
     `).bind(moduleCode).first()
 
     if (!module) return c.redirect('/dashboard')
 
-    const progressRow = await c.env.DB.prepare(`
-      SELECT status, validated_at, updated_at
+    const progress = await c.env.DB.prepare(`
+      SELECT id, status, ai_score, ai_last_analysis, validated_at
       FROM progress
       WHERE user_id = ? AND module_id = ?
-    `).bind(payload.userId, module.id).first() as {
-      status?: string
-      validated_at?: string
-      updated_at?: string
-    } | null
+    `).bind(payload.userId, module.id).first()
 
-    const isValidated = progressRow?.status === 'validated'
-    const validatedAt = progressRow?.validated_at ? String(progressRow.validated_at) : null
-    const lastUpdatedAt = progressRow?.updated_at ? String(progressRow.updated_at) : null
+    if (!progress) return c.redirect('/dashboard')
 
-    // Récupérer toutes les réponses de l'utilisateur
-    const responses = await c.env.DB.prepare(`
-      SELECT question_id, answer_text FROM user_answers 
-      WHERE user_id = ? AND module_code = ?
-      ORDER BY question_id
-    `).bind(payload.userId, moduleCode).all()
+    const isValidated = (progress.status as string) === 'validated'
 
-    const answersMap: Record<number, string> = {}
-    responses.results.forEach((r: any) => {
-      answersMap[r.question_id] = r.answer_text
+    const deliverable = await c.env.DB.prepare(`
+      SELECT id, content_json, summary, ai_score, coach_comment, validated_at, status, created_at
+      FROM deliverables
+      WHERE user_id = ? AND module_id = ?
+      ORDER BY validated_at DESC, created_at DESC
+      LIMIT 1
+    `).bind(payload.userId, module.id).first()
+
+    if (!deliverable && isValidated) {
+      console.warn('Livrable manquant pour un module validé', moduleCode, 'user', payload.userId)
+    }
+
+    let deliverableContent: any = null
+    if (deliverable?.content_json) {
+      try {
+        deliverableContent = JSON.parse(deliverable.content_json as string)
+      } catch (error) {
+        console.warn('Impossible de parser le content_json du livrable', error)
+      }
+    }
+
+    let sections: CanvasSection[] | null = null
+
+    if (Array.isArray(deliverableContent?.sections) && deliverableContent.sections.length > 0) {
+      sections = deliverableContent.sections.map((section: any, index: number) => {
+        const questionId = Number(section.questionId ?? section.question_id ?? section.id ?? index + 1)
+        const sectionName = typeof section.section === 'string' ? section.section : getSectionName(questionId)
+        const questionText = typeof section.question === 'string' ? section.question : section.questionText ?? `Question ${questionId}`
+        const answer = typeof section.answer === 'string' ? section.answer : section.answer?.toString?.() ?? ''
+        const scoreValue = typeof section.score === 'number' ? Math.round(section.score) : null
+        const label = typeof section.scoreLabel === 'string'
+          ? section.scoreLabel
+          : scoreValue !== null ? getScoreLabel(scoreValue).label : 'Analyse IA à générer'
+        const suggestions = Array.isArray(section.suggestions) ? section.suggestions : []
+        const questions = Array.isArray(section.questions) ? section.questions : []
+
+        return {
+          order: index + 1,
+          questionId,
+          section: sectionName,
+          question: questionText,
+          answer,
+          score: scoreValue,
+          scoreLabel: label,
+          suggestions,
+          questions
+        }
+      })
+    }
+
+    if (!sections || sections.length === 0) {
+      const questionsRes = await c.env.DB.prepare(`
+        SELECT question_number, question_text, user_response, ai_feedback, quality_score
+        FROM questions
+        WHERE progress_id = ?
+        ORDER BY question_number
+      `).bind(progress.id).all()
+
+      const questionRows = Array.isArray(questionsRes.results) ? questionsRes.results as any[] : []
+      sections = buildCanvasSectionsFromQuestions(module.module_code as string, questionRows)
+    }
+
+    const gridSections = sections.map((section, index) => ({
+      ...section,
+      row: Math.floor(index / 3) + 1,
+      col: (index % 3) + 1
+    }))
+
+    const deliverableAiScore = (deliverable && typeof deliverable.ai_score === 'number')
+      ? Number(deliverable.ai_score)
+      : null
+
+    const aiScoreRaw = deliverableAiScore !== null
+      ? deliverableAiScore
+      : typeof progress.ai_score === 'number'
+        ? Number(progress.ai_score)
+        : null
+
+    const globalLabel = aiScoreRaw !== null ? getScoreLabel(aiScoreRaw).label : 'Analyse IA à générer'
+    const globalBadge = (SCORE_BADGE_STYLES as Record<string, { badge: string; icon: string }>)[globalLabel] ?? SCORE_BADGE_STYLES.default
+
+    const validatedTimestamp = (deliverableContent?.validatedAt as string | null)
+      ?? (deliverable?.validated_at as string | null)
+      ?? (progress.validated_at as string | null)
+
+    const refreshedTimestamp = (deliverableContent?.refreshedAt as string | null) ?? null
+
+    const validatedAtDisplay = isValidated
+      ? formatDateValue(validatedTimestamp, 'Non généré')
+      : 'Module non validé'
+
+    const refreshedAtDisplay = refreshedTimestamp
+      ? formatDateValue(refreshedTimestamp)
+      : (isValidated ? formatDateValue(validatedTimestamp, 'Non généré') : null)
+
+    const analysisDateDisplay = formatDateValue(progress.ai_last_analysis as string | null, 'Analyse IA à relancer')
+    const coachComment = deliverable?.coach_comment ? String(deliverable.coach_comment).trim() : ''
+    const summary = typeof deliverable?.summary === 'string'
+      ? deliverable.summary as string
+      : typeof deliverableContent?.summary === 'string'
+        ? deliverableContent.summary as string
+        : ''
+    const moduleTitle = module.title ?? 'Business Model Canvas'
+
+    const canvasExportData = {
+      moduleTitle,
+      moduleCode,
+      validatedAt: validatedTimestamp ?? null,
+      refreshedAt: refreshedTimestamp,
+      summary: summary || (isValidated
+        ? 'Canvas validé et prêt à être partagé.'
+        : 'Livrable brouillon — validez le module pour finaliser.'),
+      aiScore: aiScoreRaw,
+      scoreLabel: globalLabel,
+      status: isValidated ? 'validated' : 'draft',
+      isValidated,
+      sections: gridSections.map((section) => ({
+        questionId: section.questionId,
+        section: section.section,
+        question: section.question,
+        answer: section.answer,
+        score: section.score,
+        scoreLabel: section.scoreLabel,
+        suggestions: section.suggestions,
+        questions: section.questions,
+        row: section.row,
+        col: section.col
+      }))
+    }
+
+    const canvasExportJson = JSON.stringify(canvasExportData).replace(/</g, '\\u003c')
+
+    const displaySections = gridSections.map((section) => {
+      const style = (SCORE_BADGE_STYLES as Record<string, { badge: string; icon: string }>)[section.scoreLabel] ?? SCORE_BADGE_STYLES.default
+      const suggestions = Array.isArray(section.suggestions)
+        ? section.suggestions.map((entry: any) => {
+            if (!entry) return ''
+            if (typeof entry === 'string') return entry
+            if (typeof entry?.message === 'string') return entry.message
+            return String(entry)
+          }).filter((item: string) => item.length > 0)
+        : []
+      const clarifications = Array.isArray(section.questions)
+        ? section.questions.map((entry: any) => {
+            if (!entry) return ''
+            if (typeof entry === 'string') return entry
+            if (typeof entry?.message === 'string') return entry.message
+            return String(entry)
+          }).filter((item: string) => item.length > 0)
+        : []
+
+      return {
+        ...section,
+        suggestions,
+        questions: clarifications,
+        badgeClass: style.badge,
+        badgeIcon: style.icon
+      }
     })
 
-    const hasAnswers = responses.results.length > 0
-    const heroGradientClass = isValidated
-      ? 'from-green-50 to-blue-50 border-green-200'
-      : 'from-orange-50 to-yellow-50 border-orange-200'
-    const heroIconContainerClass = isValidated ? 'bg-green-100' : 'bg-orange-100'
-    const heroIconClass = isValidated ? 'fas fa-trophy text-green-600 text-4xl' : 'fas fa-hourglass-half text-orange-500 text-4xl'
-    const heroBadgeClass = isValidated ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'
-    const heroBadgeIconClass = isValidated ? 'fas fa-check-circle' : 'fas fa-exclamation-triangle'
-    const heroBadgeText = isValidated ? "Validé par l'IA Coach" : 'Brouillon – validation en attente'
-    const bannerTitle = isValidated ? 'Module Terminé !' : 'Livrable provisoire'
-    const bannerSubtitle = isValidated ? 'Félicitations pour avoir complété votre' : 'Voici la version exportable de votre'
-    const progressLabel = isValidated ? '7/7 - Terminé ✓' : '7/7 - Livrable provisoire'
-    const progressLabelClass = isValidated ? 'text-green-600' : 'text-orange-600'
-    const progressBarClass = isValidated ? 'bg-green-500' : 'bg-orange-500'
-    const validatedAtDisplay = formatDateTime(validatedAt)
-    const lastUpdatedDisplay = formatDateTime(lastUpdatedAt)
-    const downloadButtonClasses = hasAnswers
-      ? 'bg-red-600 text-white hover:bg-red-700'
-      : 'bg-gray-300 text-gray-500 cursor-not-allowed pointer-events-none'
-    const downloadButtonTitle = hasAnswers
-      ? 'Télécharger le PDF'
-      : 'Complétez les blocs du Canvas pour activer le téléchargement'
+    const aiScoreDisplay = aiScoreRaw !== null ? `${aiScoreRaw}%` : 'À calculer'
+    const deliverableStatusRaw = String((deliverable?.status as string | null) ?? (isValidated ? 'ready' : 'draft'))
+
+    let deliverableStatusLabel: string
+    if (!isValidated) {
+      deliverableStatusLabel = 'Brouillon (module non validé)'
+    } else if (deliverableStatusRaw === 'ready') {
+      deliverableStatusLabel = 'Prêt à partager'
+    } else if (deliverableStatusRaw === 'draft') {
+      deliverableStatusLabel = 'Brouillon'
+    } else if (deliverableStatusRaw === 'archived') {
+      deliverableStatusLabel = 'Archivé'
+    } else {
+      deliverableStatusLabel = deliverableStatusRaw
+    }
+
+    const metaEntries = [
+      { label: 'Validé le', value: validatedAtDisplay },
+      { label: 'Dernière régénération', value: refreshedAtDisplay ?? (isValidated ? validatedAtDisplay : 'En attente de validation') },
+      { label: 'Analyse IA', value: analysisDateDisplay },
+      { label: 'Statut du livrable', value: deliverableStatusLabel }
+    ]
+
+    const hasCoachComment = coachComment.length > 0 && isValidated
+    const displaySummary = summary.length > 0
+      ? summary
+      : isValidated
+        ? 'Canvas validé et prêt à être partagé.'
+        : 'Livrable brouillon — validez le module pour verrouiller la version investisseur.'
+    const globalBadgeClass = globalBadge.badge
+    const globalBadgeIcon = globalBadge.icon
+
+    const headerTitle = isValidated ? 'Livrable final' : 'Livrable brouillon'
+    const headerSubtitle = isValidated
+      ? 'Votre livrable est prêt à être exporté, partagé et présenté à vos partenaires financiers.'
+      : 'Prévisualisez votre Business Model Canvas actuel. Validez le module pour produire la version officielle investisseur.'
+    const headerBadge = isValidated
+      ? { className: 'inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-100 text-emerald-700 font-semibold', icon: 'fas fa-circle-check', label: 'Validation complétée' }
+      : { className: 'inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-100 text-amber-700 font-semibold', icon: 'fas fa-hourglass-half', label: 'Validation en attente' }
 
     return c.html(
       <html lang="fr">
         <head>
           <meta charset="UTF-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <title>Télécharger - {module.title}</title>
+          <title>Livrable - {moduleTitle}</title>
           <script src="https://cdn.tailwindcss.com"></script>
           <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet" />
           <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
         </head>
-        <body class="bg-gray-50">
-          {/* Header */}
-          <nav class="bg-white shadow-sm border-b border-gray-200">
-            <div class="max-w-7xl mx-auto px-4 py-4">
-              <a href="/dashboard" class="text-blue-600 hover:text-blue-700 flex items-center gap-2">
+        <body class="bg-slate-50">
+          <nav class="bg-white shadow-sm border-b border-slate-200">
+            <div class="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+              <a href="/dashboard" class="text-indigo-600 hover:text-indigo-700 flex items-center gap-2 font-medium">
                 <i class="fas fa-arrow-left"></i>
                 <span>Retour au dashboard</span>
               </a>
+              <span class="text-xs text-slate-500 flex items-center gap-2">
+                <i class="fas fa-flag-checkered"></i>
+                Étape 1 · B7
+              </span>
             </div>
           </nav>
 
-          <div class="max-w-4xl mx-auto px-4 py-8">
-            {/* Breadcrumb */}
-            <div class="mb-6 text-sm text-gray-600">
-              <span>Étape 1</span> › <span>{module.title}</span> › <span class="font-semibold text-gray-900">B7 - Livrable</span>
-            </div>
-
-            {/* Progress Bar */}
-            <div class="mb-8">
-              <div class="flex justify-between items-center mb-2">
-                <span class="text-sm font-medium text-gray-700">Progression</span>
-                <span class={`text-sm font-semibold ${progressLabelClass}`}>{progressLabel}</span>
-              </div>
-              <div class="w-full bg-gray-200 rounded-full h-2">
-                <div class={`${progressBarClass} h-2 rounded-full`} style="width: 100%"></div>
-              </div>
-            </div>
-
-            {/* Bannière */}
-            <div class={`bg-gradient-to-r ${heroGradientClass} border-2 rounded-lg p-8 mb-6 text-center`}>
-              <div class={`w-20 h-20 ${heroIconContainerClass} rounded-full flex items-center justify-center mx-auto mb-4`}>
-                <i class={heroIconClass}></i>
-              </div>
-              <h1 class="text-3xl font-bold text-gray-900 mb-2">{bannerTitle}</h1>
-              <p class="text-gray-700 text-lg mb-1">{bannerSubtitle}</p>
-              <p class="text-2xl font-semibold text-blue-600 mb-4">{module.title}</p>
-              <div class={`inline-flex items-center gap-2 px-4 py-2 rounded-full ${heroBadgeClass}`}>
-                <i class={heroBadgeIconClass}></i>
-                <span class="font-medium">{heroBadgeText}</span>
-              </div>
-              {isValidated && validatedAtDisplay && (
-                <p class="mt-4 text-sm text-green-800">
-                  Validé le {validatedAtDisplay}
-                </p>
-              )}
-              {!isValidated && (
-                <p class="mt-4 text-sm text-orange-700">
-                  Ce livrable est généré en mode brouillon. Finalisez l'analyse IA et la validation coach pour obtenir la version officielle.
-                </p>
-              )}
-              {lastUpdatedDisplay && (
-                <p class="mt-2 text-xs text-gray-600">
-                  Dernière mise à jour : {lastUpdatedDisplay}
-                </p>
-              )}
-            </div>
-
-            {/* Aperçu du Document */}
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-              <h2 class="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                <i class="fas fa-file-pdf text-red-600"></i>
-                Aperçu du Livrable
-              </h2>
-              <div class="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-8">
-                <div class="text-center">
-                  <i class="fas fa-file-alt text-gray-400 text-5xl mb-4"></i>
-                  <p class="text-gray-700 font-medium mb-2">Business Model Canvas - {isValidated ? 'Version Professionnelle' : 'Version brouillon'}</p>
-                  <p class="text-sm text-gray-600">
-                    {isValidated
-                      ? 'Format PDF - Prêt pour présentation aux investisseurs'
-                      : 'Format PDF provisoire - Validation requise pour la version officielle'}
-                  </p>
+          <main class="max-w-5xl mx-auto px-4 py-8 space-y-8">
+            {!isValidated && (
+              <section class="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 text-amber-800">
+                <div class="flex items-start gap-3">
+                  <span class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-amber-100 text-amber-600">
+                    <i class="fas fa-triangle-exclamation"></i>
+                  </span>
+                  <div>
+                    <h2 class="text-sm font-semibold">Livrable en mode brouillon</h2>
+                    <p class="text-sm">Complétez l’analyse IA (B4) puis validez le module (B6) pour générer la version officielle.</p>
+                  </div>
                 </div>
-              </div>
-            </div>
-
-            {/* Que contient ce document ? */}
-            <div class="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
-              <h3 class="font-semibold text-blue-900 mb-3 flex items-center gap-2">
-                <i class="fas fa-info-circle"></i>
-                Contenu du Document
-              </h3>
-              <ul class="space-y-2 text-sm text-blue-800">
-                <li class="flex items-center gap-2">
-                  <i class="fas fa-check text-green-600"></i>
-                  <span>Les 9 blocs du Business Model Canvas {hasAnswers ? 'complétés' : 'à compléter'}</span>
-                </li>
-                <li class="flex items-center gap-2">
-                  <i class="fas fa-check text-green-600"></i>
-                  <span>Vos réponses détaillées et améliorées</span>
-                </li>
-                <li class="flex items-center gap-2">
-                  <i class="fas fa-check text-green-600"></i>
-                  <span>Format prêt pour partage {isValidated ? '(version validée)' : '(brouillon partageable)'}</span>
-                </li>
-                <li class="flex items-center gap-2">
-                  <i class={`fas ${isValidated ? 'fa-check text-green-600' : 'fa-exclamation text-orange-500'}`}></i>
-                  <span>{isValidated ? "Badge de validation IA Coach" : 'En attente de validation IA/coach'}</span>
-                </li>
-              </ul>
-              <div class="mt-4 text-sm text-blue-900 space-y-1">
-                <p>
-                  <span class="font-medium">Dernière mise à jour :</span>
-                  <span> {lastUpdatedDisplay ?? 'À compléter'}</span>
-                </p>
-                {isValidated ? (
-                  <p>
-                    <span class="font-medium">Validé le :</span>
-                    <span> {validatedAtDisplay ?? 'Date indisponible'}</span>
-                  </p>
-                ) : (
-                  <p>
-                    <span class="font-medium">Validation :</span>
-                    <span> Analyse IA + validation coach requises pour finaliser le livrable.</span>
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {!hasAnswers && (
-              <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 mb-6 flex items-start gap-3">
-                <i class="fas fa-info-circle text-yellow-600 mt-1"></i>
-                <div>
-                  <h3 class="font-semibold text-yellow-900 mb-1">Réponses manquantes</h3>
-                  <p class="text-sm text-yellow-800">
-                    Complétez les 9 blocs du Canvas (Étapes B3 à B5) pour activer le téléchargement du livrable.
-                  </p>
-                </div>
-              </div>
+                <a
+                  href={`/module/${moduleCode}/validate`}
+                  class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold"
+                >
+                  <i class="fas fa-check-double"></i>
+                  Passer à la validation
+                </a>
+              </section>
             )}
 
-            {/* Actions de Téléchargement */}
-            <div class="space-y-4">
-              <button
-                data-download-btn="true"
-                onclick="downloadPDF()"
-                class={`w-full ${downloadButtonClasses} py-4 px-6 rounded-lg font-medium transition flex items-center justify-center gap-3 text-lg`}
-                disabled={!hasAnswers}
-                aria-disabled={!hasAnswers}
-                title={downloadButtonTitle}
-              >
-                <i class="fas fa-download text-xl"></i>
-                <span>Télécharger le PDF</span>
-              </button>
-              
-              <div class="grid grid-cols-2 gap-4">
-                <a 
-                  href="/dashboard"
-                  class="bg-gray-100 text-gray-700 py-3 px-6 rounded-lg font-medium hover:bg-gray-200 transition flex items-center justify-center gap-2"
-                >
-                  <i class="fas fa-home"></i>
-                  <span>Retour au Dashboard</span>
+            <header class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <p class="text-xs uppercase tracking-wider text-slate-500">{headerTitle}</p>
+                <h1 class="text-3xl font-bold text-slate-900">{moduleTitle}</h1>
+                <p class="mt-2 text-slate-600">{headerSubtitle}</p>
+              </div>
+              <div class={headerBadge.className}>
+                <i class={headerBadge.icon}></i>
+                <span>{headerBadge.label}</span>
+              </div>
+            </header>
+
+            <section class="grid gap-6 md:grid-cols-2">
+              <article class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                <div class="flex items-center gap-3">
+                  <div class="w-12 h-12 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                    <i class="fas fa-file-signature text-xl"></i>
+                  </div>
+                  <div>
+                    <h2 class="text-lg font-semibold text-slate-900">{moduleTitle}</h2>
+                    <p class="text-sm text-slate-600">Livrable Business Model Canvas</p>
+                  </div>
+                </div>
+                <p class="text-sm text-slate-600">{isValidated ? 'Récapitulatif des informations clés enregistrées lors de la validation de votre module.' : 'Synthèse des éléments renseignés à ce stade. Finalisez la validation pour figer le livrable.'}</p>
+                <dl class="border border-slate-100 rounded-xl overflow-hidden divide-y divide-slate-100">
+                  {metaEntries.map((item, idx) => (
+                    <div class="flex items-center justify-between gap-3 px-4 py-3 bg-white odd:bg-slate-50" key={`meta-${idx}`}>
+                      <dt class="text-xs uppercase tracking-wide text-slate-500">{item.label}</dt>
+                      <dd class="text-sm font-semibold text-slate-900 text-right">{item.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </article>
+
+              <article class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                <div class="flex items-center justify-between">
+                  <span class={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold ${globalBadgeClass}`}>
+                    <i class={globalBadgeIcon}></i>
+                    {globalLabel}
+                  </span>
+                  <span class="text-xs text-slate-500">{validatedAtDisplay}</span>
+                </div>
+                <div class="mt-6 text-center space-y-2">
+                  <p class="text-xs uppercase tracking-wide text-slate-500">Score IA global</p>
+                  <p class="text-5xl font-extrabold text-slate-900">{aiScoreDisplay}</p>
+                  <p class="text-sm text-slate-500">{displaySummary}</p>
+                </div>
+                <div class="mt-6 grid grid-cols-2 gap-3 text-xs text-slate-600">
+                  <div class="flex items-center gap-2">
+                    <i class="fas fa-robot text-slate-400"></i>
+                    <span>Analyse IA : {analysisDateDisplay}</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <i class="fas fa-arrows-rotate text-slate-400"></i>
+                    <span>Régénération : {refreshedAtDisplay ?? validatedAtDisplay}</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <i class="fas fa-bolt text-slate-400"></i>
+                    <span>Statut : {deliverableStatusLabel}</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <i class="fas fa-layer-group text-slate-400"></i>
+                    <span>{displaySections.length} blocs structurés</span>
+                  </div>
+                </div>
+              </article>
+            </section>
+
+            {hasCoachComment && (
+              <section class="bg-white rounded-2xl border border-amber-200 shadow-sm p-6">
+                <h2 class="text-lg font-semibold text-amber-900 flex items-center gap-2">
+                  <i class="fas fa-user-check"></i>
+                  Commentaire du coach
+                </h2>
+                <p class="mt-3 text-sm text-amber-800 whitespace-pre-line">{coachComment}</p>
+              </section>
+            )}
+
+            <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-5">
+              <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <h2 class="text-xl font-semibold text-slate-900">Exporter et partager votre livrable</h2>
+                  <p class="text-sm text-slate-600">{isValidated ? 'Téléchargez le PDF, régénérez le contenu après de nouvelles itérations ou partagez le lien avec vos parties prenantes.' : 'Exportez un PDF brouillon ou finalisez le module pour activer la version investisseur.'}</p>
+                </div>
+                <a href="/dashboard" class="inline-flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-700 font-semibold">
+                  <i class="fas fa-arrow-left"></i>
+                  Retour au dashboard
                 </a>
-                <button 
-                  onclick="shareDocument()"
-                  class="bg-blue-600 text-white py-3 px-6 rounded-lg font-medium hover:bg-blue-700 transition flex items-center justify-center gap-2"
+              </div>
+
+              <div class="grid gap-4 md:grid-cols-3">
+                <button
+                  onclick="downloadPDF(event)"
+                  class="flex items-center justify-center gap-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 text-sm transition"
                 >
-                  <i class="fas fa-share-alt"></i>
+                  <i class="fas fa-file-arrow-down text-lg"></i>
+                  <span>Télécharger le PDF</span>
+                </button>
+                <button
+                  onclick="refreshDeliverable(event)"
+                  class="flex items-center justify-center gap-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-semibold py-3 px-4 text-sm transition"
+                  data-loading="false"
+                >
+                  <i class="fas fa-arrows-rotate text-lg"></i>
+                  <span>Régénérer le livrable</span>
+                </button>
+                <button
+                  onclick="shareDocument()"
+                  class="flex items-center justify-center gap-3 rounded-xl border border-indigo-200 bg-white text-indigo-600 hover:bg-indigo-50 font-semibold py-3 px-4 text-sm transition"
+                >
+                  <i class="fas fa-share-nodes text-lg"></i>
                   <span>Partager</span>
                 </button>
               </div>
-            </div>
 
-            {/* Prochaines Étapes */}
-            <div class="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-              <h3 class="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                <i class="fas fa-rocket text-blue-600"></i>
-                Prochaines Étapes
+              <div id="liveStatus" class="hidden"></div>
+            </section>
+
+            <section class="space-y-5">
+              <div class="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <h2 class="text-xl font-semibold text-slate-900">Aperçu du Business Model Canvas</h2>
+                  <p class="text-sm text-slate-600">Visualisez vos réponses consolidées bloc par bloc avant export.</p>
+                </div>
+                <span class="inline-flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  <i class="fas fa-border-all"></i>
+                  {displaySections.length} bloc{displaySections.length > 1 ? 's' : ''} structurés
+                </span>
+              </div>
+
+              <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {displaySections.map((section) => (
+                  <article class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-4" key={`section-${section.questionId}`}>
+                    <div class="flex items-start justify-between gap-4">
+                      <div>
+                        <p class="text-xs uppercase tracking-wide text-slate-500">Bloc #{section.order}</p>
+                        <h3 class="text-sm font-semibold text-slate-900">{section.section}</h3>
+                        <p class="text-xs text-slate-500 mt-1">{section.question}</p>
+                      </div>
+                      <span class={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold ${section.badgeClass}`}>
+                        <i class={section.badgeIcon}></i>
+                        {section.score !== null ? `${section.score}%` : section.scoreLabel}
+                      </span>
+                    </div>
+                    <div class="bg-slate-50 border border-slate-100 rounded-xl p-4">
+                      <p class="text-sm text-slate-700 whitespace-pre-line">
+                        {section.answer && section.answer.length > 0 ? section.answer : '—'}
+                      </p>
+                    </div>
+                    {section.suggestions.length > 0 && (
+                      <div class="rounded-xl border border-amber-100 bg-amber-50 p-3 text-xs text-amber-700 space-y-2">
+                        <p class="font-semibold flex items-center gap-2 text-amber-800">
+                          <i class="fas fa-lightbulb"></i>
+                          Axes d'amélioration suggérés
+                        </p>
+                        <ul class="space-y-1">
+                          {section.suggestions.slice(0, 2).map((suggestion, idx) => (
+                            <li key={`suggestion-${section.questionId}-${idx}`}>• {suggestion}</li>
+                          ))}
+                        </ul>
+                        {section.suggestions.length > 2 && (
+                          <p class="italic">+ {section.suggestions.length - 2} suggestion(s) supplémentaires</p>
+                        )}
+                      </div>
+                    )}
+                    {section.questions.length > 0 && (
+                      <div class="rounded-xl border border-sky-100 bg-sky-50 p-3 text-xs text-sky-700 space-y-2">
+                        <p class="font-semibold flex items-center gap-2 text-sky-800">
+                          <i class="fas fa-circle-question"></i>
+                          Points à clarifier
+                        </p>
+                        <ul class="space-y-1">
+                          {section.questions.slice(0, 2).map((question, idx) => (
+                            <li key={`clarification-${section.questionId}-${idx}`}>• {question}</li>
+                          ))}
+                        </ul>
+                        {section.questions.length > 2 && (
+                          <p class="italic">+ {section.questions.length - 2} demande(s) supplémentaires</p>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </section>
+
+            <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+              <h3 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <i class="fas fa-rocket text-indigo-500"></i>
+                Prochaines étapes recommandées
               </h3>
-              <div class="space-y-3">
-                <a href="/dashboard" class="block p-4 border border-gray-200 rounded-lg hover:border-blue-300 hover:bg-blue-50 transition">
+              <div class="grid gap-4 md:grid-cols-2">
+                <a href="/dashboard" class="block rounded-2xl border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 transition p-4">
                   <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                      <i class="fas fa-calculator text-blue-600"></i>
+                    <div class="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                      <i class="fas fa-calculator"></i>
                     </div>
                     <div>
-                      <p class="font-medium text-gray-900">Étape 2 - Analyse Financière</p>
-                      <p class="text-sm text-gray-600">Comprendre vos chiffres clés</p>
+                      <p class="font-semibold text-slate-900">Étape 2 · Analyse financière</p>
+                      <p class="text-sm text-slate-600">Préparez vos indicateurs financiers clés.</p>
                     </div>
                   </div>
                 </a>
-                <a href="/dashboard" class="block p-4 border border-gray-200 rounded-lg hover:border-blue-300 hover:bg-blue-50 transition">
+                <a href="/dashboard" class="block rounded-2xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 transition p-4">
                   <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                      <i class="fas fa-chart-line text-green-600"></i>
+                    <div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                      <i class="fas fa-chart-line"></i>
                     </div>
                     <div>
-                      <p class="font-medium text-gray-900">Étape 3 - Projections Financières</p>
-                      <p class="text-sm text-gray-600">Scénarios pour les investisseurs</p>
+                      <p class="font-semibold text-slate-900">Étape 3 · Projections</p>
+                      <p class="text-sm text-slate-600">Construisez des scénarios solides pour vos investisseurs.</p>
                     </div>
                   </div>
                 </a>
               </div>
-            </div>
-          </div>
+            </section>
+          </main>
 
-          {/* Données pour le PDF */}
           <script dangerouslySetInnerHTML={{__html: `
-            const userData = ${JSON.stringify(answersMap)}
-            const moduleName = ${JSON.stringify(module.title)}
-            const moduleMeta = ${JSON.stringify({ isValidated, validatedAt, lastUpdatedAt, hasAnswers })}
-            
-            function formatDateTime(value) {
-              if (!value) return null
-              const date = new Date(value)
-              if (Number.isNaN(date.getTime())) {
-                return value
+            const canvasData = ${canvasExportJson};
+            const refreshUrl = "/api/module/${moduleCode}/deliverable/refresh";
+
+            function showStatus(type, message) {
+              const box = document.getElementById('liveStatus');
+              if (!box) return;
+              const base = 'mt-3 rounded-2xl border p-4 text-sm flex items-start gap-3';
+              let classes = '';
+              let icon = '';
+              if (type === 'success') {
+                classes = base + ' border-emerald-200 bg-emerald-50 text-emerald-800';
+                icon = '<i class="fas fa-circle-check text-emerald-500 mt-0.5"></i>';
+              } else if (type === 'error') {
+                classes = base + ' border-rose-200 bg-rose-50 text-rose-800';
+                icon = '<i class="fas fa-triangle-exclamation text-rose-500 mt-0.5"></i>';
+              } else {
+                classes = base + ' border-sky-200 bg-sky-50 text-sky-800';
+                icon = '<i class="fas fa-circle-info text-sky-500 mt-0.5"></i>';
               }
-              return date.toLocaleString('fr-FR')
+              box.className = classes;
+              box.innerHTML = icon + '<div>' + message + '</div>';
+              box.classList.remove('hidden');
             }
-            
-            function downloadPDF() {
-              const { jsPDF } = window.jspdf
-              const doc = new jsPDF()
-              
-              // Configuration
-              const pageWidth = 210
-              const pageHeight = 297
-              const margin = 20
-              const maxWidth = pageWidth - (2 * margin)
-              
-              // En-tête
-              doc.setFillColor(59, 130, 246)
-              doc.rect(0, 0, pageWidth, 40, 'F')
-              
-              doc.setTextColor(255, 255, 255)
-              doc.setFontSize(24)
-              doc.setFont('helvetica', 'bold')
-              doc.text('Business Model Canvas', pageWidth / 2, 20, { align: 'center' })
-              
-              doc.setFontSize(12)
-              doc.setFont('helvetica', 'normal')
-              doc.text('Plateforme EdTech - Entrepreneurs Afrique', pageWidth / 2, 30, { align: 'center' })
-              
-              // Badge de validation
-              doc.setTextColor(34, 197, 94)
-              doc.setFontSize(10)
-              doc.text('✓ Validé par IA Coach', pageWidth / 2, 37, { align: 'center' })
-              
-              // Contenu
-              doc.setTextColor(0, 0, 0)
-              let yPos = 55
-              
-              const questions = [
-                { id: 1, title: '1. Segments de Clientèle', icon: '👥' },
-                { id: 2, title: '2. Proposition de Valeur', icon: '💎' },
-                { id: 3, title: '3. Canaux de Distribution', icon: '📢' },
-                { id: 4, title: '4. Relations Clients', icon: '🤝' },
-                { id: 5, title: '5. Flux de Revenus', icon: '💰' },
-                { id: 6, title: '6. Ressources Clés', icon: '🔑' },
-                { id: 7, title: '7. Activités Clés', icon: '⚙️' },
-                { id: 8, title: '8. Partenaires Clés', icon: '🤝' },
-                { id: 9, title: '9. Structure de Coûts', icon: '💳' }
-              ]
-              
-              questions.forEach((q, index) => {
-                // Vérifier si on doit ajouter une nouvelle page
-                if (yPos > 250) {
-                  doc.addPage()
-                  yPos = 20
+
+            async function refreshDeliverable(event) {
+              const button = event?.currentTarget;
+              if (!button || button.dataset.loading === 'true') return;
+              if (!canvasData.isValidated) {
+                showStatus('info', 'Validez le module avant de régénérer le livrable.');
+                return;
+              }
+              button.dataset.loading = 'true';
+              const original = button.innerHTML;
+              button.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span> Régénération...</span>';
+              try {
+                const response = await fetch(refreshUrl, { method: 'POST' });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                  throw payload;
                 }
-                
-                // Titre de la section
-                doc.setFontSize(14)
-                doc.setFont('helvetica', 'bold')
-                doc.setTextColor(37, 99, 235)
-                doc.text(\`\${q.icon} \${q.title}\`, margin, yPos)
-                yPos += 8
-                
-                // Contenu
-                doc.setFontSize(10)
-                doc.setFont('helvetica', 'normal')
-                doc.setTextColor(0, 0, 0)
-                
-                const answer = userData[q.id] || 'Non renseigné'
-                const lines = doc.splitTextToSize(answer, maxWidth)
-                
-                lines.forEach(line => {
-                  if (yPos > 280) {
-                    doc.addPage()
-                    yPos = 20
-                  }
-                  doc.text(line, margin, yPos)
-                  yPos += 5
-                })
-                
-                yPos += 5
-              })
-              
-              // Pied de page
-              const totalPages = doc.internal.pages.length - 1
-              for (let i = 1; i <= totalPages; i++) {
-                doc.setPage(i)
-                doc.setFontSize(8)
-                doc.setTextColor(128, 128, 128)
-                doc.text(\`Page \${i} / \${totalPages}\`, pageWidth / 2, pageHeight - 10, { align: 'center' })
-                doc.text(\`Généré le \${new Date().toLocaleDateString('fr-FR')}\`, margin, pageHeight - 10)
+                const refreshedAt = payload?.refreshedAt ? new Date(payload.refreshedAt).toLocaleString('fr-FR') : 'immédiatement';
+                showStatus('success', 'Livrable régénéré avec succès (' + refreshedAt + ').');
+                setTimeout(() => window.location.reload(), 1200);
+              } catch (error) {
+                console.error('Deliverable refresh error', error);
+                const message = error?.error || 'Impossible de régénérer le livrable. Réessayez dans un instant.';
+                showStatus('error', message);
+              } finally {
+                button.dataset.loading = 'false';
+                button.innerHTML = original;
               }
-              
-              // Télécharger
-              doc.save('Business-Model-Canvas.pdf')
-              
-              // Feedback visuel
-              const btn = event.target
-              const originalHTML = btn.innerHTML
-              btn.innerHTML = '<i class="fas fa-check mr-2"></i>Téléchargement réussi !'
-              btn.className = btn.className.replace('bg-red-600', 'bg-green-600').replace('hover:bg-red-700', 'hover:bg-green-700')
-              
-              setTimeout(() => {
-                btn.innerHTML = originalHTML
-                btn.className = btn.className.replace('bg-green-600', 'bg-red-600').replace('hover:bg-green-700', 'hover:bg-red-700')
-              }, 3000)
             }
-            
+
             function shareDocument() {
               if (navigator.share) {
                 navigator.share({
-                  title: 'Business Model Canvas',
-                  text: 'Découvrez mon Business Model Canvas validé !',
+                  title: canvasData.moduleTitle || "Business Model Canvas",
+                  text: canvasData.isValidated
+                    ? (canvasData.summary || "Découvrez mon Business Model Canvas validé.")
+                    : "Brouillon du Business Model Canvas – validation en attente.",
                   url: window.location.href
-                }).catch(err => console.log('Share cancelled'))
+                }).catch(() => {});
               } else {
-                alert('Fonctionnalité de partage non disponible sur ce navigateur')
+                showStatus('info', "Le partage natif n’est pas disponible sur ce navigateur.");
               }
             }
-            
-            window.downloadPDF = downloadPDF
-            window.shareDocument = shareDocument
+
+            function downloadPDF(event) {
+              const { jsPDF } = window.jspdf || {};
+              if (!jsPDF) {
+                showStatus('error', 'Bibliothèque jsPDF indisponible. Rechargez la page.');
+                return;
+              }
+              const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+              if (!canvasData.isValidated) {
+                showStatus('info', 'Export PDF brouillon généré. Validez le module pour obtenir la version investisseur.');
+              }
+              const pageWidth = doc.internal.pageSize.getWidth();
+              const pageHeight = doc.internal.pageSize.getHeight();
+              const margin = 12;
+              const headerHeight = 32;
+
+              doc.setFillColor(37, 99, 235);
+              doc.rect(0, 0, pageWidth, headerHeight, 'F');
+              doc.setTextColor(255, 255, 255);
+              doc.setFont('helvetica', 'bold');
+              doc.setFontSize(16);
+              doc.text(canvasData.moduleTitle || 'Business Model Canvas', margin, 16);
+              doc.setFont('helvetica', 'normal');
+              doc.setFontSize(10);
+              const summaryLine = canvasData.summary || (canvasData.isValidated
+                ? 'Livrable validé et prêt à être partagé.'
+                : 'Brouillon en attente de validation — export informatif.');
+              doc.text(summaryLine, margin, 24);
+              const scoreText = typeof canvasData.aiScore === 'number'
+                ? 'Score IA : ' + canvasData.aiScore + '% ' + (canvasData.scoreLabel ? '(' + canvasData.scoreLabel + ')' : '')
+                : 'Score IA en attente';
+              doc.text(scoreText, pageWidth - margin, 16, { align: 'right' });
+              if (canvasData.validatedAt) {
+                doc.text('Validé le ' + new Date(canvasData.validatedAt).toLocaleDateString('fr-FR'), pageWidth - margin, 24, { align: 'right' });
+              }
+
+              if (!canvasData.isValidated) {
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(11);
+                doc.setTextColor(217, 119, 6);
+                doc.text('MODE BROUILLON - VALIDATION EN ATTENTE', margin, headerHeight + 10);
+              }
+
+              doc.setTextColor(15, 23, 42);
+              const gridTop = headerHeight + 6;
+              const cellWidth = (pageWidth - 2 * margin) / 3;
+              const cellHeight = (pageHeight - gridTop - margin) / 3;
+              const sections = Array.isArray(canvasData.sections) ? canvasData.sections : [];
+
+              sections.forEach((section) => {
+                const col = Math.min(3, Math.max(1, section.col || 1));
+                const row = Math.min(3, Math.max(1, section.row || 1));
+                const x = margin + (col - 1) * cellWidth;
+                const y = gridTop + (row - 1) * cellHeight;
+
+                doc.setDrawColor(209, 213, 219);
+                doc.setFillColor(248, 250, 252);
+                doc.rect(x, y, cellWidth, cellHeight, 'FD');
+
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(9);
+                doc.setTextColor(30, 64, 175);
+                const title = section.section || ('Bloc ' + section.questionId);
+                doc.text(title, x + 4, y + 6);
+
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(8);
+                doc.setTextColor(51, 65, 85);
+                if (typeof section.score === 'number') {
+                  const meta = 'Score : ' + section.score + '% ' + (section.scoreLabel ? '(' + section.scoreLabel + ')' : '');
+                  doc.text(meta, x + 4, y + 12);
+                } else if (section.scoreLabel) {
+                  doc.text(section.scoreLabel, x + 4, y + 12);
+                }
+
+                const answer = section.answer && section.answer.trim().length
+                  ? section.answer.trim()
+                  : 'Non renseigné';
+                const availableWidth = cellWidth - 8;
+                const textY = y + 18;
+                const lines = doc.splitTextToSize(answer, availableWidth);
+                let currentY = textY;
+                const lineHeight = 4;
+                for (let idx = 0; idx < lines.length; idx++) {
+                  if (currentY > y + cellHeight - 6) {
+                    doc.text('…', x + 4, y + cellHeight - 5);
+                    break;
+                  }
+                  doc.text(lines[idx], x + 4, currentY);
+                  currentY += lineHeight;
+                }
+              });
+
+              doc.setFontSize(8);
+              doc.setTextColor(100, 116, 139);
+              doc.text('Généré le ' + new Date().toLocaleDateString('fr-FR'), margin, pageHeight - 6);
+              doc.text('Entrepreneurs Afrique · Plateforme EdTech', pageWidth - margin, pageHeight - 6, { align: 'right' });
+
+              const filename = 'Business-Model-Canvas-' + (canvasData.moduleCode || 'livrable') + '.pdf';
+              doc.save(filename);
+
+              if (event && event.currentTarget) {
+                const button = event.currentTarget;
+                const original = button.innerHTML;
+                button.innerHTML = '<i class="fas fa-check"></i><span>Téléchargé</span>';
+                button.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+                button.classList.add('bg-emerald-600', 'hover:bg-emerald-700');
+                setTimeout(() => {
+                  button.innerHTML = original;
+                  button.classList.remove('bg-emerald-600', 'hover:bg-emerald-700');
+                  button.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+                }, 2500);
+              }
+
+              showStatus('success', 'PDF généré et téléchargé.');
+            }
+
+            window.downloadPDF = downloadPDF;
+            window.shareDocument = shareDocument;
+            window.refreshDeliverable = refreshDeliverable;
           `}} />
         </body>
       </html>

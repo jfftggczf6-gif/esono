@@ -1,0 +1,3132 @@
+/* ==============================================
+   ESONO – Vue Bailleur
+   Design System Institutionnel
+   Style inspiré Odoo - Sobre, lisible, accessible
+   ============================================== */
+
+/* ============================================== 
+   1. POLICES & TYPOGRAPHIE
+   Inter / IBM Plex Sans / Source Sans Pro
+   ============================================== */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+:root {
+  /* ============================================== 
+     2. PALETTE COULEURS INSTITUTIONNELLE
+     ============================================== */
+  
+  /* Bleu principal institutionnel */
+  --esono-primary: #1e3a5f;
+  --esono-primary-light: #2a4d7a;
+  --esono-primary-dark: #162d4a;
+  
+  /* Bleu secondaire doux */
+  --esono-secondary: #4a6fa5;
+  --esono-secondary-light: #6b8fc5;
+  --esono-secondary-dark: #3a5f95;
+  
+  /* Neutres */
+  --esono-white: #ffffff;
+  --esono-gray-50: #f9fafb;
+  --esono-gray-100: #f3f4f6;
+  --esono-gray-200: #e5e7eb;
+  --esono-gray-300: #d1d5db;
+  --esono-gray-400: #9ca3af;
+  --esono-gray-500: #6b7280;
+  --esono-gray-600: #4b5563;
+  --esono-gray-700: #374151;
+  --esono-gray-800: #1f2937;
+  --esono-gray-900: #111827;
+  
+  /* Accent sable/or mat (validation, mise en avant) */
+  --esono-accent: #c9a962;
+  --esono-accent-light: #d9c182;
+  --esono-accent-dark: #a98a42;
+  
+  /* Statuts */
+  --esono-success: #059669;
+  --esono-success-light: #d1fae5;
+  --esono-warning: #d97706;
+  --esono-warning-light: #fef3c7;
+  --esono-danger: #dc2626;
+  --esono-danger-light: #fee2e2;
+  --esono-info: #0284c7;
+  --esono-info-light: #e0f2fe;
+  
+  /* Typographie */
+  --font-primary: 'Inter', 'IBM Plex Sans', 'Source Sans Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  
+  /* Espacements */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+  --spacing-2xl: 3rem;
+  
+  /* Bordures */
+  --border-radius-sm: 0.25rem;
+  --border-radius-md: 0.375rem;
+  --border-radius-lg: 0.5rem;
+  --border-radius-xl: 0.75rem;
+  
+  /* Ombres */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+
+/* ============================================== 
+   3. RESET & BASE
+   ============================================== */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-primary);
+  font-size: 0.9375rem;
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--esono-gray-700);
+  background-color: var(--esono-gray-50);
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================== 
+   4. HEADER ESONO
+   ============================================== */
+.esono-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  background: var(--esono-white);
+  border-bottom: 1px solid var(--esono-gray-200);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--spacing-lg);
+  z-index: 100;
+}
+
+.esono-header__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.esono-header__logo {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--esono-primary);
+  letter-spacing: -0.025em;
+}
+
+.esono-header__subtitle {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--esono-gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding-left: var(--spacing-md);
+  border-left: 1px solid var(--esono-gray-300);
+}
+
+.esono-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.esono-header__icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--border-radius-md);
+  background: transparent;
+  border: none;
+  color: var(--esono-gray-500);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.esono-header__icon-btn:hover {
+  background: var(--esono-gray-100);
+  color: var(--esono-gray-700);
+}
+
+/* ============================================== 
+   5. SIDEBAR NAVIGATION
+   ============================================== */
+.esono-sidebar {
+  position: fixed;
+  top: 56px;
+  left: 0;
+  bottom: 0;
+  width: 240px;
+  background: var(--esono-white);
+  border-right: 1px solid var(--esono-gray-200);
+  padding: var(--spacing-lg) 0;
+  overflow-y: auto;
+  z-index: 90;
+}
+
+.esono-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  padding: 0 var(--spacing-sm);
+}
+
+.esono-nav__item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--border-radius-md);
+  color: var(--esono-gray-600);
+  text-decoration: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+
+.esono-nav__item:hover {
+  background: var(--esono-gray-100);
+  color: var(--esono-gray-800);
+}
+
+.esono-nav__item.active {
+  background: var(--esono-primary);
+  color: var(--esono-white);
+}
+
+.esono-nav__item.active:hover {
+  background: var(--esono-primary-light);
+  color: var(--esono-white);
+}
+
+.esono-nav__icon {
+  width: 18px;
+  text-align: center;
+  font-size: 0.875rem;
+}
+
+.esono-nav__divider {
+  height: 1px;
+  background: var(--esono-gray-200);
+  margin: var(--spacing-md) var(--spacing-md);
+}
+
+/* ============================================== 
+   6. MAIN CONTENT
+   ============================================== */
+.esono-main {
+  margin-left: 240px;
+  margin-top: 56px;
+  padding: var(--spacing-xl);
+  min-height: calc(100vh - 56px);
+}
+
+.esono-page-header {
+  margin-bottom: var(--spacing-xl);
+}
+
+.esono-page-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--esono-gray-800);
+  margin: 0 0 var(--spacing-xs) 0;
+  line-height: 1.3;
+}
+
+.esono-page-description {
+  font-size: 0.875rem;
+  color: var(--esono-gray-500);
+  margin: 0;
+}
+
+/* ============================================== 
+   6B. AIDES DE MISE EN PAGE
+   ============================================== */
+.esono-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.esono-stack--md {
+  gap: var(--spacing-md);
+}
+
+.esono-stack--lg {
+  gap: var(--spacing-lg);
+}
+
+.esono-stack--xl {
+  gap: var(--spacing-xl);
+}
+
+.esono-columns {
+  display: grid;
+  gap: var(--spacing-lg);
+  align-items: start;
+}
+
+.esono-columns--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.esono-columns--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.esono-columns__span-2 {
+  grid-column: span 2;
+}
+
+.esono-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.esono-card__split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-lg);
+}
+
+.esono-card__split-main {
+  flex: 1 1 360px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.esono-card__split-aside {
+  flex: 1 1 260px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  background: var(--esono-gray-50);
+  border-radius: var(--border-radius-lg);
+  border: 1px solid var(--esono-gray-100);
+  padding: var(--spacing-md);
+}
+
+.esono-cta-grid {
+  display: grid;
+  gap: var(--spacing-md);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.esono-text-clamp-4 {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.esono-focus-glow {
+  box-shadow: 0 0 0 3px rgba(74, 111, 165, 0.35);
+  border-radius: var(--border-radius-md);
+  transition: box-shadow 0.2s ease;
+}
+
+.esono-text-success { color: var(--esono-success); }
+.esono-text-danger { color: var(--esono-danger); }
+.esono-text-warning { color: var(--esono-warning); }
+.esono-text-info { color: var(--esono-info); }
+
+/* ============================================== 
+   6C. BANNIERES D'ALERTE
+   ============================================== */
+.esono-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  border-radius: var(--border-radius-lg);
+  border: 1px solid transparent;
+  background: var(--esono-gray-50);
+  color: var(--esono-gray-700);
+}
+
+.esono-banner__icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.125rem;
+}
+
+.esono-banner__content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.esono-banner__content h3 {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--esono-gray-800);
+}
+
+.esono-banner__content p {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--esono-gray-600);
+}
+
+.esono-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.esono-banner--info {
+  background: var(--esono-info-light);
+  border-color: rgba(2, 132, 199, 0.25);
+  color: var(--esono-info);
+}
+
+.esono-banner--info .esono-banner__icon {
+  background: rgba(2, 132, 199, 0.15);
+  color: var(--esono-info);
+}
+
+.esono-banner--warning {
+  background: var(--esono-warning-light);
+  border-color: rgba(217, 119, 6, 0.25);
+  color: var(--esono-warning);
+}
+
+.esono-banner--warning .esono-banner__icon {
+  background: rgba(217, 119, 6, 0.15);
+  color: var(--esono-warning);
+}
+
+.esono-banner--success {
+  background: var(--esono-success-light);
+  border-color: rgba(5, 150, 105, 0.25);
+  color: var(--esono-success);
+}
+
+.esono-banner--success .esono-banner__icon {
+  background: rgba(5, 150, 105, 0.15);
+  color: var(--esono-success);
+}
+
+.esono-banner--danger {
+  background: var(--esono-danger-light);
+  border-color: rgba(220, 38, 38, 0.25);
+  color: var(--esono-danger);
+}
+
+.esono-banner--danger .esono-banner__icon {
+  background: rgba(220, 38, 38, 0.15);
+  color: var(--esono-danger);
+}
+
+@media (max-width: 1200px) {
+  .esono-columns--3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 960px) {
+  .esono-columns,
+  .esono-columns--2,
+  .esono-columns--3 {
+    grid-template-columns: 1fr;
+  }
+
+  .esono-columns__span-2 {
+    grid-column: auto;
+  }
+
+  .esono-banner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .esono-banner__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* ============================================== 
+   7. BLOC SYNTHESE GLOBALE (HEROS)
+   ============================================== */
+.esono-hero {
+  background: var(--esono-white);
+  border: 1px solid var(--esono-gray-200);
+  border-radius: var(--border-radius-lg);
+  padding: var(--spacing-xl);
+  margin-bottom: var(--spacing-xl);
+  box-shadow: var(--shadow-sm);
+}
+
+.esono-hero__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--spacing-lg);
+}
+
+.esono-hero__title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--esono-gray-800);
+  margin: 0 0 var(--spacing-xs) 0;
+}
+
+.esono-hero__subtitle {
+  font-size: 0.8125rem;
+  color: var(--esono-gray-500);
+  margin: 0;
+}
+
+.esono-hero__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--esono-accent-light);
+  color: var(--esono-accent-dark);
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: var(--border-radius-sm);
+}
+
+.esono-hero__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-lg);
+}
+
+.esono-hero__metric {
+  text-align: center;
+  padding: var(--spacing-md);
+  background: var(--esono-gray-50);
+  border-radius: var(--border-radius-md);
+}
+
+.esono-hero__metric-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--esono-primary);
+  line-height: 1.2;
+}
+
+.esono-hero__metric-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--esono-gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  margin-top: var(--spacing-xs);
+}
+
+/* ============================================== 
+   8. KPI CARDS
+   ============================================== */
+.esono-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-lg);
+  margin-bottom: var(--spacing-xl);
+}
+
+.esono-kpi-card {
+  background: var(--esono-white);
+  border: 1px solid var(--esono-gray-200);
+  border-radius: var(--border-radius-lg);
+  padding: var(--spacing-lg);
+  transition: all 0.2s ease;
+}
+
+.esono-kpi-card:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--esono-gray-300);
+}
+
+.esono-kpi-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--spacing-sm);
+}
+
+.esono-kpi-card__label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--esono-gray-500);
+}
+
+.esono-kpi-card__icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--border-radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+}
+
+.esono-kpi-card__icon--primary {
+  background: var(--esono-info-light);
+  color: var(--esono-info);
+}
+
+.esono-kpi-card__icon--success {
+  background: var(--esono-success-light);
+  color: var(--esono-success);
+}
+
+.esono-kpi-card__icon--warning {
+  background: var(--esono-warning-light);
+  color: var(--esono-warning);
+}
+
+.esono-kpi-card__icon--danger {
+  background: var(--esono-danger-light);
+  color: var(--esono-danger);
+}
+
+.esono-kpi-card__value {
+  font-size: 1.875rem;
+  font-weight: 700;
+  color: var(--esono-gray-800);
+  line-height: 1.2;
+}
+
+.esono-kpi-card__footer {
+  font-size: 0.75rem;
+  color: var(--esono-gray-500);
+  margin-top: var(--spacing-xs);
+}
+
+.esono-kpi-card__trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-weight: 500;
+}
+
+.esono-kpi-card__trend--up {
+  color: var(--esono-success);
+}
+
+.esono-kpi-card__trend--down {
+  color: var(--esono-danger);
+}
+
+/* ============================================== 
+   9. CARTES & SECTIONS
+   ============================================== */
+.esono-card {
+  background: var(--esono-white);
+  border: 1px solid var(--esono-gray-200);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.esono-card__header {
+  padding: var(--spacing-lg);
+  border-bottom: 1px solid var(--esono-gray-100);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.esono-card__title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--esono-gray-800);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.esono-card__title-icon {
+  color: var(--esono-secondary);
+}
+
+.esono-card__body {
+  padding: var(--spacing-lg);
+}
+
+.esono-card__footer {
+  padding: var(--spacing-md) var(--spacing-lg);
+  background: var(--esono-gray-50);
+  border-top: 1px solid var(--esono-gray-100);
+}
+
+/* ============================================== 
+   9B. FORMULAIRES & CHAMPS
+   ============================================== */
+.esono-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.esono-form__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.esono-form__label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--esono-gray-700);
+  display: flex;
+  gap: var(--spacing-xs);
+  align-items: center;
+}
+
+.esono-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.esono-form__meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: 0.75rem;
+  color: var(--esono-gray-500);
+  flex-wrap: wrap;
+}
+
+.esono-form__hint {
+  font-size: 0.75rem;
+  color: var(--esono-gray-500);
+}
+
+.esono-input,
+.esono-select,
+.esono-textarea {
+  width: 100%;
+  font-family: var(--font-primary);
+  font-size: 0.9375rem;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--border-radius-md);
+  border: 1px solid var(--esono-gray-300);
+  background: var(--esono-white);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.esono-textarea {
+  min-height: 160px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.esono-input:focus,
+.esono-select:focus,
+.esono-textarea:focus {
+  outline: none;
+  border-color: var(--esono-primary);
+  box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.15);
+}
+
+.esono-input.is-success,
+.esono-select.is-success,
+.esono-textarea.is-success {
+  border-color: var(--esono-success);
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.15);
+}
+
+.esono-input.is-error,
+.esono-select.is-error,
+.esono-textarea.is-error {
+  border-color: var(--esono-danger);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
+}
+
+.esono-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.esono-radio-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--border-radius-md);
+  border: 1px solid var(--esono-gray-200);
+  background: var(--esono-white);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.esono-radio-option:hover {
+  border-color: var(--esono-secondary);
+  background: var(--esono-gray-50);
+  box-shadow: var(--shadow-sm);
+}
+
+.esono-radio-option input {
+  margin-top: 4px;
+}
+
+.esono-radio-option__label {
+  font-size: 0.875rem;
+  color: var(--esono-gray-700);
+}
+
+.esono-radio-option.is-selected {
+  border-color: var(--esono-primary);
+  background: rgba(30, 58, 95, 0.05);
+}
+
+.esono-radio-option.is-correct {
+  border-color: var(--esono-success);
+  background: var(--esono-success-light);
+}
+
+.esono-radio-option.is-correct .esono-radio-option__label {
+  color: var(--esono-success);
+}
+
+.esono-radio-option.is-incorrect {
+  border-color: var(--esono-danger);
+  background: var(--esono-danger-light);
+}
+
+.esono-radio-option.is-incorrect .esono-radio-option__label {
+  color: var(--esono-danger);
+}
+
+/* ============================================== 
+   9C. ALERTES & BANNIÈRES
+   ============================================== */
+.esono-alert {
+  border-radius: var(--border-radius-md);
+  padding: var(--spacing-md);
+  border: 1px solid transparent;
+  display: flex;
+  gap: var(--spacing-md);
+  align-items: flex-start;
+  background: var(--esono-gray-100);
+  color: var(--esono-gray-700);
+}
+
+.esono-alert__icon {
+  font-size: 1.25rem;
+  line-height: 1;
+  margin-top: 2px;
+}
+
+.esono-alert__content {
+  flex: 1;
+}
+
+.esono-alert__title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 0 0 4px 0;
+  color: inherit;
+}
+
+.esono-alert__text {
+  font-size: 0.8125rem;
+  margin: 0;
+}
+
+.esono-alert__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.esono-alert--success {
+  background: var(--esono-success-light);
+  border-color: rgba(5, 150, 105, 0.25);
+  color: var(--esono-success);
+}
+
+.esono-alert--info {
+  background: var(--esono-info-light);
+  border-color: rgba(2, 132, 199, 0.25);
+  color: var(--esono-info);
+}
+
+.esono-alert--warning {
+  background: var(--esono-warning-light);
+  border-color: rgba(217, 119, 6, 0.25);
+  color: var(--esono-warning);
+}
+
+.esono-alert--danger {
+  background: var(--esono-danger-light);
+  border-color: rgba(220, 38, 38, 0.25);
+  color: var(--esono-danger);
+}
+
+/* ============================================== 
+   9D. NOTES & CARTOUCHES
+   ============================================== */
+.esono-note {
+  border-radius: var(--border-radius-md);
+  border: 1px solid var(--esono-gray-200);
+  padding: var(--spacing-md);
+  background: var(--esono-gray-50);
+  font-size: 0.8125rem;
+  color: var(--esono-gray-700);
+}
+
+.esono-note--info {
+  background: var(--esono-info-light);
+  border-color: rgba(2, 132, 199, 0.25);
+  color: var(--esono-info);
+}
+
+.esono-note--success {
+  background: var(--esono-success-light);
+  border-color: rgba(5, 150, 105, 0.25);
+  color: var(--esono-success);
+}
+
+.esono-note--warning {
+  background: var(--esono-warning-light);
+  border-color: rgba(217, 119, 6, 0.2);
+  color: var(--esono-warning);
+}
+
+.esono-note--danger {
+  background: var(--esono-danger-light);
+  border-color: rgba(220, 38, 38, 0.2);
+  color: var(--esono-danger);
+}
+
+/* ============================================== 
+   9E. LAYOUTS SPÉCIFIQUES
+   ============================================== */
+.esono-split {
+  display: grid;
+  gap: var(--spacing-lg);
+}
+
+.esono-split--2-1 {
+  grid-template-columns: 2fr 1fr;
+}
+
+.esono-split--3-2 {
+  grid-template-columns: 3fr 2fr;
+}
+
+@media (max-width: 1024px) {
+  .esono-split--2-1,
+  .esono-split--3-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================== 
+   9F. QUIZ & INTERACTIONS
+   ============================================== */
+.esono-quiz {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xl);
+}
+
+.esono-quiz-question {
+  border-bottom: 1px solid var(--esono-gray-100);
+  padding-bottom: var(--spacing-lg);
+}
+
+.esono-quiz-question:last-child {
+  border-bottom: none;
+}
+
+.esono-quiz-question__header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.esono-quiz-question__number {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--border-radius-md);
+  background: linear-gradient(135deg, var(--esono-secondary), var(--esono-primary));
+  color: var(--esono-white);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.esono-quiz-question__title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--esono-gray-800);
+  margin: 0 0 var(--spacing-xs) 0;
+}
+
+.esono-quiz-question__description {
+  font-size: 0.875rem;
+  color: var(--esono-gray-600);
+  margin: 0;
+}
+
+.esono-quiz-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.esono-quiz-explanation {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-md);
+  border-radius: var(--border-radius-md);
+  background: var(--esono-info-light);
+  border: 1px solid rgba(2, 132, 199, 0.2);
+  color: var(--esono-info);
+  font-size: 0.8125rem;
+}
+
+.esono-quiz-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+/* ============================================== 
+   10. TABLEAUX
+   ============================================== */
+.esono-table-container {
+  overflow-x: auto;
+}
+
+.esono-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.esono-table th {
+  text-align: left;
+  padding: var(--spacing-md) var(--spacing-lg);
+  background: var(--esono-gray-50);
+  color: var(--esono-gray-600);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  border-bottom: 1px solid var(--esono-gray-200);
+}
+
+.esono-table td {
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--esono-gray-100);
+  color: var(--esono-gray-700);
+  vertical-align: middle;
+}
+
+.esono-table tbody tr {
+  transition: background 0.15s ease;
+}
+
+.esono-table tbody tr:hover {
+  background: var(--esono-gray-50);
+}
+
+.esono-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ============================================== 
+   11. BADGES & STATUTS
+   ============================================== */
+.esono-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: var(--border-radius-sm);
+  white-space: nowrap;
+}
+
+.esono-badge--neutral {
+  background: var(--esono-gray-100);
+  color: var(--esono-gray-600);
+}
+
+.esono-badge--success {
+  background: var(--esono-success-light);
+  color: var(--esono-success);
+}
+
+.esono-badge--warning {
+  background: var(--esono-warning-light);
+  color: var(--esono-warning);
+}
+
+.esono-badge--danger {
+  background: var(--esono-danger-light);
+  color: var(--esono-danger);
+}
+
+.esono-badge--info {
+  background: var(--esono-info-light);
+  color: var(--esono-info);
+}
+
+.esono-badge--accent {
+  background: var(--esono-accent-light);
+  color: var(--esono-accent-dark);
+}
+
+.esono-badge--primary {
+  background: var(--esono-primary);
+  color: var(--esono-white);
+}
+
+/* ============================================== 
+   12. BOUTONS
+   ============================================== */
+.esono-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-family: var(--font-primary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.4;
+  border-radius: var(--border-radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.esono-btn--primary {
+  background: var(--esono-primary);
+  color: var(--esono-white);
+  border-color: var(--esono-primary);
+}
+
+.esono-btn--primary:hover {
+  background: var(--esono-primary-light);
+  border-color: var(--esono-primary-light);
+}
+
+.esono-btn--secondary {
+  background: var(--esono-white);
+  color: var(--esono-gray-700);
+  border-color: var(--esono-gray-300);
+}
+
+.esono-btn--secondary:hover {
+  background: var(--esono-gray-50);
+  border-color: var(--esono-gray-400);
+}
+
+.esono-btn--ghost {
+  background: transparent;
+  color: var(--esono-gray-600);
+  border-color: transparent;
+}
+
+.esono-btn--ghost:hover {
+  background: var(--esono-gray-100);
+  color: var(--esono-gray-800);
+}
+
+.esono-btn--sm {
+  padding: 4px 8px;
+  font-size: 0.8125rem;
+}
+
+.esono-btn--icon {
+  padding: var(--spacing-sm);
+}
+
+/* ============================================== 
+   13. FORMULAIRES & FILTRES
+   ============================================== */
+.esono-select {
+  appearance: none;
+  background: var(--esono-white);
+  border: 1px solid var(--esono-gray-300);
+  border-radius: var(--border-radius-md);
+  padding: var(--spacing-sm) var(--spacing-lg) var(--spacing-sm) var(--spacing-md);
+  font-family: var(--font-primary);
+  font-size: 0.875rem;
+  color: var(--esono-gray-700);
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236b7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 16px;
+  transition: all 0.15s ease;
+}
+
+.esono-select:hover {
+  border-color: var(--esono-gray-400);
+}
+
+.esono-select:focus {
+  outline: none;
+  border-color: var(--esono-primary);
+  box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.1);
+}
+
+.esono-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+  background: var(--esono-white);
+  border: 1px solid var(--esono-gray-200);
+  border-radius: var(--border-radius-lg);
+  margin-bottom: var(--spacing-lg);
+}
+
+/* ============================================== 
+   14. SYNTHESE IA / COACH (APERCU)
+   ============================================== */
+.esono-synthesis {
+  background: var(--esono-gray-50);
+  border: 1px solid var(--esono-gray-200);
+  border-radius: var(--border-radius-md);
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.esono-synthesis__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-sm);
+}
+
+.esono-synthesis__title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--esono-gray-700);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.esono-synthesis__section {
+  padding: var(--spacing-sm) 0;
+}
+
+.esono-synthesis__section + .esono-synthesis__section {
+  border-top: 1px solid var(--esono-gray-200);
+  margin-top: var(--spacing-sm);
+}
+
+.esono-synthesis__label {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--esono-gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  margin-bottom: 4px;
+}
+
+.esono-synthesis__content {
+  font-size: 0.8125rem;
+  color: var(--esono-gray-700);
+  line-height: 1.5;
+}
+
+.esono-synthesis__icon--ai {
+  color: var(--esono-secondary);
+}
+
+.esono-synthesis__icon--coach {
+  color: var(--esono-accent-dark);
+}
+
+/* ============================================== 
+   15. BLOC IMPACT & ODD
+   ============================================== */
+.esono-impact {
+  background: var(--esono-white);
+  border: 1px solid var(--esono-gray-200);
+  border-radius: var(--border-radius-lg);
+  padding: var(--spacing-xl);
+  margin-bottom: var(--spacing-xl);
+}
+
+.esono-impact__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-lg);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--esono-gray-100);
+}
+
+.esono-impact__title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--esono-gray-800);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.esono-impact__title-icon {
+  color: var(--esono-success);
+}
+
+.esono-impact__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-lg);
+  margin-bottom: var(--spacing-xl);
+}
+
+.esono-impact__metric {
+  text-align: center;
+  padding: var(--spacing-lg);
+  background: var(--esono-gray-50);
+  border-radius: var(--border-radius-md);
+  border: 1px solid var(--esono-gray-100);
+}
+
+.esono-impact__metric-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--esono-primary);
+  line-height: 1.2;
+}
+
+.esono-impact__metric-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--esono-gray-500);
+  margin-top: var(--spacing-xs);
+}
+
+.esono-impact__metric-target {
+  font-size: 0.6875rem;
+  color: var(--esono-gray-400);
+  margin-top: 2px;
+}
+
+.esono-impact__sdg-section {
+  margin-top: var(--spacing-lg);
+}
+
+.esono-impact__sdg-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--esono-gray-700);
+  margin-bottom: var(--spacing-md);
+}
+
+.esono-impact__sdg-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: var(--spacing-md);
+}
+
+.esono-sdg-item {
+  text-align: center;
+  padding: var(--spacing-md);
+  background: var(--esono-gray-50);
+  border-radius: var(--border-radius-md);
+  border: 1px solid var(--esono-gray-100);
+}
+
+.esono-sdg-item__icon {
+  font-size: 1.25rem;
+  margin-bottom: var(--spacing-xs);
+  color: var(--esono-secondary);
+}
+
+.esono-sdg-item__number {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--esono-gray-700);
+}
+
+.esono-sdg-item__count {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--esono-primary);
+  margin-top: 2px;
+}
+
+/* ============================================== 
+   16. TOOLTIPS
+   ============================================== */
+.esono-tooltip {
+  position: relative;
+  cursor: help;
+}
+
+.esono-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--esono-gray-800);
+  color: var(--esono-white);
+  font-size: 0.75rem;
+  font-weight: 400;
+  border-radius: var(--border-radius-sm);
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.15s ease;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+.esono-tooltip:hover::after {
+  opacity: 1;
+  visibility: visible;
+  bottom: calc(100% + 4px);
+}
+
+/* ============================================== 
+   17. ICONES LIVRABLES
+   ============================================== */
+.esono-deliverable {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--esono-gray-400);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.esono-deliverable:hover {
+  color: var(--esono-primary);
+}
+
+.esono-deliverable--available {
+  color: var(--esono-success);
+}
+
+.esono-deliverable--available:hover {
+  color: var(--esono-success);
+}
+
+/* ============================================== 
+   18. MODAL
+   ============================================== */
+.esono-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-lg);
+  z-index: 200;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.2s ease;
+}
+
+.esono-modal-overlay.active {
+  opacity: 1;
+  visibility: visible;
+}
+
+.esono-modal {
+  background: var(--esono-white);
+  border-radius: var(--border-radius-xl);
+  box-shadow: var(--shadow-lg);
+  max-width: 640px;
+  width: 100%;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.esono-modal__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-lg);
+  border-bottom: 1px solid var(--esono-gray-100);
+}
+
+.esono-modal__title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--esono-gray-800);
+  margin: 0;
+}
+
+.esono-modal__close {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--border-radius-md);
+  background: transparent;
+  border: none;
+  color: var(--esono-gray-400);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.esono-modal__close:hover {
+  background: var(--esono-gray-100);
+  color: var(--esono-gray-600);
+}
+
+.esono-modal__body {
+  padding: var(--spacing-lg);
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* ============================================== 
+   19. GRIDS LAYOUT
+   ============================================== */
+.esono-grid {
+  display: grid;
+  gap: var(--spacing-lg);
+}
+
+.esono-grid--2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.esono-grid--3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.esono-grid--4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+/* ============================================== 
+   20. UTILITAIRES
+   ============================================== */
+.hidden {
+  display: none !important;
+}
+
+.esono-text-muted {
+  color: var(--esono-gray-500);
+}
+
+.esono-text-sm {
+  font-size: 0.8125rem;
+}
+
+.esono-text-xs {
+  font-size: 0.75rem;
+}
+
+.esono-font-medium {
+  font-weight: 500;
+}
+
+.esono-font-semibold {
+  font-weight: 600;
+}
+
+.esono-mb-lg {
+  margin-bottom: var(--spacing-lg);
+}
+
+.esono-mt-lg {
+  margin-top: var(--spacing-lg);
+}
+
+/* ============================================== 
+   21. PROGRESS BAR
+   ============================================== */
+.esono-progress {
+  height: 6px;
+  background: var(--esono-gray-200);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.esono-progress__bar {
+  height: 100%;
+  background: var(--esono-secondary);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.esono-progress__bar--success {
+  background: var(--esono-success);
+}
+
+.esono-progress__bar--accent {
+  background: var(--esono-accent);
+}
+
+/* ============================================== 
+   22. RESPONSIVE
+   ============================================== */
+@media (max-width: 1024px) {
+  .esono-hero__metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .esono-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .esono-impact__metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .esono-impact__sdg-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .esono-sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+  }
+  
+  .esono-sidebar.open {
+    transform: translateX(0);
+  }
+  
+  .esono-main {
+    margin-left: 0;
+  }
+  
+  .esono-hero__metrics {
+    grid-template-columns: 1fr;
+  }
+  
+  .esono-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================== 
+   MVP BAILLEUR - NOUVEAUX COMPOSANTS
+   ============================================== */
+
+/* ============================================== 
+   23. HERO SCORE CENTRAL
+   ============================================== */
+.esono-hero__score-central {
+  text-align: center;
+  padding: var(--spacing-lg);
+  background: var(--esono-primary);
+  border-radius: var(--border-radius-lg);
+  min-width: 120px;
+}
+
+.esono-hero__score-value {
+  font-size: 3rem;
+  font-weight: 700;
+  color: var(--esono-white);
+  line-height: 1;
+}
+
+.esono-hero__score-label {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.8);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: var(--spacing-xs);
+}
+
+.esono-hero__metric--success .esono-hero__metric-value {
+  color: var(--esono-success);
+}
+
+.esono-hero__metric--warning .esono-hero__metric-value {
+  color: var(--esono-warning);
+}
+
+.esono-hero__metric--info .esono-hero__metric-value {
+  color: var(--esono-info);
+}
+
+/* ============================================== 
+   24. KPI GRID 5 COLONNES
+   ============================================== */
+.esono-kpi-grid--5 {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+@media (max-width: 1200px) {
+  .esono-kpi-grid--5 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .esono-kpi-grid--5 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ============================================== 
+   25. BOUTONS ACCENT & DANGER
+   ============================================== */
+.esono-btn--accent {
+  background: var(--esono-accent);
+  color: var(--esono-white);
+  border-color: var(--esono-accent);
+}
+
+.esono-btn--accent:hover {
+  background: var(--esono-accent-dark);
+  border-color: var(--esono-accent-dark);
+}
+
+.esono-btn--danger {
+  background: var(--esono-danger);
+  color: var(--esono-white);
+  border-color: var(--esono-danger);
+}
+
+.esono-btn--danger:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
+.esono-btn--outline {
+  background: transparent;
+  color: var(--esono-gray-600);
+  border-color: var(--esono-gray-300);
+}
+
+.esono-btn--outline:hover,
+.esono-btn--outline.active {
+  background: var(--esono-primary);
+  color: var(--esono-white);
+  border-color: var(--esono-primary);
+}
+
+.esono-btn--export {
+  flex-direction: column;
+  align-items: flex-start;
+  padding: var(--spacing-md);
+  text-align: left;
+}
+
+.esono-btn--export i {
+  font-size: 1.5rem;
+  margin-bottom: var(--spacing-sm);
+}
+
+.esono-btn__title {
+  font-weight: 600;
+  color: var(--esono-gray-800);
+}
+
+.esono-btn__subtitle {
+  font-size: 0.75rem;
+  color: var(--esono-gray-500);
+  font-weight: 400;
+}
+
+/* ============================================== 
+   26. PAGE HEADER ACTIONS
+   ============================================== */
+.esono-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+}
+
+.esono-page-header__main {
+  flex: 1;
+}
+
+.esono-page-header__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+/* ============================================== 
+   27. FILTRES RAPIDES & SECONDAIRES
+   ============================================== */
+.esono-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.esono-filter-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--esono-gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.esono-filter-quick {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.esono-filter-bar--secondary {
+  background: var(--esono-gray-50);
+  border: 1px solid var(--esono-gray-100);
+  padding: var(--spacing-md);
+}
+
+.esono-select--sm {
+  padding: 4px 28px 4px 8px;
+  font-size: 0.8125rem;
+}
+
+/* ============================================== 
+   28. PORTFOLIO SUMMARY BAR
+   ============================================== */
+.esono-portfolio-summary {
+  display: flex;
+  gap: var(--spacing-xl);
+  padding: var(--spacing-md) var(--spacing-lg);
+  background: var(--esono-white);
+  border: 1px solid var(--esono-gray-200);
+  border-radius: var(--border-radius-lg);
+  margin-bottom: var(--spacing-lg);
+}
+
+.esono-portfolio-summary__item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+}
+
+.esono-portfolio-summary__count {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--esono-gray-800);
+}
+
+.esono-portfolio-summary__label {
+  font-size: 0.8125rem;
+  color: var(--esono-gray-500);
+}
+
+.esono-portfolio-summary__item--success .esono-portfolio-summary__count {
+  color: var(--esono-success);
+}
+
+/* ============================================== 
+   29. TABLE ENHANCEMENTS
+   ============================================== */
+.esono-table--hover tbody tr:hover {
+  background: var(--esono-gray-50);
+}
+
+.esono-table__checkbox {
+  width: 40px;
+  text-align: center;
+}
+
+.esono-table__checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.esono-table__sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.esono-table__sortable:hover {
+  background: var(--esono-gray-100);
+}
+
+.esono-table__sortable i {
+  margin-left: 4px;
+  font-size: 0.75rem;
+  opacity: 0.5;
+}
+
+.esono-table__actions {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.esono-table__btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--border-radius-sm);
+  background: transparent;
+  border: 1px solid var(--esono-gray-200);
+  color: var(--esono-gray-500);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.esono-table__btn:hover {
+  background: var(--esono-gray-100);
+  color: var(--esono-primary);
+  border-color: var(--esono-gray-300);
+}
+
+.esono-table__btn--primary:hover {
+  background: var(--esono-primary);
+  color: var(--esono-white);
+  border-color: var(--esono-primary);
+}
+
+/* ============================================== 
+   30. SCORE DISPLAY (FICHE PROJET)
+   ============================================== */
+.esono-score-display {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-xl);
+}
+
+.esono-score-display__main {
+  text-align: left;
+}
+
+.esono-score-display__value {
+  font-size: 4.5rem;
+  font-weight: 700;
+  line-height: 1;
+  margin-bottom: var(--spacing-sm);
+}
+
+.esono-score-display__label {
+  font-size: 1rem;
+  font-weight: 500;
+  opacity: 0.9;
+}
+
+.esono-score-display__subtitle {
+  font-size: 0.8125rem;
+  opacity: 0.7;
+  margin-top: var(--spacing-xs);
+}
+
+.esono-score-display__badges {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  align-items: flex-end;
+}
+
+/* ============================================== 
+   31. KPI CARD COMPACT
+   ============================================== */
+.esono-kpi-card--compact {
+  padding: var(--spacing-md);
+  text-align: center;
+}
+
+.esono-kpi-card--compact .esono-kpi-card__value {
+  font-size: 1.5rem;
+}
+
+.esono-kpi-card--compact .esono-kpi-card__label {
+  font-size: 0.75rem;
+  color: var(--esono-gray-500);
+  margin-top: var(--spacing-xs);
+}
+
+/* ============================================== 
+   32. PROGRESS BAR
+   ============================================== */
+.esono-progress-bar {
+  height: 6px;
+  background: var(--esono-gray-200);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: var(--spacing-sm);
+}
+
+.esono-progress-bar__fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+/* ============================================== 
+   33. SYNTHESIS CARDS (AI + COACH)
+   ============================================== */
+.esono-card--ai .esono-card__header {
+  background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 100%);
+}
+
+.esono-card--ai .esono-card__header--ai {
+  border-bottom: 2px solid var(--esono-info);
+}
+
+.esono-card--coach .esono-card__header {
+  background: linear-gradient(135deg, #fef3c7 0%, #fffbeb 100%);
+}
+
+.esono-card--coach .esono-card__header--coach {
+  border-bottom: 2px solid var(--esono-accent);
+}
+
+.esono-synthesis__item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-sm) 0;
+  border-bottom: 1px solid var(--esono-gray-100);
+}
+
+.esono-synthesis__list {
+  margin: var(--spacing-sm) 0 0 var(--spacing-md);
+  padding: 0;
+  list-style-type: disc;
+}
+
+.esono-synthesis__list li {
+  font-size: 0.8125rem;
+  color: var(--esono-gray-700);
+  margin-bottom: 4px;
+}
+
+.esono-synthesis__list--success {
+  color: var(--esono-success);
+}
+
+.esono-synthesis__list--warning {
+  color: var(--esono-warning);
+}
+
+.esono-synthesis__verdict {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--esono-gray-200);
+}
+
+.esono-synthesis__verdict-value {
+  display: block;
+  font-size: 1rem;
+  font-weight: 600;
+  margin-top: var(--spacing-xs);
+}
+
+.esono-synthesis__verdict-value--success { color: var(--esono-success); }
+.esono-synthesis__verdict-value--warning { color: var(--esono-warning); }
+.esono-synthesis__verdict-value--info { color: var(--esono-info); }
+.esono-synthesis__verdict-value--neutral { color: var(--esono-gray-500); }
+
+.esono-synthesis__assessment {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: var(--esono-gray-50);
+  border-radius: var(--border-radius-md);
+}
+
+.esono-synthesis__assessment p {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--esono-gray-700);
+  line-height: 1.6;
+  font-style: italic;
+}
+
+/* ============================================== 
+   34. DECISION CARD
+   ============================================== */
+.esono-card--decision {
+  border-left: 4px solid var(--esono-accent);
+}
+
+.esono-decision-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-lg);
+}
+
+.esono-decision-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.esono-decision-item--full {
+  grid-column: 1 / -1;
+}
+
+.esono-decision-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--esono-gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.esono-decision-value {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--esono-gray-800);
+}
+
+.esono-decision-conditions {
+  margin: 0;
+  padding-left: var(--spacing-md);
+}
+
+.esono-decision-conditions li {
+  font-size: 0.875rem;
+  color: var(--esono-gray-600);
+  margin-bottom: 4px;
+}
+
+/* ============================================== 
+   35. DELIVERABLE LIST
+   ============================================== */
+.esono-deliverable {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-sm) 0;
+  border-bottom: 1px solid var(--esono-gray-100);
+}
+
+.esono-deliverable:last-child {
+  border-bottom: none;
+}
+
+.esono-deliverable__name {
+  font-size: 0.875rem;
+  color: var(--esono-gray-700);
+}
+
+/* ============================================== 
+   36. IMPACT ITEMS
+   ============================================== */
+.esono-impact-items {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.esono-impact-item {
+  padding: var(--spacing-md);
+  background: var(--esono-gray-50);
+  border-radius: var(--border-radius-md);
+  border-left: 4px solid var(--esono-primary);
+}
+
+.esono-impact-item--marginal {
+  border-left-color: var(--esono-accent);
+  background: var(--esono-accent-light);
+}
+
+.esono-impact-item__value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--esono-gray-800);
+}
+
+.esono-impact-item__label {
+  font-size: 0.75rem;
+  color: var(--esono-gray-500);
+  margin-top: 2px;
+}
+
+/* ============================================== 
+   37. SDG TAGS
+   ============================================== */
+.esono-sdg-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.esono-sdg-tag {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--esono-gray-100);
+  border-radius: var(--border-radius-sm);
+  font-size: 0.75rem;
+  color: var(--esono-gray-600);
+}
+
+.esono-sdg-tag--primary {
+  background: var(--esono-info-light);
+  color: var(--esono-info);
+  font-weight: 500;
+}
+
+/* ============================================== 
+   38. TIMELINE
+   ============================================== */
+.esono-timeline {
+  position: relative;
+  padding-left: var(--spacing-xl);
+}
+
+.esono-timeline::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--esono-gray-200);
+}
+
+.esono-timeline__item {
+  position: relative;
+  padding-bottom: var(--spacing-lg);
+}
+
+.esono-timeline__item:last-child {
+  padding-bottom: 0;
+}
+
+.esono-timeline__marker {
+  position: absolute;
+  left: calc(-1 * var(--spacing-xl) + 4px);
+  top: 4px;
+  width: 12px;
+  height: 12px;
+  background: var(--esono-white);
+  border: 2px solid var(--esono-gray-300);
+  border-radius: 50%;
+}
+
+.esono-timeline__item--current .esono-timeline__marker {
+  background: var(--esono-success);
+  border-color: var(--esono-success);
+}
+
+.esono-timeline__content {
+  padding: var(--spacing-md);
+  background: var(--esono-gray-50);
+  border-radius: var(--border-radius-md);
+}
+
+.esono-timeline__date {
+  font-size: 0.75rem;
+  color: var(--esono-gray-500);
+  margin-bottom: 4px;
+}
+
+.esono-timeline__milestone {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--esono-gray-800);
+  margin-bottom: var(--spacing-sm);
+}
+
+.esono-timeline__details {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+/* ============================================== 
+   39. VALIDATION HISTORY
+   ============================================== */
+.esono-validation {
+  padding: var(--spacing-md);
+  background: var(--esono-gray-50);
+  border-radius: var(--border-radius-md);
+  margin-bottom: var(--spacing-md);
+  border-left: 4px solid var(--esono-gray-300);
+}
+
+.esono-validation:last-child {
+  margin-bottom: 0;
+}
+
+.esono-validation__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-sm);
+}
+
+.esono-validation__validator {
+  font-weight: 600;
+  color: var(--esono-gray-800);
+  font-size: 0.875rem;
+}
+
+.esono-validation__date {
+  font-size: 0.75rem;
+  color: var(--esono-gray-500);
+}
+
+.esono-validation__comment {
+  font-size: 0.875rem;
+  color: var(--esono-gray-600);
+  margin: 0 0 var(--spacing-sm) 0;
+  line-height: 1.5;
+}
+
+/* ============================================== 
+   40. MODAL SIZES
+   ============================================== */
+.esono-modal--lg {
+  max-width: 800px;
+}
+
+.esono-modal--md {
+  max-width: 600px;
+}
+
+.esono-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-lg);
+  border-top: 1px solid var(--esono-gray-100);
+  background: var(--esono-gray-50);
+}
+
+/* ============================================== 
+   41. COMMITTEE VIEW
+   ============================================== */
+.esono-committee-summary {
+  background: linear-gradient(135deg, var(--esono-primary) 0%, var(--esono-primary-light) 100%);
+  color: var(--esono-white);
+  border-radius: var(--border-radius-lg);
+  padding: var(--spacing-xl);
+  margin-bottom: var(--spacing-xl);
+}
+
+.esono-committee-summary__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-lg);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.esono-committee-summary__header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.esono-committee-summary__date {
+  font-size: 0.875rem;
+  opacity: 0.8;
+}
+
+.esono-committee-summary__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-lg);
+}
+
+.esono-committee-metric {
+  text-align: center;
+  padding: var(--spacing-md);
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--border-radius-md);
+}
+
+.esono-committee-metric__value {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.esono-committee-metric__label {
+  font-size: 0.75rem;
+  opacity: 0.8;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  margin-top: var(--spacing-xs);
+}
+
+.esono-committee-section {
+  margin-bottom: var(--spacing-xl);
+}
+
+.esono-committee-section__title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--esono-gray-800);
+  margin-bottom: var(--spacing-md);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.esono-committee-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-lg);
+}
+
+.esono-committee-card {
+  background: var(--esono-white);
+  border: 1px solid var(--esono-gray-200);
+  border-radius: var(--border-radius-lg);
+  padding: var(--spacing-lg);
+  display: flex;
+  gap: var(--spacing-lg);
+}
+
+.esono-committee-card__score {
+  text-align: center;
+  min-width: 80px;
+}
+
+.esono-committee-card__score-value {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--esono-primary);
+  line-height: 1;
+}
+
+.esono-committee-card__score-label {
+  font-size: 0.6875rem;
+  color: var(--esono-gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  margin-top: 4px;
+}
+
+.esono-committee-card__info {
+  flex: 1;
+}
+
+.esono-committee-card__name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--esono-gray-800);
+  margin-bottom: 4px;
+}
+
+.esono-committee-card__location {
+  font-size: 0.8125rem;
+  color: var(--esono-gray-500);
+  margin-bottom: var(--spacing-sm);
+}
+
+.esono-committee-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+/* ============================================== 
+   42. KPI CARD GRADIENTS
+   ============================================== */
+.esono-kpi-card--gradient-blue {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+  color: var(--esono-white);
+}
+
+.esono-kpi-card--gradient-green {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  color: var(--esono-white);
+}
+
+.esono-kpi-card--gradient-purple {
+  background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+  color: var(--esono-white);
+}
+
+.esono-kpi-card--gradient-orange {
+  background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+  color: var(--esono-white);
+}
+
+.esono-kpi-card--gradient-blue .esono-kpi-card__label,
+.esono-kpi-card--gradient-green .esono-kpi-card__label,
+.esono-kpi-card--gradient-purple .esono-kpi-card__label,
+.esono-kpi-card--gradient-orange .esono-kpi-card__label {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.esono-kpi-card--gradient-blue .esono-kpi-card__value,
+.esono-kpi-card--gradient-green .esono-kpi-card__value,
+.esono-kpi-card--gradient-purple .esono-kpi-card__value,
+.esono-kpi-card--gradient-orange .esono-kpi-card__value {
+  color: var(--esono-white);
+}
+
+.esono-kpi-card--gradient-blue .esono-kpi-card__footer,
+.esono-kpi-card--gradient-green .esono-kpi-card__footer,
+.esono-kpi-card--gradient-purple .esono-kpi-card__footer,
+.esono-kpi-card--gradient-orange .esono-kpi-card__footer {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* ============================================== 
+   43. HERO VISION
+   ============================================== */
+.esono-hero--vision {
+  background: linear-gradient(135deg, var(--esono-primary) 0%, var(--esono-primary-light) 100%);
+  color: var(--esono-white);
+}
+
+.esono-hero--vision .esono-hero__title {
+  color: var(--esono-white);
+  font-size: 1.5rem;
+}
+
+.esono-hero--vision .esono-hero__description {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  margin-bottom: var(--spacing-lg);
+}
+
+.esono-hero--vision .esono-hero__metric {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.esono-hero--vision .esono-hero__metric-value {
+  color: var(--esono-white);
+}
+
+.esono-hero--vision .esono-hero__metric-label {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* ============================================== 
+   44. COMMITTEE VIEW MODE
+   ============================================== */
+body.committee-view .esono-sidebar {
+  display: none;
+}
+
+body.committee-view .esono-main {
+  margin-left: 0;
+}
+
+body.committee-view .esono-header {
+  background: var(--esono-primary);
+}
+
+body.committee-view .esono-header__logo {
+  color: var(--esono-white);
+}
+
+body.committee-view .esono-header__subtitle {
+  color: rgba(255, 255, 255, 0.7);
+  border-left-color: rgba(255, 255, 255, 0.3);
+}
+
+body.committee-view .esono-header__icon-btn {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+body.committee-view .esono-header__icon-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--esono-white);
+}
+
+/* ============================================== 
+   45. GRID 2-1
+   ============================================== */
+.esono-grid--2-1 {
+  grid-template-columns: 2fr 1fr;
+}
+
+@media (max-width: 1024px) {
+  .esono-grid--2-1 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================== 
+   46. DATA CONFIDENCE BADGES
+   ============================================== */
+.esono-data-confidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: var(--border-radius-sm);
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+
+.esono-data-confidence--high {
+  background: var(--esono-success-light);
+  color: var(--esono-success);
+}
+
+.esono-data-confidence--medium {
+  background: var(--esono-warning-light);
+  color: var(--esono-warning);
+}
+
+.esono-data-confidence--low {
+  background: var(--esono-info-light);
+  color: var(--esono-info);
+}
+
+/* ============================================== 
+   47. TEXT COLORS
+   ============================================== */
+.esono-text-dark {
+  color: var(--esono-gray-800);
+}
+
+/* ==============================================
+   48. PUBLIC LANDING & AUTH
+   ============================================== */
+.esono-public {
+  min-height: 100vh;
+  background: linear-gradient(135deg, rgba(30, 58, 95, 0.07) 0%, rgba(201, 169, 98, 0.08) 100%);
+  padding: var(--spacing-2xl) var(--spacing-xl);
+  display: flex;
+  flex-direction: column;
+}
+
+.esono-public__shell {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2xl);
+  flex: 1;
+}
+
+.esono-public__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-lg);
+}
+
+.esono-public__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.esono-public__logo {
+  font-size: 1.875rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: var(--esono-primary);
+}
+
+.esono-public__subtitle {
+  font-size: 0.875rem;
+  color: var(--esono-gray-500);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.esono-public__hero {
+  overflow: hidden;
+}
+
+.esono-public__hero-body {
+  display: grid;
+  gap: var(--spacing-xl);
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  align-items: center;
+}
+
+.esono-public__hero-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.esono-public__hero-title {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--esono-gray-900);
+  line-height: 1.2;
+  margin: 0;
+}
+
+.esono-public__hero-description {
+  font-size: 1rem;
+  color: var(--esono-gray-600);
+  margin: 0;
+}
+
+.esono-public__hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.esono-public__hero-metrics {
+  display: grid;
+  gap: var(--spacing-md);
+}
+
+.esono-public__hero-metric {
+  background: var(--esono-gray-50);
+  border-radius: var(--border-radius-lg);
+  border: 1px solid var(--esono-gray-100);
+  padding: var(--spacing-md);
+}
+
+.esono-public__hero-metric-value {
+  font-size: 1.75rem;
+  font-weight: 600;
+  color: var(--esono-primary);
+  margin: 0;
+}
+
+.esono-public__hero-metric-label {
+  font-size: 0.8125rem;
+  color: var(--esono-gray-500);
+  margin: 4px 0 0 0;
+}
+
+.esono-public__choices {
+  display: grid;
+  gap: var(--spacing-xl);
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.esono-public__choice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-xl);
+  text-decoration: none;
+  color: inherit;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.esono-public__choice:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+}
+
+.esono-public__choice-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--border-radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+}
+
+.esono-public__choice-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--esono-gray-800);
+  margin: 0;
+}
+
+.esono-public__choice-text {
+  font-size: 0.9375rem;
+  color: var(--esono-gray-600);
+  margin: 0;
+  flex: 1;
+}
+
+.esono-public__choice-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--esono-gray-600);
+  font-size: 0.875rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.esono-public__choice-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-weight: 600;
+  color: var(--esono-secondary);
+}
+
+.esono-public__stats {
+  background: var(--esono-white);
+  border: 1px solid var(--esono-gray-200);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.esono-public__stats-body {
+  padding: var(--spacing-lg);
+}
+
+.esono-public__stats-grid {
+  display: grid;
+  gap: var(--spacing-lg);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  text-align: center;
+}
+
+.esono-public__stats-value {
+  font-size: 1.875rem;
+  font-weight: 700;
+  color: var(--esono-primary);
+  margin: 0;
+}
+
+.esono-public__stats-label {
+  font-size: 0.8125rem;
+  color: var(--esono-gray-500);
+  margin: 4px 0 0 0;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.esono-public__footer {
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--esono-gray-500);
+  margin-top: auto;
+}
+
+.esono-public__footer a {
+  color: var(--esono-secondary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.esono-public__footer a:hover {
+  text-decoration: underline;
+}
+
+.esono-auth {
+  min-height: 100vh;
+  background: linear-gradient(140deg, rgba(30, 58, 95, 0.07) 0%, rgba(74, 111, 165, 0.08) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-2xl) var(--spacing-xl);
+}
+
+.esono-auth__shell {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.esono-auth__header {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.esono-auth__brand {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto var(--spacing-sm);
+  border-radius: var(--border-radius-lg);
+  background: linear-gradient(135deg, var(--esono-primary) 0%, var(--esono-secondary) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--esono-white);
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.esono-auth__title {
+  font-size: 1.75rem;
+  font-weight: 600;
+  color: var(--esono-gray-900);
+  margin: 0;
+}
+
+.esono-auth__subtitle {
+  font-size: 0.9375rem;
+  color: var(--esono-gray-600);
+  margin: 0;
+}
+
+.esono-auth__card .esono-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.esono-auth__footer {
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--esono-gray-500);
+}
+
+.esono-auth__footer a {
+  color: var(--esono-secondary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.esono-auth__footer a:hover {
+  text-decoration: underline;
+}
+
+.esono-btn--block {
+  width: 100%;
+}
+
+.esono-form__note {
+  font-size: 0.75rem;
+  color: var(--esono-gray-500);
+}
+
+.esono-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  font-size: 0.8125rem;
+  color: var(--esono-gray-600);
+}
+
+.esono-checkbox input {
+  margin-top: 4px;
+}
+
+.esono-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.esono-user-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  text-align: right;
+}
+
+.esono-user-summary__name {
+  font-weight: 600;
+  color: var(--esono-gray-800);
+}
+
+.esono-user-summary__email {
+  font-size: 0.75rem;
+  color: var(--esono-gray-500);
+}
+
+.esono-dashboard-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xl);
+}
+
+.esono-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-md);
+}
+
+.esono-steps-list__item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--esono-gray-200);
+  border-radius: var(--border-radius-md);
+  background: var(--esono-white);
+}
+
+.esono-steps-list__item--completed {
+  border-color: rgba(5, 150, 105, 0.3);
+  background: rgba(5, 150, 105, 0.08);
+}
+
+.esono-steps-list__item--current {
+  border-color: rgba(74, 111, 165, 0.4);
+  background: rgba(74, 111, 165, 0.08);
+}
+
+.esono-steps-list__marker {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  color: var(--esono-gray-600);
+  background: var(--esono-gray-100);
+}
+
+.esono-steps-list__item--completed .esono-steps-list__marker {
+  background: var(--esono-success);
+  color: var(--esono-white);
+}
+
+.esono-steps-list__item--current .esono-steps-list__marker {
+  background: var(--esono-primary);
+  color: var(--esono-white);
+}
+
+.esono-steps-list__content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.esono-steps-list__title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--esono-gray-800);
+  margin: 0;
+}
+
+.esono-steps-list__subtitle {
+  font-size: 0.8125rem;
+  color: var(--esono-gray-500);
+  margin: 0;
+}
+
+.esono-module-card__link {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+  height: 100%;
+}
+
+.esono-module-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.esono-module-card__title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--esono-gray-800);
+  margin: var(--spacing-xs) 0 0 0;
+}
+
+.esono-module-card__description {
+  font-size: 0.875rem;
+  color: var(--esono-gray-600);
+  margin: 0;
+  min-height: 48px;
+}
+
+.esono-module-card__footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.esono-module-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  font-size: 0.8125rem;
+  color: var(--esono-gray-500);
+}
+
+.esono-module-card__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--esono-secondary);
+}
+
+.esono-card--accent {
+  border-color: rgba(201, 169, 98, 0.4);
+  background: linear-gradient(135deg, rgba(201, 169, 98, 0.12) 0%, rgba(255, 255, 255, 0.85) 100%);
+}
+
+@media (max-width: 768px) {
+  .esono-public {
+    padding: var(--spacing-xl) var(--spacing-lg);
+  }
+
+  .esono-public__hero-body {
+    grid-template-columns: 1fr;
+  }
+
+  .esono-public__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .esono-public__shell {
+    gap: var(--spacing-xl);
+  }
+
+  .esono-auth {
+    padding: var(--spacing-xl) var(--spacing-lg);
+  }
+
+  .esono-steps-list__item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .esono-steps-list__marker {
+    width: 32px;
+    height: 32px;
+  }
+
+  .esono-user-summary {
+    align-items: flex-start;
+    text-align: left;
+  }
+}

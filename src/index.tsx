@@ -5,10 +5,867 @@ import { hashPassword, verifyPassword, generateToken, verifyToken } from './auth
 import { getCookie, setCookie } from 'hono/cookie'
 import { getUserWithProgress } from './dashboard'
 import { getCookieOptions } from './cookies'
-import { moduleRoutes } from './module-routes'
+import { moduleRoutes, renderEsanoLayout } from './module-routes'
+import {
+  getGuidedQuestionsForModule,
+  getLearningStageKeysForModule,
+  getModuleVariant,
+  listLearningModules,
+  getHybridModules,
+  getAutomaticModules,
+  getLearningModuleDefinition,
+  isModuleUnlocked,
+  getAllDeliverables,
+  LEARNING_MODULES,
+  type LearningStageKey,
+  type LearningModuleDefinition,
+} from './module-content'
+import { getScoreLabel, getSectionName } from './ai-feedback'
 
 type Bindings = {
   DB: D1Database
+}
+
+const MIN_VALIDATION_SCORE = 60
+
+const parseDateValue = (value?: string | null) => {
+  if (!value) return null
+  const normalized = value.includes('T') ? value : value.replace(' ', 'T')
+  const withTimezone = normalized.endsWith('Z') ? normalized : `${normalized}Z`
+  const date = new Date(withTimezone)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+const getGuidedQuestions = (moduleCode: string) => {
+  return getGuidedQuestionsForModule(moduleCode)
+}
+
+const getStageRouteForModule = (moduleCode: string, stage: LearningStageKey): string => {
+  const variant = getModuleVariant(moduleCode)
+
+  switch (stage) {
+    case 'microLearning':
+      return `/module/${moduleCode}/video`
+    case 'quiz':
+      return `/module/${moduleCode}/quiz`
+    case 'inputs':
+      return variant === 'finance'
+        ? `/module/${moduleCode}/inputs`
+        : `/module/${moduleCode}/questions`
+    case 'analysis':
+      return `/module/${moduleCode}/analysis`
+    case 'iteration':
+      return `/module/${moduleCode}/improve`
+    case 'validation':
+      return `/module/${moduleCode}/validate`
+    case 'deliverable':
+    default:
+      return `/module/${moduleCode}/download`
+  }
+}
+
+type FeedbackExtraction = {
+  suggestions: string[]
+  questions: string[]
+  percentage: number | null
+  scoreLabel: string | null
+}
+
+type SectionSnapshot = {
+  order: number
+  questionId: number
+  section: string
+  questionText: string
+  answer: string
+  iterationCount: number
+  qualityScore: number | null
+  percentage: number | null
+  scoreLabel: string
+  suggestions: string[]
+  questions: string[]
+  updatedAt: string | null
+}
+
+type SectionBuildResult = {
+  sections: SectionSnapshot[]
+  missingAnswers: number
+  clarifications: number
+  qualityMissing: number
+  latestAnswerTimestamp: number | null
+}
+
+const parseAiFeedbackPayload = (raw: unknown): FeedbackExtraction => {
+  if (!raw) {
+    return { suggestions: [], questions: [], percentage: null, scoreLabel: null }
+  }
+
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw as any
+    const suggestions = Array.isArray(parsed?.suggestions)
+      ? parsed.suggestions.map((item: any) => {
+          if (!item) return ''
+          if (typeof item === 'string') return item
+          if (typeof item?.message === 'string') return item.message
+          return String(item)
+        }).filter((item: string) => item.length > 0)
+      : []
+    const questions = Array.isArray(parsed?.questions)
+      ? parsed.questions.map((item: any) => {
+          if (!item) return ''
+          if (typeof item === 'string') return item
+          if (typeof item?.message === 'string') return item.message
+          return String(item)
+        }).filter((item: string) => item.length > 0)
+      : []
+    const percentage = typeof parsed?.percentage === 'number' ? Math.round(parsed.percentage) : null
+    const scoreLabel = typeof parsed?.scoreLabel === 'string' ? parsed.scoreLabel : null
+
+    return { suggestions, questions, percentage, scoreLabel }
+  } catch (error) {
+    console.warn('parseAiFeedbackPayload error', error)
+    return { suggestions: [], questions: [], percentage: null, scoreLabel: null }
+  }
+}
+
+const buildSectionsSnapshot = (moduleCode: string, questionRows: any[]): SectionBuildResult => {
+  const guided = getGuidedQuestions(moduleCode)
+  const rowsByNumber = new Map<number, any>()
+
+  questionRows.forEach((row) => {
+    const numberValue = Number(row.question_number)
+    if (!Number.isNaN(numberValue)) {
+      rowsByNumber.set(numberValue, row)
+    }
+  })
+
+  const baseQuestions = guided.length
+    ? guided.map((q) => ({ id: q.id, section: q.section, question: q.question }))
+    : questionRows.map((row: any) => {
+        const id = Number(row.question_number)
+        return {
+          id,
+          section: row.question_text ?? getSectionName(id),
+          question: row.question_text ?? `Question ${id}`
+        }
+      })
+
+  let missingAnswers = 0
+  let clarifications = 0
+  let qualityMissing = 0
+  let latestAnswerTimestamp: number | null = null
+
+  const sections: SectionSnapshot[] = baseQuestions.map((info, index) => {
+    const row = rowsByNumber.get(info.id)
+    const currentAnswer = (row?.user_response as string | null)?.trim() ?? ''
+
+    if (!currentAnswer) {
+      missingAnswers += 1
+    }
+
+    if (row?.updated_at) {
+      const ts = parseDateValue(row.updated_at)?.getTime()
+      if (ts && (!latestAnswerTimestamp || ts > latestAnswerTimestamp)) {
+        latestAnswerTimestamp = ts
+      }
+    }
+
+    const iterationCount = Number(row?.iteration_count ?? 0)
+    const qualityScore = typeof row?.quality_score === 'number' ? Number(row.quality_score) : null
+
+    if (qualityScore === null) {
+      qualityMissing += 1
+    }
+
+    const feedback = parseAiFeedbackPayload(row?.ai_feedback)
+    if (feedback.questions.length > 0) {
+      clarifications += 1
+    }
+
+    const percentage = qualityScore ?? feedback.percentage
+    const scoreLabel = percentage !== null
+      ? getScoreLabel(percentage).label
+      : feedback.scoreLabel ?? 'Analyse IA à générer'
+
+    return {
+      order: index + 1,
+      questionId: info.id,
+      section: info.section,
+      questionText: info.question,
+      answer: currentAnswer,
+      iterationCount,
+      qualityScore,
+      percentage,
+      scoreLabel,
+      suggestions: feedback.suggestions,
+      questions: feedback.questions,
+      updatedAt: row?.updated_at ?? null
+    }
+  })
+
+  return {
+    sections,
+    missingAnswers,
+    clarifications,
+    qualityMissing,
+    latestAnswerTimestamp
+  }
+}
+
+type FinancialMetricStatus = 'ok' | 'attention' | 'critical'
+
+type FinancialMetricSnapshot = {
+  code: string
+  label: string
+  value: number | null
+  formattedValue: string
+  status: FinancialMetricStatus
+  explanation: string
+}
+
+type FinancialSummarySnapshot = {
+  highlights: string[]
+  warnings: string[]
+  risks: string[]
+}
+
+type FinancialAnalysisResult = {
+  metrics: FinancialMetricSnapshot[]
+  overallScore: number
+  summary: FinancialSummarySnapshot
+}
+
+type FinancialInputsRecord = {
+  id?: number
+  user_id?: number
+  project_id?: number | null
+  module_id?: number
+  progress_id?: number | null
+  period_label?: string | null
+  currency?: string | null
+  revenue_total?: number | null
+  revenue_recurring?: number | null
+  revenue_one_time?: number | null
+  cogs_total?: number | null
+  gross_margin_pct?: number | null
+  operating_expenses?: number | null
+  payroll_expenses?: number | null
+  marketing_expenses?: number | null
+  other_expenses?: number | null
+  ebitda?: number | null
+  net_income?: number | null
+  cash_on_hand?: number | null
+  runway_months?: number | null
+  debt_total?: number | null
+  debt_service?: number | null
+  ltv?: number | null
+  cac?: number | null
+  arpu?: number | null
+  notes?: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+const FINANCIAL_NUMERIC_FIELDS = [
+  'revenue_total',
+  'revenue_recurring',
+  'revenue_one_time',
+  'cogs_total',
+  'gross_margin_pct',
+  'operating_expenses',
+  'payroll_expenses',
+  'marketing_expenses',
+  'other_expenses',
+  'ebitda',
+  'net_income',
+  'cash_on_hand',
+  'runway_months',
+  'debt_total',
+  'debt_service',
+  'ltv',
+  'cac',
+  'arpu'
+] as const
+
+type FinancialNumericField = typeof FINANCIAL_NUMERIC_FIELDS[number]
+
+const FINANCIAL_TEXT_FIELDS = ['period_label', 'currency', 'notes'] as const
+
+type FinancialTextField = typeof FINANCIAL_TEXT_FIELDS[number]
+
+const FINANCIAL_METRIC_SCORES: Record<FinancialMetricStatus, number> = {
+  ok: 100,
+  attention: 70,
+  critical: 45
+}
+
+const FINANCE_VALIDATION_SCORE = 65
+const FINANCIAL_ANALYSIS_MAX_AGE_DAYS = 7
+
+// --- Activity report (narrative) helpers ---
+const ACTIVITY_REPORT_TEXT_FIELDS = [
+  'vision',
+  'mission',
+  'problem_statement',
+  'solution',
+  'differentiation',
+  'customer_segments',
+  'market_size',
+  'market_trends',
+  'competition',
+  'traction',
+  'business_model',
+  'revenue_streams',
+  'pricing_strategy',
+  'go_to_market',
+  'team_summary',
+  'team_gaps',
+  'financial_needs',
+  'fund_usage',
+  'proof_points',
+  'risks',
+  'notes'
+] as const
+
+type ActivityReportFieldKey = typeof ACTIVITY_REPORT_TEXT_FIELDS[number]
+
+type ActivityReportInputsRecord = {
+  id?: number
+  user_id: number
+  project_id?: number | null
+  module_id: number
+  progress_id?: number | null
+  vision?: string | null
+  mission?: string | null
+  problem_statement?: string | null
+  solution?: string | null
+  differentiation?: string | null
+  customer_segments?: string | null
+  market_size?: string | null
+  market_trends?: string | null
+  competition?: string | null
+  traction?: string | null
+  business_model?: string | null
+  revenue_streams?: string | null
+  pricing_strategy?: string | null
+  go_to_market?: string | null
+  team_summary?: string | null
+  team_gaps?: string | null
+  financial_needs?: string | null
+  fund_usage?: string | null
+  proof_points?: string | null
+  risks?: string | null
+  notes?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+const ACTIVITY_REPORT_CATEGORY_FIELDS = {
+  clarity: ['vision', 'mission', 'problem_statement', 'solution', 'differentiation', 'customer_segments'] as ActivityReportFieldKey[],
+  realism: ['market_size', 'market_trends', 'competition', 'traction', 'proof_points', 'team_summary', 'team_gaps', 'risks'] as ActivityReportFieldKey[],
+  precision: ['business_model', 'revenue_streams', 'pricing_strategy', 'go_to_market', 'financial_needs', 'fund_usage'] as ActivityReportFieldKey[]
+} as const
+
+type ActivityReportCategoryKey = keyof typeof ACTIVITY_REPORT_CATEGORY_FIELDS
+
+const ACTIVITY_REPORT_FIELD_LABELS: Record<ActivityReportFieldKey, string> = {
+  vision: 'Vision',
+  mission: 'Mission',
+  problem_statement: 'Problème client',
+  solution: 'Solution proposée',
+  differentiation: 'Différenciation',
+  customer_segments: 'Marché cible',
+  market_size: 'Taille de marché',
+  market_trends: 'Tendances de marché',
+  competition: 'Concurrence',
+  traction: 'Traction et preuves',
+  business_model: "Modèle d'affaires",
+  revenue_streams: 'Sources de revenus',
+  pricing_strategy: 'Stratégie de prix',
+  go_to_market: 'Go-to-market',
+  team_summary: 'Équipe',
+  team_gaps: "Lacunes de l'équipe", 
+  financial_needs: 'Besoins financiers',
+  fund_usage: "Usage des fonds",
+  proof_points: 'Preuves et indicateurs',
+  risks: 'Risques et mitigation',
+  notes: 'Notes supplémentaires'
+}
+
+const getActivityReportFieldScore = (value: string | null | undefined): number => {
+  if (!value) return 0
+  const length = value.trim().length
+  if (!length) return 0
+  let score = 0
+  if (length >= 420) score = 100
+  else if (length >= 280) score = 90
+  else if (length >= 200) score = 80
+  else if (length >= 140) score = 65
+  else if (length >= 80) score = 50
+  else if (length >= 40) score = 35
+  else score = 20
+  const evidenceBonus = /\d/.test(value) || /%|€|fcfa|usd|xaf/i.test(value) ? 10 : 0
+  return Math.min(100, score + evidenceBonus)
+}
+
+const computeActivityReportCategoryScore = (
+  inputs: ActivityReportInputsRecord,
+  category: ActivityReportCategoryKey
+): number => {
+  const fields = ACTIVITY_REPORT_CATEGORY_FIELDS[category]
+  if (!fields.length) return 0
+  const total = fields.reduce((sum, key) => sum + getActivityReportFieldScore(inputs[key] ?? null), 0)
+  return Math.round(total / fields.length)
+}
+
+type ActivityReportAnalysisResult = {
+  clarityScore: number
+  realismScore: number
+  precisionScore: number
+  overallScore: number
+  strengths: string[]
+  improvements: string[]
+  missingSections: string[]
+}
+
+const analyseActivityReportNarrative = (inputs: ActivityReportInputsRecord): ActivityReportAnalysisResult => {
+  const clarityScore = computeActivityReportCategoryScore(inputs, 'clarity')
+  const realismScore = computeActivityReportCategoryScore(inputs, 'realism')
+  const precisionScore = computeActivityReportCategoryScore(inputs, 'precision')
+  const overallScore = Math.round((clarityScore + realismScore + precisionScore) / 3)
+
+  const strengths: string[] = []
+  const improvements: string[] = []
+  const missingSections: string[] = []
+
+  ACTIVITY_REPORT_TEXT_FIELDS.forEach((key) => {
+    const value = inputs[key] ?? null
+    const label = ACTIVITY_REPORT_FIELD_LABELS[key]
+    const fieldScore = getActivityReportFieldScore(value)
+    if (!value || !value.trim()) {
+      if (['notes'].includes(key)) {
+        return
+      }
+      missingSections.push(label)
+      improvements.push(`${label} est manquant ou trop court.`)
+      return
+    }
+
+    if (fieldScore >= 75) {
+      strengths.push(`${label} est bien argumenté (${value.trim().length} caractères).`)
+    } else if (fieldScore < 55) {
+      improvements.push(`${label} gagnerait à être détaillé (actuellement ${value.trim().length} caractères).`)
+    }
+  })
+
+  return {
+    clarityScore,
+    realismScore,
+    precisionScore,
+    overallScore,
+    strengths,
+    improvements,
+    missingSections
+  }
+}
+
+const sanitizeActivityReportPayload = (payload: Record<string, unknown>) => {
+  const sanitized: Partial<ActivityReportInputsRecord> = {}
+  ACTIVITY_REPORT_TEXT_FIELDS.forEach((field) => {
+    if (payload.hasOwnProperty(field)) {
+      sanitized[field] = parseTextInput(payload[field])
+    }
+  })
+  return sanitized
+}
+
+const getActivityReportInputsRow = async (db: D1Database, userId: number, moduleId: number): Promise<ActivityReportInputsRecord | null> => {
+  const row = await db.prepare(`
+    SELECT *
+    FROM activity_report_inputs
+    WHERE user_id = ? AND module_id = ?
+    LIMIT 1
+  `).bind(userId, moduleId).first()
+
+  return row ? (row as ActivityReportInputsRecord) : null
+}
+
+const ACTIVITY_REPORT_ALLOWED_MODULES = new Set<string>(['step1_activity_report'])
+
+const buildActivityReportSummaryPayload = (analysis: ActivityReportAnalysisResult, timestampIso: string) => {
+  return {
+    updatedAt: timestampIso,
+    overallScore: analysis.overallScore,
+    overallLabel: getScoreLabel(analysis.overallScore).label,
+    dimensions: {
+      clarity: {
+        score: analysis.clarityScore,
+        label: getScoreLabel(analysis.clarityScore).label
+      },
+      realism: {
+        score: analysis.realismScore,
+        label: getScoreLabel(analysis.realismScore).label
+      },
+      precision: {
+        score: analysis.precisionScore,
+        label: getScoreLabel(analysis.precisionScore).label
+      }
+    },
+    strengths: analysis.strengths,
+    improvements: analysis.improvements,
+    missingSections: analysis.missingSections
+  }
+}
+
+const parseNumericInput = (value: unknown): number | null => {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+  if (typeof value === 'string') {
+    const normalized = value.replace(/\s/g, '').replace(',', '.')
+    if (!normalized.length) return null
+    const parsed = Number(normalized)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+const parseTextInput = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed.length ? trimmed : null
+}
+
+const determineStatus = (
+  value: number | null,
+  thresholds: { ok: number; attention: number; direction: 'higher' | 'lower' }
+): FinancialMetricStatus => {
+  if (value === null) return 'critical'
+  if (thresholds.direction === 'higher') {
+    if (value >= thresholds.ok) return 'ok'
+    if (value >= thresholds.attention) return 'attention'
+    return 'critical'
+  }
+  if (value <= thresholds.ok) return 'ok'
+  if (value <= thresholds.attention) return 'attention'
+  return 'critical'
+}
+
+const formatNumber = (value: number | null, decimals = 0): string => {
+  if (value === null) return '—'
+  return value.toLocaleString('fr-FR', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  })
+}
+
+const formatPercentage = (value: number | null, decimals = 1): string => {
+  if (value === null) return '—'
+  return `${value.toFixed(decimals)} %`
+}
+
+const formatMonths = (value: number | null): string => {
+  if (value === null) return '—'
+  return `${value.toFixed(1)} mois`
+}
+
+const formatCurrencyValue = (value: number | null, currency: string | null): string => {
+  if (value === null) return '—'
+  try {
+    return new Intl.NumberFormat('fr-FR', {
+      style: 'currency',
+      currency: currency && currency.length === 3 ? currency.toUpperCase() : 'XOF',
+      maximumFractionDigits: 0
+    }).format(value)
+  } catch (error) {
+    return `${formatNumber(value)} ${currency ?? ''}`.trim()
+  }
+}
+
+const formatRatio = (value: number | null): string => {
+  if (value === null) return '—'
+  return value.toFixed(2)
+}
+
+const calculateFinancialMetrics = (inputs: FinancialInputsRecord): FinancialAnalysisResult => {
+  const metrics: FinancialMetricSnapshot[] = []
+  const currency = inputs.currency ?? 'XOF'
+
+  const revenue = parseNumericInput(inputs.revenue_total)
+  const cogs = parseNumericInput(inputs.cogs_total)
+  const ebitda = parseNumericInput(inputs.ebitda)
+  const netIncome = parseNumericInput(inputs.net_income)
+  const runway = parseNumericInput(inputs.runway_months)
+  const cash = parseNumericInput(inputs.cash_on_hand)
+  const debtService = parseNumericInput(inputs.debt_service)
+  const ltv = parseNumericInput(inputs.ltv)
+  const cac = parseNumericInput(inputs.cac)
+
+  // Marge brute
+  const grossMarginValue = inputs.gross_margin_pct !== undefined && inputs.gross_margin_pct !== null
+    ? parseNumericInput(inputs.gross_margin_pct)
+    : revenue !== null && cogs !== null && revenue !== 0
+      ? ((revenue - cogs) / revenue) * 100
+      : null
+  const grossMarginStatus = determineStatus(grossMarginValue, { direction: 'higher', ok: 55, attention: 35 })
+  const grossMarginExplanation = grossMarginValue === null
+    ? 'Impossible de calculer la marge brute (revenus et coûts requis).'
+    : grossMarginStatus === 'ok'
+      ? 'Marge brute solide et attractive pour les investisseurs.'
+      : grossMarginStatus === 'attention'
+        ? 'Marge brute correcte mais des optimisations de coûts ou de pricing sont envisageables.'
+        : 'Marge brute insuffisante : investiguer les coûts variables ou le positionnement prix.'
+  metrics.push({
+    code: 'gross_margin_pct',
+    label: 'Marge brute',
+    value: grossMarginValue,
+    formattedValue: formatPercentage(grossMarginValue),
+    status: grossMarginStatus,
+    explanation: grossMarginExplanation
+  })
+
+  // Marge EBITDA
+  const ebitdaMargin = revenue !== null && revenue !== 0 && ebitda !== null
+    ? (ebitda / revenue) * 100
+    : null
+  const ebitdaStatus = determineStatus(ebitdaMargin, { direction: 'higher', ok: 18, attention: 8 })
+  const ebitdaExplanation = ebitdaMargin === null
+    ? "Marge EBITDA non disponible : renseignez l'EBITDA et le chiffre d'affaires."
+    : ebitdaStatus === 'ok'
+      ? 'Marge opérationnelle maîtrisée.'
+      : ebitdaStatus === 'attention'
+        ? 'Marge opérationnelle à surveiller, des gains de productivité sont possibles.'
+        : 'Marge opérationnelle fragile : prioriser la réduction des charges fixes/variables.'
+  metrics.push({
+    code: 'ebitda_margin_pct',
+    label: 'Marge EBITDA',
+    value: ebitdaMargin,
+    formattedValue: formatPercentage(ebitdaMargin),
+    status: ebitdaStatus,
+    explanation: ebitdaExplanation
+  })
+
+  // Trésorerie / Runway
+  const runwayStatus = determineStatus(runway, { direction: 'higher', ok: 9, attention: 6 })
+  const runwayExplanation = runway === null
+    ? 'Runway inconnu : renseignez la trésorerie et/ou la consommation mensuelle.'
+    : runwayStatus === 'ok'
+      ? 'Runway confortable (> 9 mois).' 
+      : runwayStatus === 'attention'
+        ? 'Runway acceptable mais à consolider (6-9 mois).'
+        : 'Runway critique : plan d’action de financement ou réduction des coûts urgent.'
+  metrics.push({
+    code: 'runway_months',
+    label: 'Runway de trésorerie',
+    value: runway,
+    formattedValue: formatMonths(runway),
+    status: runwayStatus,
+    explanation: runwayExplanation
+  })
+
+  // LTV/CAC
+  const ltvCacRatio = ltv !== null && cac !== null && cac !== 0 ? ltv / cac : null
+  const ltvCacStatus = determineStatus(ltvCacRatio, { direction: 'higher', ok: 3, attention: 2 })
+  const ltvCacExplanation = ltvCacRatio === null
+    ? 'Ratio LTV/CAC indisponible : renseignez LTV et CAC.'
+    : ltvCacStatus === 'ok'
+      ? 'LTV/CAC solide : chaque client couvre largement son coût d’acquisition.'
+      : ltvCacStatus === 'attention'
+        ? 'LTV/CAC correct mais fragile : optimiser la fidélisation ou réduire le CAC.'
+        : 'LTV/CAC insuffisant : chaque client ne couvre pas son acquisition.'
+  metrics.push({
+    code: 'ltv_cac_ratio',
+    label: 'Ratio LTV / CAC',
+    value: ltvCacRatio,
+    formattedValue: formatRatio(ltvCacRatio),
+    status: ltvCacStatus,
+    explanation: ltvCacExplanation
+  })
+
+  // Couverture du service de la dette (DSCR)
+  const dscr = debtService !== null && debtService !== 0 && ebitda !== null ? ebitda / debtService : null
+  const dscrStatus = determineStatus(dscr, { direction: 'higher', ok: 1.5, attention: 1.1 })
+  const dscrExplanation = dscr === null
+    ? 'Couverture du service de la dette non calculable : renseignez EBITDA et service de la dette.'
+    : dscrStatus === 'ok'
+      ? 'Couverture de la dette sécurisée.'
+      : dscrStatus === 'attention'
+        ? 'Capacité de remboursement acceptable mais à surveiller.'
+        : 'Couverture insuffisante : risque de tension de trésorerie vis-à-vis des prêteurs.'
+  metrics.push({
+    code: 'debt_service_coverage',
+    label: 'Couverture service de la dette',
+    value: dscr,
+    formattedValue: formatRatio(dscr),
+    status: dscrStatus,
+    explanation: dscrExplanation
+  })
+
+  // Marge nette
+  const netMargin = revenue !== null && revenue !== 0 && netIncome !== null ? (netIncome / revenue) * 100 : null
+  const netMarginStatus = determineStatus(netMargin, { direction: 'higher', ok: 12, attention: 5 })
+  const netMarginExplanation = netMargin === null
+    ? 'Marge nette indisponible : renseignez le résultat net et le chiffre d’affaires.'
+    : netMarginStatus === 'ok'
+      ? 'Rentabilité nette positive et attractive.'
+      : netMarginStatus === 'attention'
+        ? 'Rentabilité positive mais limitée. Des optimisations sont possibles.'
+        : 'Rentabilité négative ou trop faible : prioriser l’amélioration des marges.'
+  metrics.push({
+    code: 'net_margin_pct',
+    label: 'Marge nette',
+    value: netMargin,
+    formattedValue: formatPercentage(netMargin),
+    status: netMarginStatus,
+    explanation: netMarginExplanation
+  })
+
+  const overallScore = metrics.length
+    ? Math.round(metrics.reduce((acc, metric) => acc + FINANCIAL_METRIC_SCORES[metric.status], 0) / metrics.length)
+    : 0
+
+  const summary: FinancialSummarySnapshot = {
+    highlights: metrics
+      .filter((metric) => metric.status === 'ok')
+      .map((metric) => `${metric.label} : ${metric.formattedValue}`),
+    warnings: metrics
+      .filter((metric) => metric.status === 'attention')
+      .map((metric) => `${metric.label} à surveiller (${metric.formattedValue})`),
+    risks: metrics
+      .filter((metric) => metric.status === 'critical')
+      .map((metric) => `${metric.label} critique (${metric.formattedValue})`)
+  }
+
+  // Ajout d’un indicateur synthétique de trésorerie
+  if (cash !== null) {
+    summary.highlights.push(`Trésorerie disponible : ${formatCurrencyValue(cash, currency)}`)
+  }
+
+  return {
+    metrics,
+    overallScore,
+    summary
+  }
+}
+
+const ensureUserDefaultProject = async (db: D1Database, userId: number): Promise<number | null> => {
+  const existing = await db.prepare(`
+    SELECT id
+    FROM projects
+    WHERE user_id = ?
+    ORDER BY created_at ASC
+    LIMIT 1
+  `).bind(userId).first()
+
+  if (existing?.id) {
+    return Number(existing.id)
+  }
+
+  const result = await db.prepare(`
+    INSERT INTO projects (user_id, name, description)
+    VALUES (?, ?, ?)
+  `).bind(userId, 'Projet principal', 'Projet généré automatiquement').run()
+
+  return typeof result.meta.last_row_id === 'number' ? result.meta.last_row_id : null
+}
+
+const ensureProgressRecord = async (db: D1Database, userId: number, moduleId: number) => {
+  const existing = await db.prepare(`
+    SELECT id, project_id, status
+    FROM progress
+    WHERE user_id = ? AND module_id = ?
+    LIMIT 1
+  `).bind(userId, moduleId).first()
+
+  if (existing?.id) {
+    const progressId = Number(existing.id)
+    let projectId = existing.project_id !== undefined && existing.project_id !== null ? Number(existing.project_id) : null
+
+    if (!projectId) {
+      projectId = await ensureUserDefaultProject(db, userId)
+      if (projectId) {
+        await db.prepare(`
+          UPDATE progress
+          SET project_id = ?
+          WHERE id = ?
+        `).bind(projectId, progressId).run()
+      }
+    }
+
+    return {
+      id: progressId,
+      project_id: projectId,
+      status: typeof existing.status === 'string' ? existing.status : null
+    }
+  }
+
+  const projectId = await ensureUserDefaultProject(db, userId)
+  const result = await db.prepare(`
+    INSERT INTO progress (
+      user_id,
+      project_id,
+      module_id,
+      status,
+      started_at,
+      updated_at,
+      created_at
+    ) VALUES (?, ?, ?, 'in_progress', datetime('now'), datetime('now'), datetime('now'))
+  `).bind(userId, projectId, moduleId).run()
+
+  return {
+    id: Number(result.meta.last_row_id),
+    project_id: projectId,
+    status: 'in_progress'
+  }
+}
+
+const getFinancialInputsRow = async (db: D1Database, userId: number, moduleId: number): Promise<FinancialInputsRecord | null> => {
+  const row = await db.prepare(`
+    SELECT *
+    FROM financial_inputs
+    WHERE user_id = ? AND module_id = ?
+    LIMIT 1
+  `).bind(userId, moduleId).first()
+
+  return row ? (row as FinancialInputsRecord) : null
+}
+
+const sanitizeFinancialPayload = (payload: Record<string, unknown>) => {
+  const sanitized: Partial<FinancialInputsRecord> = {}
+
+  FINANCIAL_TEXT_FIELDS.forEach((key) => {
+    if (payload.hasOwnProperty(key)) {
+      const value = parseTextInput(payload[key])
+      if (value !== null) {
+        sanitized[key] = value as never
+      } else if (key !== 'currency') {
+        sanitized[key] = null as never
+      }
+    }
+  })
+
+  FINANCIAL_NUMERIC_FIELDS.forEach((key) => {
+    if (payload.hasOwnProperty(key)) {
+      const value = parseNumericInput(payload[key])
+      sanitized[key] = value as never
+    }
+  })
+
+  if (!sanitized.currency) {
+    sanitized.currency = 'XOF'
+  }
+
+  return sanitized
+}
+
+const isFinancialAnalysisFresh = (timestamp?: string | null) => {
+  if (!timestamp) return false
+  const date = parseDateValue(timestamp)
+  if (!date) return false
+  const now = Date.now()
+  const diffMs = now - date.getTime()
+  const days = diffMs / (1000 * 60 * 60 * 24)
+  return days <= FINANCIAL_ANALYSIS_MAX_AGE_DAYS
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -23,125 +880,132 @@ app.route('/', moduleRoutes)
 // Landing Page - A1
 app.get('/', (c) => {
   return c.render(
-    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-green-50">
-      <div class="max-w-5xl mx-auto px-4 py-16">
-        {/* Header */}
-        <div class="text-center mb-16">
-          <div class="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-600 to-green-600 rounded-2xl mb-6 shadow-lg">
-            <i class="fas fa-graduation-cap text-3xl text-white"></i>
+    <div class="esono-public">
+      <div class="esono-public__shell">
+        <header class="esono-public__header">
+          <div class="esono-public__brand">
+            <span class="esono-public__logo">ESONO</span>
+            <span class="esono-public__subtitle">Parcours entrepreneur</span>
           </div>
-          <h1 class="text-5xl font-bold text-gray-900 mb-4">
-            Transformez votre idée en entreprise finançable
-          </h1>
-          <p class="text-xl text-gray-600 max-w-2xl mx-auto">
-            Une plateforme qui accompagne les entrepreneurs africains de l'apprentissage au financement
-          </p>
-        </div>
+          <a href="/login" class="esono-btn esono-btn--ghost">
+            <i class="fas fa-arrow-right-to-bracket"></i>
+            Se connecter
+          </a>
+        </header>
 
-        {/* Main Question */}
-        <div class="mb-12">
-          <h2 class="text-3xl font-semibold text-center text-gray-800 mb-8">
-            Quel est votre point de départ ?
-          </h2>
-        </div>
-
-        {/* Choice Cards */}
-        <div class="grid md:grid-cols-2 gap-8 mb-12">
-          {/* Pre-entrepreneur Card */}
-          <a href="/register?type=pre_entrepreneur" class="group block">
-            <div class="bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 p-8 border-2 border-transparent hover:border-blue-500 h-full">
-              <div class="flex flex-col h-full">
-                <div class="flex items-center justify-center w-16 h-16 bg-blue-100 rounded-xl mb-6 group-hover:bg-blue-500 transition-colors">
-                  <i class="fas fa-lightbulb text-3xl text-blue-600 group-hover:text-white transition-colors"></i>
-                </div>
-                <h3 class="text-2xl font-bold text-gray-900 mb-4">
-                  Je souhaite devenir entrepreneur
-                </h3>
-                <p class="text-gray-600 mb-6 flex-grow">
-                  Découvrir l'entrepreneuriat, apprendre les fondamentaux et tester mes idées
-                </p>
-                <div class="space-y-3">
-                  <div class="flex items-start gap-3">
-                    <i class="fas fa-check text-blue-600 mt-1"></i>
-                    <span class="text-sm text-gray-700">Formation pas à pas</span>
-                  </div>
-                  <div class="flex items-start gap-3">
-                    <i class="fas fa-check text-blue-600 mt-1"></i>
-                    <span class="text-sm text-gray-700">Validation de compétences</span>
-                  </div>
-                  <div class="flex items-start gap-3">
-                    <i class="fas fa-check text-blue-600 mt-1"></i>
-                    <span class="text-sm text-gray-700">Accompagnement IA & Coach</span>
-                  </div>
-                </div>
-                <div class="mt-6 flex items-center text-blue-600 font-semibold group-hover:gap-2 transition-all">
-                  <span>Commencer l'apprentissage</span>
-                  <i class="fas fa-arrow-right ml-2 group-hover:ml-4 transition-all"></i>
-                </div>
+        <section class="esono-card esono-public__hero">
+          <div class="esono-card__body esono-public__hero-body">
+            <div class="esono-public__hero-text">
+              <h1 class="esono-public__hero-title">
+                Préparez votre dossier d'investissement en 8 étapes
+              </h1>
+              <p class="esono-public__hero-description">
+                Une plateforme hybride (IA + coaching humain) qui accompagne les PME africaines de la structuration du business model jusqu'au dossier investisseur complet.
+              </p>
+              <div class="esono-public__hero-actions">
+                <span class="esono-badge esono-badge--accent">
+                  <i class="fas fa-graduation-cap"></i>
+                  Micro-learning
+                </span>
+                <span class="esono-badge esono-badge--info">
+                  <i class="fas fa-robot"></i>
+                  IA assistée
+                </span>
+                <span class="esono-badge esono-badge--success">
+                  <i class="fas fa-user-tie"></i>
+                  Coach humain
+                </span>
+              </div>
+              <div class="esono-cta-grid">
+                <a href="/register?type=entrepreneur" class="esono-btn esono-btn--primary">
+                  <i class="fas fa-rocket"></i>
+                  Commencer mon parcours
+                </a>
+                <a href="/register?type=pre_entrepreneur" class="esono-btn esono-btn--secondary">
+                  <i class="fas fa-seedling"></i>
+                  Découvrir la plateforme
+                </a>
               </div>
             </div>
-          </a>
-
-          {/* Entrepreneur Card */}
-          <a href="/register?type=entrepreneur" class="group block">
-            <div class="bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 p-8 border-2 border-transparent hover:border-green-500 h-full">
-              <div class="flex flex-col h-full">
-                <div class="flex items-center justify-center w-16 h-16 bg-green-100 rounded-xl mb-6 group-hover:bg-green-500 transition-colors">
-                  <i class="fas fa-rocket text-3xl text-green-600 group-hover:text-white transition-colors"></i>
-                </div>
-                <h3 class="text-2xl font-bold text-gray-900 mb-4">
-                  Je suis déjà entrepreneur
-                </h3>
-                <p class="text-gray-600 mb-6 flex-grow">
-                  Structurer mon projet, crédibiliser mon entreprise et accéder au financement
-                </p>
-                <div class="space-y-3">
-                  <div class="flex items-start gap-3">
-                    <i class="fas fa-check text-green-600 mt-1"></i>
-                    <span class="text-sm text-gray-700">Business Plan professionnel</span>
-                  </div>
-                  <div class="flex items-start gap-3">
-                    <i class="fas fa-check text-green-600 mt-1"></i>
-                    <span class="text-sm text-gray-700">Projections financières</span>
-                  </div>
-                  <div class="flex items-start gap-3">
-                    <i class="fas fa-check text-green-600 mt-1"></i>
-                    <span class="text-sm text-gray-700">Dossiers investisseurs</span>
-                  </div>
-                </div>
-                <div class="mt-6 flex items-center text-green-600 font-semibold group-hover:gap-2 transition-all">
-                  <span>Structurer mon entreprise</span>
-                  <i class="fas fa-arrow-right ml-2 group-hover:ml-4 transition-all"></i>
-                </div>
+            <div class="esono-public__hero-metrics">
+              <div class="esono-public__hero-metric">
+                <p class="esono-public__hero-metric-value">8 modules</p>
+                <p class="esono-public__hero-metric-label">Parcours séquentiel complet</p>
+              </div>
+              <div class="esono-public__hero-metric">
+                <p class="esono-public__hero-metric-value">3 hybrides</p>
+                <p class="esono-public__hero-metric-label">Apprentissage + IA + Coach</p>
+              </div>
+              <div class="esono-public__hero-metric">
+                <p class="esono-public__hero-metric-value">+10 livrables</p>
+                <p class="esono-public__hero-metric-label">Excel, HTML, Word, XLSM</p>
               </div>
             </div>
-          </a>
-        </div>
+          </div>
+        </section>
 
-        {/* Features Banner */}
-        <div class="bg-white rounded-xl shadow-md p-6">
-          <div class="grid md:grid-cols-3 gap-6 text-center">
-            <div>
-              <div class="text-3xl font-bold text-blue-600 mb-2">5 Étapes</div>
-              <div class="text-sm text-gray-600">Parcours structuré</div>
+        <section class="esono-public__choices">
+          <div class="esono-card esono-public__choice">
+            <div class="esono-public__choice-icon" style="background: rgba(74, 111, 165, 0.12); color: var(--esono-secondary);">
+              <i class="fas fa-graduation-cap"></i>
             </div>
-            <div>
-              <div class="text-3xl font-bold text-green-600 mb-2">IA + Coach</div>
-              <div class="text-sm text-gray-600">Double validation</div>
+            <h2 class="esono-public__choice-title">Modules 1-3 : Approche hybride</h2>
+            <p class="esono-public__choice-text">
+              Remplissez votre dossier en apprenant. Chaque section combine capsules éducatives, saisie assistée par l'IA et coaching humain.
+            </p>
+            <ul class="esono-public__choice-list">
+              <li><strong>BMC</strong> — Business Model Canvas (9 blocs)</li>
+              <li><strong>SIC</strong> — Social Impact Canvas (ODD, indicateurs)</li>
+              <li><strong>Inputs</strong> — Données financières (historiques, RH, CAPEX)</li>
+            </ul>
+            <span class="esono-public__choice-cta">
+              <i class="fas fa-brain"></i>
+              Apprendre + Remplir + Coaching
+            </span>
+          </div>
+
+          <div class="esono-card esono-public__choice">
+            <div class="esono-public__choice-icon" style="background: rgba(5, 150, 105, 0.12); color: var(--esono-success);">
+              <i class="fas fa-robot"></i>
             </div>
-            <div>
-              <div class="text-3xl font-bold text-purple-600 mb-2">100% Prêt</div>
-              <div class="text-sm text-gray-600">Livrables investisseurs</div>
+            <h2 class="esono-public__choice-title">Modules 4-8 : Génération IA</h2>
+            <p class="esono-public__choice-text">
+              L'IA génère automatiquement vos livrables investisseurs à partir des données saisies dans les modules 1-3.
+            </p>
+            <ul class="esono-public__choice-list">
+              <li><strong>Framework</strong> — Modélisation financière 5 ans</li>
+              <li><strong>Diagnostic</strong> — Score crédibilité + plan d'action</li>
+              <li><strong>OVO + BP + ODD</strong> — Livrables complets</li>
+            </ul>
+            <span class="esono-public__choice-cta">
+              <i class="fas fa-wand-magic-sparkles"></i>
+              Génération automatique
+            </span>
+          </div>
+        </section>
+
+        <section class="esono-public__stats">
+          <div class="esono-public__stats-body">
+            <div class="esono-public__stats-grid">
+              <div>
+                <p class="esono-public__stats-value">8 modules</p>
+                <p class="esono-public__stats-label">Parcours séquentiel</p>
+              </div>
+              <div>
+                <p class="esono-public__stats-value">XOF / FCFA</p>
+                <p class="esono-public__stats-label">Devise par défaut</p>
+              </div>
+              <div>
+                <p class="esono-public__stats-value">IA + Coach</p>
+                <p class="esono-public__stats-label">Double validation</p>
+              </div>
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* Footer */}
-        <div class="text-center mt-12">
-          <p class="text-gray-500 text-sm">
-            Déjà inscrit ? <a href="/login" class="text-blue-600 hover:underline font-medium">Se connecter</a>
-          </p>
-        </div>
+        <footer class="esono-public__footer">
+          Déjà inscrit ? <a href="/login">Se connecter</a>
+        </footer>
       </div>
     </div>
   )
@@ -153,158 +1017,142 @@ app.get('/register', (c) => {
   const isPreEntrepreneur = userType === 'pre_entrepreneur'
   
   return c.render(
-    <div class="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50 py-12 px-4">
-      <div class="max-w-md mx-auto">
-        {/* Header */}
-        <div class="text-center mb-8">
-          <a href="/" class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-600 to-green-600 rounded-xl mb-4 shadow-lg">
-            <i class="fas fa-graduation-cap text-2xl text-white"></i>
-          </a>
-          <h1 class="text-3xl font-bold text-gray-900 mb-2">
+    <div class="esono-auth">
+      <div class="esono-auth__shell">
+        <header class="esono-auth__header">
+          <a href="/" class="esono-auth__brand">ES</a>
+          <h1 class="esono-auth__title">
             {isPreEntrepreneur ? 'Commencer votre apprentissage' : 'Structurer votre entreprise'}
           </h1>
-          <p class="text-gray-600">
-            {isPreEntrepreneur 
-              ? 'Créez votre compte pour accéder aux formations' 
-              : 'Créez votre compte pour structurer votre projet'}
+          <p class="esono-auth__subtitle">
+            {isPreEntrepreneur
+              ? 'Créez votre compte pour accéder aux formations et modules guidés.'
+              : 'Créez votre compte pour consolider votre projet et générer vos livrables.'}
           </p>
+        </header>
+
+        <div class="esono-card esono-auth__card">
+          <div class="esono-card__body">
+            <form id="registerForm" class="esono-form">
+              <input type="hidden" name="user_type" value={userType} />
+
+              <div class="esono-form__group">
+                <label for="name" class="esono-form__label">
+                  Nom complet <span class="esono-text-danger">*</span>
+                </label>
+                <input
+                  type="text"
+                  id="name"
+                  name="name"
+                  required
+                  class="esono-input"
+                  placeholder="John Doe"
+                />
+              </div>
+
+              <div class="esono-form__group">
+                <label for="email" class="esono-form__label">
+                  Email <span class="esono-text-danger">*</span>
+                </label>
+                <input
+                  type="email"
+                  id="email"
+                  name="email"
+                  required
+                  class="esono-input"
+                  placeholder="john@example.com"
+                />
+              </div>
+
+              <div class="esono-form__group">
+                <label for="password" class="esono-form__label">
+                  Mot de passe <span class="esono-text-danger">*</span>
+                </label>
+                <input
+                  type="password"
+                  id="password"
+                  name="password"
+                  required
+                  minlength="6"
+                  class="esono-input"
+                  placeholder="••••••••"
+                />
+                <p class="esono-form__note">Minimum 6 caractères</p>
+              </div>
+
+              <div class="esono-form__group">
+                <label for="country" class="esono-form__label">
+                  Pays <span class="esono-text-danger">*</span>
+                </label>
+                <select
+                  id="country"
+                  name="country"
+                  required
+                  class="esono-select"
+                >
+                  <option value="">Sélectionner un pays</option>
+                  <option value="SN">Sénégal</option>
+                  <option value="CI">Côte d'Ivoire</option>
+                  <option value="BF">Burkina Faso</option>
+                  <option value="ML">Mali</option>
+                  <option value="BJ">Bénin</option>
+                  <option value="TG">Togo</option>
+                  <option value="NE">Niger</option>
+                  <option value="CM">Cameroun</option>
+                  <option value="MA">Maroc</option>
+                  <option value="DZ">Algérie</option>
+                  <option value="TN">Tunisie</option>
+                  <option value="KE">Kenya</option>
+                  <option value="NG">Nigeria</option>
+                  <option value="GH">Ghana</option>
+                  <option value="RW">Rwanda</option>
+                </select>
+              </div>
+
+              <div class="esono-form__group">
+                <label for="status" class="esono-form__label">
+                  Statut <span class="esono-text-danger">*</span>
+                </label>
+                <select
+                  id="status"
+                  name="status"
+                  required
+                  class="esono-select"
+                >
+                  <option value="">Sélectionner un statut</option>
+                  <option value="student">Étudiant</option>
+                  <option value="entrepreneur">Entrepreneur</option>
+                  <option value="alumni">Alumni</option>
+                </select>
+              </div>
+
+              <div class="esono-checkbox">
+                <input
+                  type="checkbox"
+                  id="terms"
+                  name="terms"
+                  required
+                />
+                <label for="terms">
+                  J'accepte les conditions d'utilisation et la politique de confidentialité.
+                </label>
+              </div>
+
+              <div id="error-message" class="esono-alert esono-alert--danger hidden" role="alert"></div>
+
+              <button type="submit" class="esono-btn esono-btn--primary esono-btn--block">
+                <span id="submit-text">Créer mon compte</span>
+                <span id="submit-loading" class="hidden">
+                  <i class="fas fa-spinner fa-spin"></i>
+                  Création en cours...
+                </span>
+              </button>
+            </form>
+          </div>
         </div>
 
-        {/* Registration Form */}
-        <div class="bg-white rounded-2xl shadow-lg p-8">
-          <form id="registerForm" class="space-y-6">
-            <input type="hidden" name="user_type" value={userType} />
-            
-            {/* Name */}
-            <div>
-              <label for="name" class="block text-sm font-medium text-gray-700 mb-2">
-                Nom complet <span class="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                id="name"
-                name="name"
-                required
-                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="John Doe"
-              />
-            </div>
-
-            {/* Email */}
-            <div>
-              <label for="email" class="block text-sm font-medium text-gray-700 mb-2">
-                Email <span class="text-red-500">*</span>
-              </label>
-              <input
-                type="email"
-                id="email"
-                name="email"
-                required
-                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="john@example.com"
-              />
-            </div>
-
-            {/* Password */}
-            <div>
-              <label for="password" class="block text-sm font-medium text-gray-700 mb-2">
-                Mot de passe <span class="text-red-500">*</span>
-              </label>
-              <input
-                type="password"
-                id="password"
-                name="password"
-                required
-                minlength="6"
-                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="••••••••"
-              />
-              <p class="text-xs text-gray-500 mt-1">Minimum 6 caractères</p>
-            </div>
-
-            {/* Country */}
-            <div>
-              <label for="country" class="block text-sm font-medium text-gray-700 mb-2">
-                Pays <span class="text-red-500">*</span>
-              </label>
-              <select
-                id="country"
-                name="country"
-                required
-                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="">Sélectionner un pays</option>
-                <option value="SN">Sénégal</option>
-                <option value="CI">Côte d'Ivoire</option>
-                <option value="BF">Burkina Faso</option>
-                <option value="ML">Mali</option>
-                <option value="BJ">Bénin</option>
-                <option value="TG">Togo</option>
-                <option value="NE">Niger</option>
-                <option value="CM">Cameroun</option>
-                <option value="MA">Maroc</option>
-                <option value="DZ">Algérie</option>
-                <option value="TN">Tunisie</option>
-                <option value="KE">Kenya</option>
-                <option value="NG">Nigeria</option>
-                <option value="GH">Ghana</option>
-                <option value="RW">Rwanda</option>
-              </select>
-            </div>
-
-            {/* Status */}
-            <div>
-              <label for="status" class="block text-sm font-medium text-gray-700 mb-2">
-                Statut <span class="text-red-500">*</span>
-              </label>
-              <select
-                id="status"
-                name="status"
-                required
-                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="">Sélectionner un statut</option>
-                <option value="student">Étudiant</option>
-                <option value="entrepreneur">Entrepreneur</option>
-                <option value="alumni">Alumni</option>
-              </select>
-            </div>
-
-            {/* Terms */}
-            <div class="flex items-start gap-3">
-              <input
-                type="checkbox"
-                id="terms"
-                name="terms"
-                required
-                class="mt-1 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-              />
-              <label for="terms" class="text-sm text-gray-600">
-                J'accepte les conditions d'utilisation et la politique de confidentialité
-              </label>
-            </div>
-
-            {/* Error message */}
-            <div id="error-message" class="hidden bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm"></div>
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              class={`w-full py-3 px-4 rounded-lg text-white font-semibold ${isPreEntrepreneur ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'} transition-colors`}
-            >
-              <span id="submit-text">Créer mon compte</span>
-              <span id="submit-loading" class="hidden">
-                <i class="fas fa-spinner fa-spin mr-2"></i>Création en cours...
-              </span>
-            </button>
-          </form>
-
-          {/* Login Link */}
-          <div class="text-center mt-6">
-            <p class="text-gray-600 text-sm">
-              Déjà inscrit ? <a href="/login" class="text-blue-600 hover:underline font-medium">Se connecter</a>
-            </p>
-          </div>
+        <div class="esono-auth__footer">
+          Déjà inscrit ? <a href="/login">Se connecter</a>
         </div>
       </div>
 
@@ -316,75 +1164,58 @@ app.get('/register', (c) => {
 // Login Page
 app.get('/login', (c) => {
   return c.render(
-    <div class="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50 flex items-center justify-center px-4">
-      <div class="max-w-md w-full">
-        {/* Header */}
-        <div class="text-center mb-8">
-          <a href="/" class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-600 to-green-600 rounded-xl mb-4 shadow-lg">
-            <i class="fas fa-graduation-cap text-2xl text-white"></i>
-          </a>
-          <h1 class="text-3xl font-bold text-gray-900 mb-2">
-            Bon retour !
-          </h1>
-          <p class="text-gray-600">
-            Connectez-vous pour continuer votre parcours
+    <div class="esono-auth">
+      <div class="esono-auth__shell">
+        <header class="esono-auth__header">
+          <a href="/" class="esono-auth__brand">ES</a>
+          <h1 class="esono-auth__title">Bon retour !</h1>
+          <p class="esono-auth__subtitle">
+            Connectez-vous pour reprendre votre progression et retrouver vos livrables.
           </p>
+        </header>
+
+        <div class="esono-card esono-auth__card">
+          <div class="esono-card__body">
+            <form id="loginForm" class="esono-form">
+              <div class="esono-form__group">
+                <label for="email" class="esono-form__label">Email</label>
+                <input
+                  type="email"
+                  id="email"
+                  name="email"
+                  required
+                  class="esono-input"
+                  placeholder="john@example.com"
+                />
+              </div>
+
+              <div class="esono-form__group">
+                <label for="password" class="esono-form__label">Mot de passe</label>
+                <input
+                  type="password"
+                  id="password"
+                  name="password"
+                  required
+                  class="esono-input"
+                  placeholder="••••••••"
+                />
+              </div>
+
+              <div id="error-message" class="esono-alert esono-alert--danger hidden" role="alert"></div>
+
+              <button type="submit" class="esono-btn esono-btn--primary esono-btn--block">
+                <span id="submit-text">Se connecter</span>
+                <span id="submit-loading" class="hidden">
+                  <i class="fas fa-spinner fa-spin"></i>
+                  Connexion...
+                </span>
+              </button>
+            </form>
+          </div>
         </div>
 
-        {/* Login Form */}
-        <div class="bg-white rounded-2xl shadow-lg p-8">
-          <form id="loginForm" class="space-y-6">
-            {/* Email */}
-            <div>
-              <label for="email" class="block text-sm font-medium text-gray-700 mb-2">
-                Email
-              </label>
-              <input
-                type="email"
-                id="email"
-                name="email"
-                required
-                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="john@example.com"
-              />
-            </div>
-
-            {/* Password */}
-            <div>
-              <label for="password" class="block text-sm font-medium text-gray-700 mb-2">
-                Mot de passe
-              </label>
-              <input
-                type="password"
-                id="password"
-                name="password"
-                required
-                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="••••••••"
-              />
-            </div>
-
-            {/* Error message */}
-            <div id="error-message" class="hidden bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm"></div>
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors"
-            >
-              <span id="submit-text">Se connecter</span>
-              <span id="submit-loading" class="hidden">
-                <i class="fas fa-spinner fa-spin mr-2"></i>Connexion...
-              </span>
-            </button>
-          </form>
-
-          {/* Register Link */}
-          <div class="text-center mt-6">
-            <p class="text-gray-600 text-sm">
-              Pas encore de compte ? <a href="/" class="text-blue-600 hover:underline font-medium">S'inscrire</a>
-            </p>
-          </div>
+        <div class="esono-auth__footer">
+          Pas encore de compte ? <a href="/">Créer un compte</a>
         </div>
       </div>
 
@@ -542,186 +1373,369 @@ app.get('/api/user', async (c) => {
   }
 })
 
-// Dashboard - A3
-app.get('/dashboard', async (c) => {
+// API: Learning modules registry
+app.get('/api/modules/learning', async (c) => {
   try {
     const token = getCookie(c, 'auth_token')
-    
+
     if (!token) {
-      return c.redirect('/login')
+      return c.json({ error: 'Non authentifié' }, 401)
     }
 
     const payload = await verifyToken(token)
     if (!payload) {
-      return c.redirect('/login')
+      return c.json({ error: 'Token invalide' }, 401)
     }
+
+    const definitions = listLearningModules()
+    if (definitions.length === 0) {
+      return c.json({ modules: [] })
+    }
+
+    const moduleCodes = definitions.map((definition) => definition.code)
+    const placeholders = moduleCodes.map(() => '?').join(', ')
+
+    const modulesResult = await c.env.DB.prepare(`
+      SELECT id, module_code, title, description, display_order
+      FROM modules
+      WHERE module_code IN (${placeholders})
+    `).bind(...moduleCodes).all()
+
+    const moduleMap = new Map<string, any>()
+    modulesResult.results.forEach((row: any) => {
+      if (row?.module_code) {
+        moduleMap.set(row.module_code as string, row)
+      }
+    })
+
+    const progressResult = await c.env.DB.prepare(`
+      SELECT p.id,
+             p.module_id,
+             p.status,
+             p.ai_score,
+             p.financial_score,
+             p.ai_last_analysis,
+             p.financial_last_refresh,
+             m.module_code
+      FROM progress p
+      INNER JOIN modules m ON m.id = p.module_id
+      WHERE p.user_id = ?
+    `).bind(payload.userId).all()
+
+    const progressMap = new Map<string, any>()
+    progressResult.results.forEach((row: any) => {
+      if (row?.module_code) {
+        progressMap.set(row.module_code as string, row)
+      }
+    })
+
+    const modulesPayload = definitions.map((definition) => {
+      const dbModule = moduleMap.get(definition.code)
+      const progress = progressMap.get(definition.code)
+      const stageKeys = getLearningStageKeysForModule(definition.code)
+
+      const stageRoutes = stageKeys.reduce<Record<string, string>>((acc, stage) => {
+        acc[stage] = getStageRouteForModule(definition.code, stage)
+        return acc
+      }, {} as Record<string, string>)
+
+      const aiScore = typeof progress?.ai_score === 'number'
+        ? progress.ai_score
+        : typeof progress?.financial_score === 'number'
+          ? progress.financial_score
+          : null
+
+      const lastAnalysisAt = progress?.ai_last_analysis ?? progress?.financial_last_refresh ?? null
+
+      return {
+        code: definition.code,
+        title: dbModule?.title ?? definition.title,
+        shortTitle: definition.shortTitle,
+        slug: definition.slug,
+        summary: definition.summary,
+        type: definition.type,
+        order: definition.order,
+        variant: definition.variant ?? getModuleVariant(definition.code),
+        learningObjectives: definition.learningObjectives,
+        dependencies: definition.dependencies,
+        downstreamFeeds: definition.downstreamFeeds,
+        flow: definition.flow,
+        outputs: definition.outputs,
+        stages: stageKeys,
+        stageCount: stageKeys.length,
+        stageRoutes,
+        progress: {
+          status: progress?.status ?? 'not_started',
+          aiScore,
+          lastAnalysisAt
+        },
+        links: {
+          overview: `/module/${definition.code}`,
+          ...stageRoutes
+        },
+        metadata: {
+          moduleId: dbModule?.id ?? null,
+          displayOrder: dbModule?.display_order ?? null,
+          description: dbModule?.description ?? null
+        }
+      }
+    })
+
+    return c.json({ modules: modulesPayload })
+  } catch (error) {
+    console.error('Learning modules registry error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+// Dashboard - A3 (nouvelle architecture 8 modules)
+app.get('/dashboard', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.redirect('/login')
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.redirect('/login')
 
     const data = await getUserWithProgress(c.env.DB, payload.userId)
-    if (!data) {
-      return c.redirect('/login')
+    if (!data) return c.redirect('/login')
+
+    const { user, project, modules: dbModules, progress } = data
+
+    // Build progress map par module_code
+    const progressList = (progress as any[]) ?? []
+    const dbModulesList = (dbModules as any[]) ?? []
+    const progressByCode = new Map<string, any>()
+    
+    for (const entry of progressList) {
+      const dbMod = dbModulesList.find((m: any) => m.id === entry.module_id)
+      if (dbMod?.module_code) {
+        progressByCode.set(dbMod.module_code as string, entry)
+      }
     }
 
-    const { user, project, modules, progress, stats } = data
-    const isPreEntrepreneur = user.user_type === 'pre_entrepreneur'
+    // Utiliser la définition des 8 modules
+    const allModules = LEARNING_MODULES
+    const completedCodes = new Set<string>()
+    for (const mod of allModules) {
+      const p = progressByCode.get(mod.code)
+      if (p?.status === 'completed' || p?.status === 'validated') {
+        completedCodes.add(mod.code)
+      }
+    }
 
-    return c.render(
-      <div class="min-h-screen bg-gray-50">
-        {/* Navigation Bar */}
-        <nav class="bg-white border-b border-gray-200 shadow-sm">
-          <div class="max-w-7xl mx-auto px-4 py-4">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-3">
-                <div class="w-10 h-10 bg-gradient-to-br from-blue-600 to-green-600 rounded-lg flex items-center justify-center">
-                  <i class="fas fa-graduation-cap text-white"></i>
-                </div>
-                <div>
-                  <h1 class="text-lg font-bold text-gray-900">Plateforme EdTech</h1>
-                  <p class="text-xs text-gray-500">{project?.name || 'Mon Projet'}</p>
-                </div>
-              </div>
-              <div class="flex items-center gap-4">
-                <div class="text-right">
-                  <p class="text-sm font-medium text-gray-900">{user.name}</p>
-                  <p class="text-xs text-gray-500">{user.email}</p>
-                </div>
-                <button onclick="logout()" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">
-                  <i class="fas fa-sign-out-alt mr-2"></i>Déconnexion
-                </button>
-              </div>
+    const totalModules = allModules.length
+    const completedCount = completedCodes.size
+    const progressPercentage = totalModules > 0 ? Math.round((completedCount / totalModules) * 100) : 0
+
+    // Trouver le prochain module
+    let nextModule: LearningModuleDefinition | null = null
+    for (const mod of allModules) {
+      if (!completedCodes.has(mod.code)) {
+        if (isModuleUnlocked(mod.code, completedCodes)) {
+          nextModule = mod
+          break
+        }
+      }
+    }
+
+    type ModuleStatusKey = 'completed' | 'in_progress' | 'locked' | 'not_started'
+
+    const getModuleStatus = (mod: LearningModuleDefinition): ModuleStatusKey => {
+      const p = progressByCode.get(mod.code)
+      if (p?.status === 'completed' || p?.status === 'validated') return 'completed'
+      if (p?.status === 'in_progress') return 'in_progress'
+      if (!isModuleUnlocked(mod.code, completedCodes)) return 'locked'
+      return 'not_started'
+    }
+
+    const statusConfig: Record<ModuleStatusKey, { label: string; badgeClass: string; icon: string; cardClass: string }> = {
+      completed: { label: 'Terminé', badgeClass: 'esono-badge esono-badge--success', icon: 'fas fa-check-circle', cardClass: 'esono-module-card--completed' },
+      in_progress: { label: 'En cours', badgeClass: 'esono-badge esono-badge--info', icon: 'fas fa-spinner fa-spin', cardClass: 'esono-module-card--active' },
+      not_started: { label: 'Disponible', badgeClass: 'esono-badge esono-badge--accent', icon: 'fas fa-play-circle', cardClass: '' },
+      locked: { label: 'Verrouillé', badgeClass: 'esono-badge esono-badge--neutral', icon: 'fas fa-lock', cardClass: 'esono-module-card--locked' }
+    }
+
+    const headerActions = (
+      <div class="esono-header-actions">
+        <div class="esono-user-summary">
+          <span class="esono-user-summary__name">{user.name}</span>
+          <span class="esono-user-summary__email">{user.email}</span>
+        </div>
+        <button type="button" class="esono-btn esono-btn--secondary" onclick="logout()">
+          <i class="fas fa-arrow-right-from-bracket"></i>
+          Déconnexion
+        </button>
+      </div>
+    )
+
+    const pageContent = (
+      <div class="esono-dashboard-stack">
+        {/* Hero */}
+        <section class="esono-hero">
+          <div class="esono-hero__header">
+            <div>
+              <h2 class="esono-hero__title">Bienvenue, {user.name}</h2>
+              <p class="esono-hero__subtitle">
+                {project?.name ? `Projet : ${project.name}` : 'Parcours Investment Readiness — PME Afrique'}
+              </p>
+            </div>
+            <span class="esono-hero__badge">
+              <i class="fas fa-flag-checkered"></i>
+              {completedCount} / {totalModules} modules
+            </span>
+          </div>
+          <div class="esono-hero__metrics">
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">{completedCount}</p>
+              <p class="esono-hero__metric-label">Modules complétés</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">{progressPercentage}%</p>
+              <p class="esono-hero__metric-label">Progression</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">{nextModule ? nextModule.moduleNumber : '—'}</p>
+              <p class="esono-hero__metric-label">Prochaine étape</p>
+            </div>
+            <div class="esono-hero__metric">
+              <p class="esono-hero__metric-value">XOF</p>
+              <p class="esono-hero__metric-label">Devise</p>
             </div>
           </div>
-        </nav>
+        </section>
 
-        {/* Main Content */}
-        <div class="max-w-7xl mx-auto px-4 py-8">
-          {/* Welcome Banner */}
-          <div class={`mb-8 p-6 rounded-2xl ${isPreEntrepreneur ? 'bg-gradient-to-br from-blue-500 to-blue-600' : 'bg-gradient-to-br from-green-500 to-green-600'} text-white shadow-lg`}>
-            <div class="flex items-start justify-between">
-              <div>
-                <h2 class="text-2xl font-bold mb-2">
-                  Bienvenue, {user.name} ! 👋
-                </h2>
-                <p class="text-blue-100 mb-4">
-                  {isPreEntrepreneur 
-                    ? 'Progressez dans votre apprentissage entrepreneurial' 
-                    : 'Continuez à structurer votre entreprise'}
-                </p>
-                <div class="flex items-center gap-6">
-                  <div>
-                    <div class="text-3xl font-bold">{stats.completedModules}/{stats.totalModules}</div>
-                    <div class="text-sm text-blue-100">Modules complétés</div>
-                  </div>
-                  <div>
-                    <div class="text-3xl font-bold">Étape {stats.currentStep}</div>
-                    <div class="text-sm text-blue-100">Sur 5 étapes</div>
-                  </div>
-                </div>
-              </div>
-              <div class="text-right">
-                <div class="text-4xl font-bold mb-1">{stats.progressPercentage}%</div>
-                <div class="text-sm text-blue-100">Progression globale</div>
-              </div>
-            </div>
+        {/* Barre de progression 8 étapes */}
+        <section class="esono-card">
+          <div class="esono-card__header">
+            <h2 class="esono-card__title">
+              <i class="fas fa-route esono-card__title-icon"></i>
+              Parcours Investment Readiness
+            </h2>
+            <span class="esono-badge esono-badge--info">
+              {progressPercentage}% complété
+            </span>
           </div>
-
-          {/* Progress Bar */}
-          <div class="mb-8 bg-white rounded-xl shadow-md p-6">
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">Votre Parcours</h3>
-            <div class="flex items-center gap-2">
-              {[1, 2, 3, 4, 5].map(step => {
-                const isCompleted = step < stats.currentStep
-                const isCurrent = step === stats.currentStep
+          <div class="esono-card__body">
+            <div class="esono-progress esono-mb-lg">
+              <div class="esono-progress__bar" style={`width: ${progressPercentage}%`}></div>
+            </div>
+            <div class="esono-steps-list">
+              {allModules.map((mod) => {
+                const status = getModuleStatus(mod)
+                const cfg = statusConfig[status]
+                const isHybrid = mod.category === 'hybrid'
                 return (
-                  <div class="flex-1 flex items-center">
-                    <div class="flex-1 flex items-center">
-                      <div class={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
-                        isCompleted ? 'bg-green-500 text-white' : 
-                        isCurrent ? 'bg-blue-500 text-white' : 
-                        'bg-gray-200 text-gray-500'
-                      }`}>
-                        {isCompleted ? <i class="fas fa-check"></i> : step}
-                      </div>
-                      {step < 5 && (
-                        <div class={`flex-1 h-1 ${isCompleted ? 'bg-green-500' : 'bg-gray-200'}`}></div>
-                      )}
+                  <div class={`esono-steps-list__item esono-steps-list__item--${status === 'completed' ? 'completed' : status === 'in_progress' ? 'current' : 'upcoming'}`} key={`step-${mod.code}`}>
+                    <div class="esono-steps-list__marker" style={status !== 'locked' ? `background: ${mod.color}; color: white;` : ''}>
+                      {status === 'completed' ? <i class="fas fa-check"></i> : status === 'locked' ? <i class="fas fa-lock"></i> : mod.moduleNumber}
                     </div>
+                    <div class="esono-steps-list__content">
+                      <p class="esono-steps-list__title">
+                        Module {mod.moduleNumber} — {mod.shortTitle}
+                        {isHybrid && <span style="margin-left: 8px; font-size: 0.7em; padding: 2px 6px; background: rgba(201, 169, 98, 0.15); color: #b8941f; border-radius: 4px;">HYBRIDE</span>}
+                        {!isHybrid && <span style="margin-left: 8px; font-size: 0.7em; padding: 2px 6px; background: rgba(124, 58, 237, 0.1); color: #7c3aed; border-radius: 4px;">AUTO IA</span>}
+                      </p>
+                      <p class="esono-steps-list__subtitle">{mod.summary}</p>
+                    </div>
+                    <span class={cfg.badgeClass}>
+                      <i class={cfg.icon}></i>
+                      {cfg.label}
+                    </span>
                   </div>
                 )
               })}
             </div>
-            <div class="flex justify-between mt-3">
-              <div class="text-xs text-gray-600 text-center" style="width: 20%">Activité</div>
-              <div class="text-xs text-gray-600 text-center" style="width: 20%">Finances</div>
-              <div class="text-xs text-gray-600 text-center" style="width: 20%">Projections</div>
-              <div class="text-xs text-gray-600 text-center" style="width: 20%">Business Plan</div>
-              <div class="text-xs text-gray-600 text-center" style="width: 20%">Impact ODD</div>
-            </div>
           </div>
+        </section>
 
-          {/* Next Step Card */}
-          {stats.nextModule && (
-            <div class="mb-8 bg-gradient-to-br from-purple-50 to-pink-50 border-2 border-purple-200 rounded-xl shadow-md p-6">
-              <div class="flex items-start justify-between">
-                <div class="flex-1">
-                  <div class="flex items-center gap-2 mb-3">
-                    <i class="fas fa-star text-yellow-500"></i>
-                    <h3 class="text-lg font-semibold text-gray-900">Prochaine Étape Recommandée</h3>
-                  </div>
-                  <h4 class="text-xl font-bold text-gray-900 mb-2">{stats.nextModule.title}</h4>
-                  <p class="text-gray-600 mb-4">{stats.nextModule.description}</p>
-                  <div class="flex items-center gap-4 text-sm text-gray-600">
-                    <span><i class="far fa-clock mr-1"></i>{stats.nextModule.estimated_time} min</span>
-                    <span><i class="fas fa-layer-group mr-1"></i>Étape {stats.nextModule.step_number}</span>
-                  </div>
+        {/* Prochaine étape recommandée */}
+        {nextModule && (
+          <section class="esono-card esono-card--accent">
+            <div class="esono-card__header">
+              <h2 class="esono-card__title">
+                <i class="fas fa-star esono-card__title-icon"></i>
+                Prochaine étape recommandée
+              </h2>
+            </div>
+            <div class="esono-card__body esono-stack--md">
+              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                <div style={`width: 48px; height: 48px; border-radius: 12px; background: ${nextModule.color}; color: white; display: flex; align-items: center; justify-content: center; font-size: 1.2em;`}>
+                  <i class={nextModule.icon}></i>
                 </div>
-                <a href={`/module/${stats.nextModule.module_code}`} class="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg transition-colors">
-                  Commencer
-                  <i class="fas fa-arrow-right ml-2"></i>
+                <div>
+                  <div class="esono-text-muted esono-text-sm">
+                    Module {nextModule.moduleNumber} • {nextModule.category === 'hybrid' ? 'Micro-learning + IA + Coaching' : 'Traitement IA automatique'}
+                  </div>
+                  <h3 class="esono-font-semibold">{nextModule.title}</h3>
+                </div>
+              </div>
+              <p>{nextModule.summary}</p>
+              {nextModule.category === 'hybrid' && (
+                <div style="display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0;">
+                  <span class="esono-badge esono-badge--accent"><i class="fas fa-graduation-cap"></i> Micro-learning</span>
+                  <span class="esono-badge esono-badge--info"><i class="fas fa-robot"></i> Saisie assistée IA</span>
+                  <span class="esono-badge esono-badge--success"><i class="fas fa-user-tie"></i> Coaching</span>
+                </div>
+              )}
+              <div class="esono-cta-grid">
+                <a href={`/module/${nextModule.code}`} class="esono-btn esono-btn--primary">
+                  {nextModule.category === 'hybrid' ? 'Commencer le module' : 'Générer le livrable'}
+                  <i class="fas fa-arrow-right"></i>
                 </a>
               </div>
             </div>
-          )}
+          </section>
+        )}
 
-          {/* Modules Grid */}
-          <div class="mb-8">
-            <h3 class="text-2xl font-bold text-gray-900 mb-6">Tous les Modules</h3>
-            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {(modules as any[]).map(module => {
-                const moduleProgress = (progress as any[]).find((p: any) => p.module_id === module.id)
-                const isCompleted = moduleProgress?.status === 'completed'
-                const isInProgress = moduleProgress?.status === 'in_progress'
-                const isNotStarted = !moduleProgress || moduleProgress.status === 'not_started'
-
+        {/* Modules hybrides (1-3) */}
+        <section class="esono-card">
+          <div class="esono-card__header">
+            <h2 class="esono-card__title">
+              <i class="fas fa-graduation-cap esono-card__title-icon"></i>
+              Modules hybrides (1-3)
+            </h2>
+            <span class="esono-badge esono-badge--accent">
+              Micro-learning + IA + Coaching
+            </span>
+          </div>
+          <div class="esono-card__body">
+            <div class="esono-grid esono-grid--3">
+              {getHybridModules().map((mod) => {
+                const status = getModuleStatus(mod)
+                const cfg = statusConfig[status]
+                const isLocked = status === 'locked'
                 return (
-                  <a href={`/module/${module.module_code}`} class="block group">
-                    <div class="bg-white rounded-xl shadow-md hover:shadow-xl transition-all p-6 border-2 border-transparent hover:border-blue-300 h-full">
-                      <div class="flex items-start justify-between mb-4">
-                        <div class={`w-12 h-12 rounded-lg flex items-center justify-center ${
-                          isCompleted ? 'bg-green-100' : isInProgress ? 'bg-blue-100' : 'bg-gray-100'
-                        }`}>
-                          {isCompleted ? (
-                            <i class="fas fa-check-circle text-2xl text-green-600"></i>
-                          ) : isInProgress ? (
-                            <i class="fas fa-spinner text-2xl text-blue-600"></i>
-                          ) : (
-                            <i class="fas fa-circle text-2xl text-gray-400"></i>
-                          )}
+                  <a href={isLocked ? '#' : `/module/${mod.code}`} class={`esono-module-card__link ${isLocked ? 'esono-module-card--disabled' : ''}`} key={`mod-${mod.code}`} style={isLocked ? 'pointer-events: none; opacity: 0.5;' : ''}>
+                    <div class={`esono-card esono-module-card ${cfg.cardClass}`}>
+                      <div class="esono-card__header">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                          <div style={`width: 36px; height: 36px; border-radius: 8px; background: ${mod.color}; color: white; display: flex; align-items: center; justify-content: center; font-size: 0.9em;`}>
+                            <i class={mod.icon}></i>
+                          </div>
+                          <div>
+                            <span class="esono-text-xs esono-text-muted">Module {mod.moduleNumber}</span>
+                            <h3 class="esono-module-card__title">{mod.shortTitle}</h3>
+                          </div>
                         </div>
-                        <span class="text-sm font-medium text-gray-500">Étape {module.step_number}</span>
+                        <span class={cfg.badgeClass}>
+                          <i class={cfg.icon}></i>
+                          {cfg.label}
+                        </span>
                       </div>
-                      
-                      <h4 class="text-lg font-bold text-gray-900 mb-2 group-hover:text-blue-600 transition-colors">
-                        {module.title}
-                      </h4>
-                      <p class="text-sm text-gray-600 mb-4 line-clamp-2">{module.description}</p>
-                      
-                      <div class="flex items-center justify-between text-xs text-gray-500">
-                        <span><i class="far fa-clock mr-1"></i>{module.estimated_time} min</span>
-                        {isCompleted && moduleProgress?.quiz_passed && (
-                          <span class="text-green-600 font-medium">
-                            <i class="fas fa-trophy mr-1"></i>{moduleProgress.quiz_score}%
-                          </span>
-                        )}
+                      <div class="esono-card__body">
+                        <p class="esono-module-card__description">{mod.summary}</p>
+                      </div>
+                      <div class="esono-card__footer">
+                        <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                          <span style="font-size: 0.7em; padding: 1px 5px; background: rgba(201,169,98,0.12); color: #b8941f; border-radius: 3px;"><i class="fas fa-graduation-cap"></i></span>
+                          <span style="font-size: 0.7em; padding: 1px 5px; background: rgba(2,132,199,0.1); color: #0284c7; border-radius: 3px;"><i class="fas fa-robot"></i></span>
+                          <span style="font-size: 0.7em; padding: 1px 5px; background: rgba(5,150,105,0.1); color: #059669; border-radius: 3px;"><i class="fas fa-user-tie"></i></span>
+                        </div>
+                        <span class="esono-module-card__cta">
+                          {status === 'completed' ? 'Revoir' : status === 'in_progress' ? 'Continuer' : 'Commencer'}
+                          <i class="fas fa-arrow-right"></i>
+                        </span>
                       </div>
                     </div>
                   </a>
@@ -729,49 +1743,115 @@ app.get('/dashboard', async (c) => {
               })}
             </div>
           </div>
+        </section>
 
-          {/* Stats Cards */}
-          <div class="grid md:grid-cols-3 gap-6">
-            <div class="bg-white rounded-xl shadow-md p-6">
-              <div class="flex items-center gap-4">
-                <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <i class="fas fa-book text-xl text-blue-600"></i>
-                </div>
-                <div>
-                  <div class="text-2xl font-bold text-gray-900">{stats.totalModules}</div>
-                  <div class="text-sm text-gray-600">Modules disponibles</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="bg-white rounded-xl shadow-md p-6">
-              <div class="flex items-center gap-4">
-                <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                  <i class="fas fa-check-double text-xl text-green-600"></i>
-                </div>
-                <div>
-                  <div class="text-2xl font-bold text-gray-900">{stats.completedModules}</div>
-                  <div class="text-sm text-gray-600">Modules complétés</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="bg-white rounded-xl shadow-md p-6">
-              <div class="flex items-center gap-4">
-                <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                  <i class="fas fa-chart-line text-xl text-purple-600"></i>
-                </div>
-                <div>
-                  <div class="text-2xl font-bold text-gray-900">{stats.progressPercentage}%</div>
-                  <div class="text-sm text-gray-600">Progression totale</div>
-                </div>
-              </div>
+        {/* Modules automatiques (4-8) */}
+        <section class="esono-card">
+          <div class="esono-card__header">
+            <h2 class="esono-card__title">
+              <i class="fas fa-wand-magic-sparkles esono-card__title-icon"></i>
+              Modules automatiques (4-8)
+            </h2>
+            <span class="esono-badge esono-badge--info">
+              Traitement IA
+            </span>
+          </div>
+          <div class="esono-card__body">
+            <div class="esono-grid esono-grid--3">
+              {getAutomaticModules().map((mod) => {
+                const status = getModuleStatus(mod)
+                const cfg = statusConfig[status]
+                const isLocked = status === 'locked'
+                return (
+                  <a href={isLocked ? '#' : `/module/${mod.code}`} class={`esono-module-card__link ${isLocked ? 'esono-module-card--disabled' : ''}`} key={`mod-${mod.code}`} style={isLocked ? 'pointer-events: none; opacity: 0.5;' : ''}>
+                    <div class={`esono-card esono-module-card ${cfg.cardClass}`}>
+                      <div class="esono-card__header">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                          <div style={`width: 36px; height: 36px; border-radius: 8px; background: ${mod.color}; color: white; display: flex; align-items: center; justify-content: center; font-size: 0.9em;`}>
+                            <i class={mod.icon}></i>
+                          </div>
+                          <div>
+                            <span class="esono-text-xs esono-text-muted">Module {mod.moduleNumber}</span>
+                            <h3 class="esono-module-card__title">{mod.shortTitle}</h3>
+                          </div>
+                        </div>
+                        <span class={cfg.badgeClass}>
+                          <i class={cfg.icon}></i>
+                          {cfg.label}
+                        </span>
+                      </div>
+                      <div class="esono-card__body">
+                        <p class="esono-module-card__description">{mod.summary}</p>
+                        <div style="margin-top: 8px;">
+                          {mod.outputs.map((output, i) => (
+                            <span key={`out-${i}`} style="font-size: 0.75em; padding: 2px 6px; background: rgba(124,58,237,0.08); color: #7c3aed; border-radius: 4px; margin-right: 4px;">
+                              <i class="fas fa-file"></i> {output.format.toUpperCase()}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div class="esono-card__footer">
+                        <span style="font-size: 0.7em; padding: 1px 5px; background: rgba(124,58,237,0.1); color: #7c3aed; border-radius: 3px;">
+                          <i class="fas fa-wand-magic-sparkles"></i> Auto IA
+                        </span>
+                        <span class="esono-module-card__cta">
+                          {status === 'completed' ? 'Télécharger' : isLocked ? 'Verrouillé' : 'Générer'}
+                          <i class={isLocked ? 'fas fa-lock' : 'fas fa-arrow-right'}></i>
+                        </span>
+                      </div>
+                    </div>
+                  </a>
+                )
+              })}
             </div>
           </div>
-        </div>
+        </section>
 
-        <script src="/static/dashboard.js"></script>
+        {/* Livrables rapide */}
+        <section class="esono-card">
+          <div class="esono-card__header">
+            <h2 class="esono-card__title">
+              <i class="fas fa-download esono-card__title-icon"></i>
+              Livrables
+            </h2>
+            <a href="/livrables" class="esono-btn esono-btn--ghost">
+              Voir tous les livrables <i class="fas fa-arrow-right"></i>
+            </a>
+          </div>
+          <div class="esono-card__body">
+            <p class="esono-text-muted esono-text-sm" style="margin-bottom: 12px;">
+              Les livrables sont générés au fur et à mesure de votre progression. Complétez les modules hybrides (1-3) pour débloquer les livrables automatiques.
+            </p>
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px;">
+              {getAllDeliverables().map((d) => {
+                const isGenerated = completedCodes.has(d.moduleCode)
+                return d.outputs.map((output, i) => (
+                  <div key={`del-${d.moduleCode}-${i}`} style={`padding: 10px 12px; border-radius: 8px; border: 1px solid ${isGenerated ? 'rgba(5,150,105,0.3)' : 'rgba(0,0,0,0.08)'}; background: ${isGenerated ? 'rgba(5,150,105,0.05)' : '#fafafa'}; display: flex; align-items: center; gap: 8px;`}>
+                    <i class={isGenerated ? 'fas fa-check-circle' : 'fas fa-hourglass-half'} style={`color: ${isGenerated ? '#059669' : '#999'};`}></i>
+                    <div style="flex: 1; min-width: 0;">
+                      <div style="font-size: 0.8em; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">M{d.moduleNumber} — {output.format.toUpperCase()}</div>
+                      <div style="font-size: 0.7em; color: #888;">{d.moduleTitle}</div>
+                    </div>
+                  </div>
+                ))
+              })}
+            </div>
+          </div>
+        </section>
       </div>
+    )
+
+    return c.html(
+      renderEsanoLayout({
+        pageTitle: 'Tableau de bord',
+        pageDescription: project?.name
+          ? `Suivi du projet « ${project.name} »`
+          : 'Parcours Investment Readiness — PME Afrique',
+        activeNav: 'dashboard',
+        content: pageContent,
+        headerActions,
+        extraHead: <script src="/static/dashboard.js" defer></script>
+      })
     )
   } catch (error) {
     console.error('Dashboard error:', error)
@@ -779,10 +1859,294 @@ app.get('/dashboard', async (c) => {
   }
 })
 
-// Module entry point - redirect to video
+// Module entry point - redirect based on module category
 app.get('/module/:code', async (c) => {
   const moduleCode = c.req.param('code')
+  const definition = getLearningModuleDefinition(moduleCode)
+  
+  if (!definition) {
+    // Fallback ancien code
+    return c.redirect(`/module/${moduleCode}/video`)
+  }
+
+  if (definition.category === 'automatic') {
+    return c.redirect(`/module/${moduleCode}/overview`)
+  }
+
+  // Module hybride → commence par le micro-learning (vidéo)
   return c.redirect(`/module/${moduleCode}/video`)
+})
+
+// Page module automatique - Overview
+app.get('/module/:code/overview', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.redirect('/login')
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.redirect('/login')
+
+    const moduleCode = c.req.param('code')
+    const definition = getLearningModuleDefinition(moduleCode)
+
+    if (!definition || definition.category !== 'automatic') {
+      return c.redirect(`/module/${moduleCode}/video`)
+    }
+
+    const depModules = definition.dependencies
+    const depLabels = depModules.map((dep) => {
+      const d = getLearningModuleDefinition(dep)
+      return d ? `Module ${d.moduleNumber} — ${d.shortTitle}` : dep
+    })
+
+    const outputsHtml = definition.outputs.map((output) => 
+      `<div style="padding: 16px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; background: white;">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+          <span style="padding: 4px 10px; background: rgba(124,58,237,0.1); color: #7c3aed; border-radius: 6px; font-weight: 600; font-size: 0.85em;">${output.format.toUpperCase()}</span>
+        </div>
+        <p style="font-size: 0.85em; color: #555;">${output.description}</p>
+      </div>`
+    ).join('')
+
+    const pageContent = (
+      <div class="esono-dashboard-stack">
+        <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 24px;">
+          <div style={`width: 56px; height: 56px; border-radius: 14px; background: ${definition.color}; color: white; display: flex; align-items: center; justify-content: center; font-size: 1.5em;`}>
+            <i class={definition.icon}></i>
+          </div>
+          <div>
+            <span class="esono-text-xs esono-text-muted">Module {definition.moduleNumber} — Traitement IA automatique</span>
+            <h2 style="margin: 0; font-size: 1.5em;">{definition.title}</h2>
+          </div>
+        </div>
+
+        <section class="esono-card">
+          <div class="esono-card__body">
+            <p style="font-size: 1.05em; line-height: 1.6; margin-bottom: 16px;">{definition.summary}</p>
+            
+            <div style="background: rgba(124,58,237,0.05); border: 1px solid rgba(124,58,237,0.15); border-radius: 10px; padding: 16px; margin-bottom: 20px;">
+              <h3 style="margin: 0 0 8px; font-size: 0.95em; color: #7c3aed;">
+                <i class="fas fa-info-circle"></i> Ce module est automatique
+              </h3>
+              <p style="margin: 0; font-size: 0.9em; color: #555;">
+                L'IA génère automatiquement les livrables à partir des données que vous avez saisies dans les modules précédents. Aucune saisie manuelle requise.
+              </p>
+            </div>
+
+            <h3 style="font-size: 1em; margin-bottom: 10px;"><i class="fas fa-database"></i> Données utilisées</h3>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px;">
+              {depLabels.map((label, i) => (
+                <span key={`dep-${i}`} class="esono-badge esono-badge--info">{label}</span>
+              ))}
+            </div>
+
+            <h3 style="font-size: 1em; margin-bottom: 10px;"><i class="fas fa-file-export"></i> Livrables générés</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin-bottom: 24px;" dangerouslySetInnerHTML={{ __html: outputsHtml }} />
+
+            <div style="text-align: center; padding-top: 16px;">
+              <a href={`/module/${moduleCode}/generate`} class="esono-btn esono-btn--primary" style={`background: ${definition.color}; border-color: ${definition.color};`}>
+                <i class="fas fa-wand-magic-sparkles"></i>
+                Générer le livrable
+              </a>
+            </div>
+          </div>
+        </section>
+      </div>
+    )
+
+    return c.html(
+      renderEsanoLayout({
+        pageTitle: `Module ${definition.moduleNumber} — ${definition.title}`,
+        pageDescription: definition.summary,
+        activeNav: 'dashboard',
+        content: pageContent,
+        breadcrumb: [
+          { label: 'Tableau de bord', href: '/dashboard' },
+          { label: `Module ${definition.moduleNumber}` }
+        ]
+      })
+    )
+  } catch (error) {
+    console.error('Module overview error:', error)
+    return c.redirect('/dashboard')
+  }
+})
+
+// Page module automatique - Génération
+app.get('/module/:code/generate', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.redirect('/login')
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.redirect('/login')
+
+    const moduleCode = c.req.param('code')
+    const definition = getLearningModuleDefinition(moduleCode)
+
+    if (!definition) return c.redirect('/dashboard')
+
+    const pageContent = (
+      <div class="esono-dashboard-stack">
+        <section class="esono-card">
+          <div class="esono-card__body" style="text-align: center; padding: 60px 20px;">
+            <div style={`width: 80px; height: 80px; border-radius: 20px; background: ${definition.color}; color: white; display: flex; align-items: center; justify-content: center; font-size: 2em; margin: 0 auto 20px;`}>
+              <i class={definition.icon}></i>
+            </div>
+            <h2 style="margin-bottom: 8px;">Génération en cours...</h2>
+            <p class="esono-text-muted" style="margin-bottom: 24px;">
+              L'IA analyse vos données et génère le livrable. Cette opération peut prendre quelques instants.
+            </p>
+            <div class="esono-progress" style="max-width: 400px; margin: 0 auto 24px;">
+              <div class="esono-progress__bar" style="width: 0%; animation: progressAnim 8s ease-in-out forwards;"></div>
+            </div>
+            <p class="esono-text-sm esono-text-muted">
+              <i class="fas fa-spinner fa-spin"></i> Traitement des données de {definition.dependencies.length} module(s) source...
+            </p>
+            <div style="margin-top: 32px;">
+              <a href={`/module/${moduleCode}/download`} class="esono-btn esono-btn--primary">
+                <i class="fas fa-download"></i> Accéder aux livrables
+              </a>
+            </div>
+          </div>
+        </section>
+      </div>
+    )
+
+    return c.html(
+      renderEsanoLayout({
+        pageTitle: `Génération — ${definition.title}`,
+        pageDescription: 'Traitement IA en cours...',
+        activeNav: 'dashboard',
+        content: pageContent,
+        extraScripts: `
+          @keyframes progressAnim {
+            0% { width: 0%; }
+            50% { width: 65%; }
+            80% { width: 88%; }
+            100% { width: 100%; }
+          }
+        `
+      })
+    )
+  } catch (error) {
+    console.error('Module generate error:', error)
+    return c.redirect('/dashboard')
+  }
+})
+
+// Page Livrables centralisée
+app.get('/livrables', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.redirect('/login')
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.redirect('/login')
+
+    const data = await getUserWithProgress(c.env.DB, payload.userId)
+    if (!data) return c.redirect('/login')
+
+    const { user, modules: dbModules, progress } = data
+    const progressList = (progress as any[]) ?? []
+    const dbModulesList = (dbModules as any[]) ?? []
+
+    const completedCodes = new Set<string>()
+    for (const entry of progressList) {
+      if (entry?.status === 'completed' || entry?.status === 'validated') {
+        const dbMod = dbModulesList.find((m: any) => m.id === entry.module_id)
+        if (dbMod?.module_code) completedCodes.add(dbMod.module_code as string)
+      }
+    }
+
+    const allDeliverables = getAllDeliverables()
+
+    const headerActions = (
+      <div class="esono-header-actions">
+        <a href="/dashboard" class="esono-btn esono-btn--ghost">
+          <i class="fas fa-arrow-left"></i> Retour au tableau de bord
+        </a>
+      </div>
+    )
+
+    const pageContent = (
+      <div class="esono-dashboard-stack">
+        <section class="esono-card">
+          <div class="esono-card__header">
+            <h2 class="esono-card__title">
+              <i class="fas fa-folder-open esono-card__title-icon"></i>
+              Tous les livrables
+            </h2>
+            <span class="esono-badge esono-badge--info">
+              {allDeliverables.reduce((acc, d) => acc + d.outputs.length, 0)} fichiers
+            </span>
+          </div>
+          <div class="esono-card__body">
+            <p class="esono-text-muted" style="margin-bottom: 20px;">
+              Les livrables sont générés module par module. Complétez les modules hybrides (1-3) pour débloquer la génération des modules automatiques (4-8).
+            </p>
+
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+              {allDeliverables.map((d) => {
+                const isGenerated = completedCodes.has(d.moduleCode)
+                const definition = getLearningModuleDefinition(d.moduleCode)
+                return (
+                  <div key={`liv-${d.moduleCode}`} style={`padding: 16px; border: 1px solid ${isGenerated ? 'rgba(5,150,105,0.3)' : 'rgba(0,0,0,0.1)'}; border-radius: 12px; background: ${isGenerated ? 'rgba(5,150,105,0.03)' : 'white'};`}>
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+                      <div style="display: flex; align-items: center; gap: 10px;">
+                        <div style={`width: 32px; height: 32px; border-radius: 8px; background: ${definition?.color ?? '#666'}; color: white; display: flex; align-items: center; justify-content: center; font-size: 0.8em;`}>
+                          <i class={definition?.icon ?? 'fas fa-file'}></i>
+                        </div>
+                        <div>
+                          <strong style="font-size: 0.95em;">Module {d.moduleNumber} — {d.moduleTitle}</strong>
+                          <br />
+                          <span class="esono-text-xs esono-text-muted">
+                            {definition?.category === 'hybrid' ? 'Module hybride' : 'Module automatique'}
+                          </span>
+                        </div>
+                      </div>
+                      <span class={isGenerated ? 'esono-badge esono-badge--success' : 'esono-badge esono-badge--neutral'}>
+                        <i class={isGenerated ? 'fas fa-check-circle' : 'fas fa-hourglass-half'}></i>
+                        {isGenerated ? 'Généré' : 'En attente'}
+                      </span>
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                      {d.outputs.map((output, i) => (
+                        <div key={`out-${i}`} style={`padding: 8px 12px; border: 1px solid rgba(0,0,0,0.08); border-radius: 8px; display: flex; align-items: center; gap: 8px; background: ${isGenerated ? 'white' : '#fafafa'};`}>
+                          <span style="padding: 2px 8px; background: rgba(124,58,237,0.1); color: #7c3aed; border-radius: 4px; font-size: 0.75em; font-weight: 600;">
+                            {output.format.toUpperCase()}
+                          </span>
+                          <span style="font-size: 0.8em; color: #555;">{output.description}</span>
+                          {isGenerated && (
+                            <button class="esono-btn esono-btn--ghost" style="padding: 2px 8px; font-size: 0.75em;">
+                              <i class="fas fa-download"></i>
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </section>
+      </div>
+    )
+
+    return c.html(
+      renderEsanoLayout({
+        pageTitle: 'Livrables',
+        pageDescription: 'Téléchargez vos livrables générés',
+        activeNav: 'livrables',
+        content: pageContent,
+        headerActions
+      })
+    )
+  } catch (error) {
+    console.error('Livrables page error:', error)
+    return c.redirect('/dashboard')
+  }
 })
 
 // API: Save quiz results
@@ -955,6 +2319,1253 @@ app.post('/api/module/submit-answers', async (c) => {
   }
 })
 
+// Activity report APIs (Phase 1 bis)
+app.get('/api/activity-report/inputs', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const moduleQuery = c.req.query('module')?.trim()
+    const moduleCode = moduleQuery && moduleQuery.length ? moduleQuery : 'step1_activity_report'
+
+    if (!ACTIVITY_REPORT_ALLOWED_MODULES.has(moduleCode)) {
+      return c.json({ error: 'Module non supporté par cette API.' }, 400)
+    }
+
+    const module = await c.env.DB.prepare(`
+      SELECT id, module_code, title, description
+      FROM modules
+      WHERE module_code = ?
+      LIMIT 1
+    `).bind(moduleCode).first()
+
+    if (!module) {
+      return c.json({ error: 'Module introuvable' }, 404)
+    }
+
+    const moduleId = Number(module.id)
+    if (Number.isNaN(moduleId)) {
+      return c.json({ error: 'Module invalide' }, 400)
+    }
+
+    const progress = await ensureProgressRecord(c.env.DB, payload.userId, moduleId)
+    const inputs = await getActivityReportInputsRow(c.env.DB, payload.userId, moduleId)
+
+    return c.json({
+      success: true,
+      module: {
+        code: module.module_code,
+        title: module.title,
+        description: module.description
+      },
+      progress,
+      inputs
+    })
+  } catch (error) {
+    console.error('Activity report inputs fetch error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+app.post('/api/activity-report/inputs', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const body = await c.req.json().catch(() => ({})) as Record<string, unknown>
+    const moduleCodeRaw = typeof body.moduleCode === 'string' ? body.moduleCode : (typeof body.module_code === 'string' ? body.module_code : null)
+    const moduleCode = moduleCodeRaw && moduleCodeRaw.trim().length ? moduleCodeRaw.trim() : 'step1_activity_report'
+
+    if (!ACTIVITY_REPORT_ALLOWED_MODULES.has(moduleCode)) {
+      return c.json({ error: 'Module non supporté par cette API.' }, 400)
+    }
+
+    const rawPayload = (body.payload ?? body.data ?? body.inputs ?? {}) as Record<string, unknown>
+    const sanitized = sanitizeActivityReportPayload(rawPayload)
+
+    if (Object.keys(sanitized).length === 0) {
+      return c.json({ error: 'Aucune donnée à enregistrer' }, 400)
+    }
+
+    const module = await c.env.DB.prepare(`
+      SELECT id, module_code, title
+      FROM modules
+      WHERE module_code = ?
+      LIMIT 1
+    `).bind(moduleCode).first()
+
+    if (!module) {
+      return c.json({ error: 'Module introuvable' }, 404)
+    }
+
+    const moduleId = Number(module.id)
+    if (Number.isNaN(moduleId)) {
+      return c.json({ error: 'Module invalide' }, 400)
+    }
+
+    const progress = await ensureProgressRecord(c.env.DB, payload.userId, moduleId)
+    const existing = await getActivityReportInputsRow(c.env.DB, payload.userId, moduleId)
+
+    const columns = Object.keys(sanitized)
+
+    if (existing?.id) {
+      const assignments = columns.map((column) => `${column} = ?`).join(', ')
+      const values = columns.map((column) => (sanitized as Record<string, unknown>)[column])
+      await c.env.DB.prepare(`
+        UPDATE activity_report_inputs
+        SET ${assignments}, project_id = ?, progress_id = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).bind(...values, progress.project_id ?? null, progress.id, existing.id).run()
+    } else {
+      const baseColumns = ['user_id', 'project_id', 'module_id', 'progress_id']
+      const allColumns = [...baseColumns, ...columns]
+      const placeholders = allColumns.map(() => '?').join(', ')
+      const values = [
+        payload.userId,
+        progress.project_id ?? null,
+        moduleId,
+        progress.id,
+        ...columns.map((column) => (sanitized as Record<string, unknown>)[column])
+      ]
+
+      await c.env.DB.prepare(`
+        INSERT INTO activity_report_inputs (${allColumns.join(', ')})
+        VALUES (${placeholders})
+      `).bind(...values).run()
+    }
+
+    await c.env.DB.prepare(`
+      UPDATE progress
+      SET status = CASE WHEN status = 'not_started' THEN 'in_progress' ELSE status END,
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(progress.id).run()
+
+    const refreshed = await getActivityReportInputsRow(c.env.DB, payload.userId, moduleId)
+
+    return c.json({
+      success: true,
+      inputs: refreshed
+    })
+  } catch (error) {
+    console.error('Activity report inputs save error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+app.post('/api/activity-report/analyze', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const body = await c.req.json().catch(() => ({})) as { moduleCode?: string; analysisType?: string }
+    const moduleCode = body?.moduleCode?.trim() || 'step1_activity_report'
+
+    if (!ACTIVITY_REPORT_ALLOWED_MODULES.has(moduleCode)) {
+      return c.json({ error: 'Module non supporté par cette API.' }, 400)
+    }
+
+    const module = await c.env.DB.prepare(`
+      SELECT id, module_code, title
+      FROM modules
+      WHERE module_code = ?
+      LIMIT 1
+    `).bind(moduleCode).first()
+
+    if (!module) {
+      return c.json({ error: 'Module introuvable' }, 404)
+    }
+
+    const moduleId = Number(module.id)
+    if (Number.isNaN(moduleId)) {
+      return c.json({ error: 'Module invalide' }, 400)
+    }
+
+    const progress = await ensureProgressRecord(c.env.DB, payload.userId, moduleId)
+    const inputs = await getActivityReportInputsRow(c.env.DB, payload.userId, moduleId)
+
+    if (!inputs) {
+      return c.json({ error: 'Veuillez compléter le formulaire avant de lancer l’analyse.' }, 400)
+    }
+
+    const analysis = analyseActivityReportNarrative(inputs)
+    const nowIso = new Date().toISOString()
+    const summaryPayload = buildActivityReportSummaryPayload(analysis, nowIso)
+
+    await c.env.DB.prepare(`
+      INSERT INTO activity_report_analysis_logs (progress_id, analysis_type, overall_score, clarity_score, realism_score, precision_score, summary_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(progress.id, body?.analysisType ?? 'auto', analysis.overallScore, analysis.clarityScore, analysis.realismScore, analysis.precisionScore, JSON.stringify(summaryPayload)).run()
+
+    await c.env.DB.prepare(`
+      UPDATE progress
+      SET ai_score = ?,
+          ai_feedback_json = ?,
+          narrative_last_refresh = datetime('now'),
+          ai_last_analysis = datetime('now'),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(analysis.overallScore, JSON.stringify(summaryPayload), progress.id).run()
+
+    const summaryText = `Analyse IA du ${new Date(nowIso).toLocaleDateString('fr-FR')}  · Score ${analysis.overallScore}%`
+
+    await c.env.DB.prepare(`
+      UPDATE deliverables
+      SET status = 'draft',
+          summary = ?,
+          ai_score = ?
+      WHERE user_id = ? AND module_id = ? AND deliverable_type = 'activity_report'
+    `).bind(summaryText, analysis.overallScore, payload.userId, moduleId).run()
+
+    return c.json({
+      success: true,
+      analysis,
+      summary: summaryPayload
+    })
+  } catch (error) {
+    console.error('Activity report analysis error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+app.get('/api/activity-report/deliverable', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const moduleQuery = c.req.query('module')?.trim()
+    const moduleCode = moduleQuery && moduleQuery.length ? moduleQuery : 'step1_activity_report'
+
+    if (!ACTIVITY_REPORT_ALLOWED_MODULES.has(moduleCode)) {
+      return c.json({ error: 'Module non supporté par cette API.' }, 400)
+    }
+
+    const module = await c.env.DB.prepare(`
+      SELECT id, module_code, title
+      FROM modules
+      WHERE module_code = ?
+      LIMIT 1
+    `).bind(moduleCode).first()
+
+    if (!module) {
+      return c.json({ error: 'Module introuvable' }, 404)
+    }
+
+    const moduleId = Number(module.id)
+    if (Number.isNaN(moduleId)) {
+      return c.json({ error: 'Module invalide' }, 400)
+    }
+
+    const progress = await ensureProgressRecord(c.env.DB, payload.userId, moduleId)
+
+    const deliverable = await c.env.DB.prepare(`
+      SELECT id, title, summary, ai_score, content_json, status, validated_at, coach_comment
+      FROM deliverables
+      WHERE user_id = ? AND module_id = ? AND deliverable_type = 'activity_report'
+      ORDER BY id DESC
+      LIMIT 1
+    `).bind(payload.userId, moduleId).first()
+
+    let content: any = null
+    if (deliverable?.content_json) {
+      try {
+        content = JSON.parse(deliverable.content_json as string)
+      } catch (error) {
+        console.warn('Impossible de parser le contenu du livrable activité', error)
+      }
+    }
+
+    const analysisHistory = await c.env.DB.prepare(`
+      SELECT overall_score, clarity_score, realism_score, precision_score, summary_json, created_at
+      FROM activity_report_analysis_logs
+      WHERE progress_id = ?
+      ORDER BY created_at DESC
+      LIMIT 5
+    `).bind(progress.id).all()
+
+    return c.json({
+      success: true,
+      deliverable: deliverable
+        ? {
+            id: deliverable.id,
+            title: deliverable.title,
+            summary: deliverable.summary,
+            ai_score: deliverable.ai_score,
+            status: deliverable.status,
+            validated_at: deliverable.validated_at,
+            coach_comment: deliverable.coach_comment,
+            content
+          }
+        : null,
+      analysisHistory: Array.isArray(analysisHistory.results) ? analysisHistory.results : []
+    })
+  } catch (error) {
+    console.error('Activity report deliverable fetch error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+app.post('/api/activity-report/deliverable', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const body = await c.req.json().catch(() => ({})) as { moduleCode?: string }
+    const moduleCode = body?.moduleCode?.trim() || 'step1_activity_report'
+
+    if (!ACTIVITY_REPORT_ALLOWED_MODULES.has(moduleCode)) {
+      return c.json({ error: 'Module non supporté par cette API.' }, 400)
+    }
+
+    const module = await c.env.DB.prepare(`
+      SELECT id, module_code, title
+      FROM modules
+      WHERE module_code = ?
+      LIMIT 1
+    `).bind(moduleCode).first()
+
+    if (!module) {
+      return c.json({ error: 'Module introuvable' }, 404)
+    }
+
+    const moduleId = Number(module.id)
+    if (Number.isNaN(moduleId)) {
+      return c.json({ error: 'Module invalide' }, 400)
+    }
+
+    const progressRow = await c.env.DB.prepare(`
+      SELECT id, project_id, ai_score, ai_feedback_json, narrative_last_refresh
+      FROM progress
+      WHERE user_id = ? AND module_id = ?
+      LIMIT 1
+    `).bind(payload.userId, moduleId).first()
+
+    if (!progressRow?.id) {
+      return c.json({ error: 'Progress non trouvé' }, 404)
+    }
+
+    const progressId = Number(progressRow.id)
+    const inputs = await getActivityReportInputsRow(c.env.DB, payload.userId, moduleId)
+
+    if (!inputs) {
+      return c.json({ error: 'Aucune donnée enregistrée pour générer le livrable.' }, 400)
+    }
+
+    let summaryPayload: any = null
+    if (progressRow.ai_feedback_json) {
+      try {
+        summaryPayload = JSON.parse(progressRow.ai_feedback_json as string)
+      } catch (error) {
+        console.warn('Impossible de parser le résumé IA existant', error)
+      }
+    }
+
+    let analysis = summaryPayload && summaryPayload?.dimensions
+      ? {
+          clarityScore: summaryPayload.dimensions?.clarity?.score ?? 0,
+          realismScore: summaryPayload.dimensions?.realism?.score ?? 0,
+          precisionScore: summaryPayload.dimensions?.precision?.score ?? 0,
+          overallScore: summaryPayload.overallScore ?? 0,
+          strengths: Array.isArray(summaryPayload.strengths) ? summaryPayload.strengths : [],
+          improvements: Array.isArray(summaryPayload.improvements) ? summaryPayload.improvements : [],
+          missingSections: Array.isArray(summaryPayload.missingSections) ? summaryPayload.missingSections : []
+        } as ActivityReportAnalysisResult
+      : null
+
+    if (!analysis) {
+      const freshAnalysis = analyseActivityReportNarrative(inputs)
+      const nowIso = new Date().toISOString()
+      summaryPayload = buildActivityReportSummaryPayload(freshAnalysis, nowIso)
+      analysis = freshAnalysis
+
+      await c.env.DB.prepare(`
+        INSERT INTO activity_report_analysis_logs (progress_id, analysis_type, overall_score, clarity_score, realism_score, precision_score, summary_json)
+        VALUES (?, 'auto', ?, ?, ?, ?, ?)
+      `).bind(progressId, freshAnalysis.overallScore, freshAnalysis.clarityScore, freshAnalysis.realismScore, freshAnalysis.precisionScore, JSON.stringify(summaryPayload)).run()
+
+      await c.env.DB.prepare(`
+        UPDATE progress
+        SET ai_score = ?,
+            ai_feedback_json = ?,
+            narrative_last_refresh = datetime('now'),
+            ai_last_analysis = datetime('now'),
+            updated_at = datetime('now')
+        WHERE id = ?
+      `).bind(freshAnalysis.overallScore, JSON.stringify(summaryPayload), progressId).run()
+    }
+
+    const nowIso = new Date().toISOString()
+    const deliverableUrl = `/module/${moduleCode}/download`
+
+    const deliverableContent = {
+      moduleCode,
+      generatedAt: nowIso,
+      summary: summaryPayload,
+      sections: ACTIVITY_REPORT_TEXT_FIELDS.reduce((acc, key) => {
+        acc[key] = inputs[key] ?? null
+        return acc
+      }, {} as Record<ActivityReportFieldKey, string | null>),
+      strengths: analysis.strengths,
+      improvements: analysis.improvements,
+      missingSections: analysis.missingSections
+    }
+
+    const summaryText = `Rapport généré le ${new Date(nowIso).toLocaleDateString('fr-FR')}  · Score ${analysis.overallScore}%`
+
+    const existingDeliverable = await c.env.DB.prepare(`
+      SELECT id
+      FROM deliverables
+      WHERE user_id = ? AND module_id = ? AND deliverable_type = 'activity_report'
+      LIMIT 1
+    `).bind(payload.userId, moduleId).first()
+
+    if (existingDeliverable?.id) {
+      await c.env.DB.prepare(`
+        UPDATE deliverables
+        SET title = ?,
+            file_url = ?,
+            content_json = ?,
+            status = 'ready',
+            summary = ?,
+            ai_score = ?,
+            validated_at = datetime('now')
+        WHERE id = ?
+      `).bind(
+        `${module.title ?? "Rapport d'activité"} – Diagnostic narratif`,
+        deliverableUrl,
+        JSON.stringify(deliverableContent),
+        summaryText,
+        analysis.overallScore,
+        existingDeliverable.id
+      ).run()
+    } else {
+      await c.env.DB.prepare(`
+        INSERT INTO deliverables (
+          user_id,
+          project_id,
+          module_id,
+          deliverable_type,
+          title,
+          file_url,
+          content_json,
+          status,
+          summary,
+          ai_score,
+          coach_comment,
+          validated_at,
+          created_at
+        ) VALUES (?, ?, ?, 'activity_report', ?, ?, ?, 'ready', ?, ?, NULL, datetime('now'), datetime('now'))
+      `).bind(
+        payload.userId,
+        progressRow.project_id ?? null,
+        moduleId,
+        `${module.title ?? "Rapport d'activité"} – Diagnostic narratif`,
+        deliverableUrl,
+        JSON.stringify(deliverableContent),
+        summaryText,
+        analysis.overallScore
+      ).run()
+    }
+
+    await c.env.DB.prepare(`
+      UPDATE progress
+      SET narrative_last_refresh = datetime('now'),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(progressId).run()
+
+    return c.json({
+      success: true,
+      deliverable: {
+        title: `${module.title ?? "Rapport d'activité"} – Diagnostic narratif`,
+        summary: summaryText,
+        ai_score: analysis.overallScore,
+        content: deliverableContent,
+        url: deliverableUrl
+      }
+    })
+  } catch (error) {
+    console.error('Activity report deliverable generation error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+// Finance APIs (Phase 2)
+app.get('/api/finance/inputs', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const moduleCode = c.req.query('module')?.trim() || 'step2_financial_analysis'
+
+    const module = await c.env.DB.prepare(`
+      SELECT id, module_code, title, description
+      FROM modules
+      WHERE module_code = ?
+      LIMIT 1
+    `).bind(moduleCode).first()
+
+    if (!module) {
+      return c.json({ error: 'Module financier introuvable' }, 404)
+    }
+
+    if (getModuleVariant(module.module_code as string) !== 'finance') {
+      return c.json({ error: 'Ce module ne correspond pas à la phase financière.' }, 400)
+    }
+
+    const progress = await ensureProgressRecord(c.env.DB, payload.userId, Number(module.id))
+    const inputs = await getFinancialInputsRow(c.env.DB, payload.userId, Number(module.id))
+
+    return c.json({
+      success: true,
+      module: {
+        code: module.module_code,
+        title: module.title,
+        description: module.description
+      },
+      progress,
+      inputs
+    })
+  } catch (error) {
+    console.error('Finance inputs fetch error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+app.post('/api/finance/inputs', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const body = await c.req.json().catch(() => ({})) as Record<string, unknown>
+    const moduleCode = (typeof body.moduleCode === 'string' && body.moduleCode.trim().length)
+      ? body.moduleCode.trim()
+      : (typeof body.module_code === 'string' && body.module_code.trim().length)
+        ? body.module_code.trim()
+        : 'step2_financial_analysis'
+
+    const rawData = (body.payload ?? body.data ?? body.inputs ?? {}) as Record<string, unknown>
+    const sanitized = sanitizeFinancialPayload(rawData)
+
+    if (Object.keys(sanitized).length === 0) {
+      return c.json({ error: 'Aucune donnée à enregistrer' }, 400)
+    }
+
+    const module = await c.env.DB.prepare(`
+      SELECT id, module_code, title
+      FROM modules
+      WHERE module_code = ?
+      LIMIT 1
+    `).bind(moduleCode).first()
+
+    if (!module) {
+      return c.json({ error: 'Module financier introuvable' }, 404)
+    }
+
+    if (getModuleVariant(module.module_code as string) !== 'finance') {
+      return c.json({ error: 'Ce module ne correspond pas à la phase financière.' }, 400)
+    }
+
+    const progress = await ensureProgressRecord(c.env.DB, payload.userId, Number(module.id))
+    const existing = await getFinancialInputsRow(c.env.DB, payload.userId, Number(module.id))
+
+    if (existing?.id) {
+      const columns = Object.keys(sanitized)
+      if (columns.length > 0) {
+        const assignments = columns.map((column) => `${column} = ?`).join(', ')
+        const values = columns.map((column) => (sanitized as Record<string, unknown>)[column])
+        await c.env.DB.prepare(`
+          UPDATE financial_inputs
+          SET ${assignments}, updated_at = datetime('now')
+          WHERE id = ?
+        `).bind(...values, existing.id).run()
+      }
+    } else {
+      const columns = Object.keys(sanitized)
+      const baseColumns = ['user_id', 'project_id', 'module_id', 'progress_id']
+      const allColumns = [...baseColumns, ...columns]
+      const placeholders = allColumns.map(() => '?').join(', ')
+      const values = [
+        payload.userId,
+        progress.project_id ?? null,
+        Number(module.id),
+        progress.id,
+        ...columns.map((column) => (sanitized as Record<string, unknown>)[column])
+      ]
+
+      await c.env.DB.prepare(`
+        INSERT INTO financial_inputs (${allColumns.join(', ')})
+        VALUES (${placeholders})
+      `).bind(...values).run()
+    }
+
+    await c.env.DB.prepare(`
+      UPDATE progress
+      SET status = CASE WHEN status = 'not_started' THEN 'in_progress' ELSE status END,
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(progress.id).run()
+
+    const refreshedInputs = await getFinancialInputsRow(c.env.DB, payload.userId, Number(module.id))
+
+    return c.json({
+      success: true,
+      module: {
+        code: module.module_code,
+        title: module.title
+      },
+      inputs: refreshedInputs
+    })
+  } catch (error) {
+    console.error('Finance inputs save error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+app.post('/api/finance/analyze', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const body = await c.req.json().catch(() => ({})) as Record<string, unknown>
+    const moduleCode = (typeof body.moduleCode === 'string' && body.moduleCode.trim().length)
+      ? body.moduleCode.trim()
+      : 'step2_financial_analysis'
+
+    const module = await c.env.DB.prepare(`
+      SELECT id, module_code, title
+      FROM modules
+      WHERE module_code = ?
+      LIMIT 1
+    `).bind(moduleCode).first()
+
+    if (!module) {
+      return c.json({ error: 'Module financier introuvable' }, 404)
+    }
+
+    if (getModuleVariant(module.module_code as string) !== 'finance') {
+      return c.json({ error: 'Ce module ne correspond pas à la phase financière.' }, 400)
+    }
+
+    const progress = await ensureProgressRecord(c.env.DB, payload.userId, Number(module.id))
+    const inputs = await getFinancialInputsRow(c.env.DB, payload.userId, Number(module.id))
+
+    if (!inputs) {
+      return c.json({ error: 'Veuillez d’abord remplir vos données financières (étape B3).' }, 400)
+    }
+
+    const analysis = calculateFinancialMetrics(inputs)
+
+    await c.env.DB.prepare(`
+      DELETE FROM financial_metrics WHERE progress_id = ?
+    `).bind(progress.id).run()
+
+    for (const metric of analysis.metrics) {
+      await c.env.DB.prepare(`
+        INSERT INTO financial_metrics (progress_id, metric_code, metric_label, value, status, explanation)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).bind(
+        progress.id,
+        metric.code,
+        metric.label,
+        metric.value,
+        metric.status,
+        metric.explanation
+      ).run()
+    }
+
+    await c.env.DB.prepare(`
+      INSERT INTO financial_analysis_logs (progress_id, analysis_type, overall_score, summary_json)
+      VALUES (?, ?, ?, ?)
+    `).bind(
+      progress.id,
+      body?.analysisType ?? 'auto',
+      analysis.overallScore,
+      JSON.stringify({ ...analysis.summary, overallScore: analysis.overallScore })
+    ).run()
+
+    await c.env.DB.prepare(`
+      UPDATE progress
+      SET financial_score = ?,
+          financial_summary_json = ?,
+          financial_last_refresh = datetime('now'),
+          ai_score = ?,
+          ai_last_analysis = datetime('now'),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(
+      analysis.overallScore,
+      JSON.stringify(analysis.summary),
+      analysis.overallScore,
+      progress.id
+    ).run()
+
+    await c.env.DB.prepare(`
+      UPDATE deliverables
+      SET status = 'draft'
+      WHERE user_id = ? AND module_id = ? AND deliverable_type = 'report'
+    `).bind(payload.userId, module.id).run()
+
+    return c.json({
+      success: true,
+      analysis,
+      module: {
+        code: module.module_code,
+        title: module.title
+      }
+    })
+  } catch (error) {
+    console.error('Finance analysis error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+app.post('/api/finance/validate', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const body = await c.req.json().catch(() => ({})) as { moduleCode?: string; comment?: string }
+    const moduleCode = body?.moduleCode?.trim() || 'step2_financial_analysis'
+
+    const module = await c.env.DB.prepare(`
+      SELECT id, module_code, title
+      FROM modules
+      WHERE module_code = ?
+      LIMIT 1
+    `).bind(moduleCode).first()
+
+    if (!module) {
+      return c.json({ error: 'Module financier introuvable' }, 404)
+    }
+
+    if (getModuleVariant(module.module_code as string) !== 'finance') {
+      return c.json({ error: 'Ce module ne correspond pas à la phase financière.' }, 400)
+    }
+
+    const progressRow = await c.env.DB.prepare(`
+      SELECT id, project_id, financial_score, financial_summary_json, financial_last_refresh,
+             quiz_passed, quiz_score, status
+      FROM progress
+      WHERE user_id = ? AND module_id = ?
+      LIMIT 1
+    `).bind(payload.userId, module.id).first()
+
+    if (!progressRow?.id) {
+      return c.json({ error: 'Progress non trouvé' }, 404)
+    }
+
+    const progress = {
+      id: Number(progressRow.id),
+      project_id: progressRow.project_id !== undefined && progressRow.project_id !== null ? Number(progressRow.project_id) : null,
+      financial_score: typeof progressRow.financial_score === 'number' ? Number(progressRow.financial_score) : null,
+      financial_summary_json: typeof progressRow.financial_summary_json === 'string' ? progressRow.financial_summary_json : null,
+      financial_last_refresh: progressRow.financial_last_refresh as string | null,
+      quiz_passed: Number(progressRow.quiz_passed ?? 0) === 1,
+      quiz_score: typeof progressRow.quiz_score === 'number' ? Number(progressRow.quiz_score) : null,
+      status: typeof progressRow.status === 'string' ? progressRow.status : 'in_progress'
+    }
+
+    const inputs = await getFinancialInputsRow(c.env.DB, payload.userId, Number(module.id))
+    if (!inputs) {
+      return c.json({ error: 'Veuillez d’abord compléter vos données financières (étape B3).' }, 400)
+    }
+
+    const metricsRes = await c.env.DB.prepare(`
+      SELECT metric_code, metric_label, value, status, explanation
+      FROM financial_metrics
+      WHERE progress_id = ?
+    `).bind(progress.id).all()
+
+    const metrics = Array.isArray(metricsRes.results) ? metricsRes.results as any[] : []
+    if (metrics.length === 0) {
+      return c.json({ error: 'Aucune analyse trouvée. Relancez l’étape B4 avant de valider.' }, 400)
+    }
+
+    const overallScore = progress.financial_score ?? Math.round(
+      metrics.reduce((acc, metric: any) => acc + FINANCIAL_METRIC_SCORES[(metric.status as FinancialMetricStatus) ?? 'critical'], 0) / metrics.length
+    )
+
+    const summary = progress.financial_summary_json
+      ? JSON.parse(progress.financial_summary_json)
+      : {
+          highlights: metrics.filter((metric: any) => metric.status === 'ok').map((metric: any) => `${metric.metric_label} : ${formatNumber(metric.value ?? null)}`),
+          warnings: metrics.filter((metric: any) => metric.status === 'attention').map((metric: any) => `${metric.metric_label} à surveiller`),
+          risks: metrics.filter((metric: any) => metric.status === 'critical').map((metric: any) => `${metric.metric_label} critique`)
+        }
+
+    const quizPassed = progress.quiz_passed
+    const blockingReasons: string[] = []
+
+    if (!quizPassed) {
+      blockingReasons.push('Le quiz de l’étape B2 doit être réussi avec un score d’au moins 80 %.')
+    }
+
+    if (!isFinancialAnalysisFresh(progress.financial_last_refresh)) {
+      blockingReasons.push('L’analyse IA doit dater de moins de 7 jours. Relancez B4 pour rafraîchir les données.')
+    }
+
+    if (overallScore < FINANCE_VALIDATION_SCORE) {
+      blockingReasons.push(`Le score financier doit atteindre au moins ${FINANCE_VALIDATION_SCORE} % (score actuel : ${overallScore} %).`)
+    }
+
+    const requiredFields: Array<{ key: keyof FinancialInputsRecord; label: string }> = [
+      { key: 'revenue_total', label: 'Chiffre d’affaires' },
+      { key: 'ebitda', label: 'EBITDA' },
+      { key: 'cash_on_hand', label: 'Trésorerie disponible' },
+      { key: 'runway_months', label: 'Runway' }
+    ]
+
+    requiredFields.forEach((field) => {
+      const value = inputs[field.key]
+      if (value === null || value === undefined) {
+        blockingReasons.push(`${field.label} doit être renseigné pour valider le diagnostic.`)
+      }
+    })
+
+    if (blockingReasons.length > 0) {
+      return c.json({ error: 'Conditions de validation non remplies', blockingReasons }, 400)
+    }
+
+    const nowIso = new Date().toISOString()
+    const deliverableUrl = `/module/${moduleCode}/download`
+
+    await c.env.DB.prepare(`
+      UPDATE progress
+      SET status = 'validated',
+          validated_at = datetime('now'),
+          completed_at = COALESCE(completed_at, datetime('now')),
+          updated_at = datetime('now'),
+          financial_score = ?,
+          financial_summary_json = ?,
+          financial_last_refresh = COALESCE(financial_last_refresh, datetime('now')),
+          ai_score = ?
+      WHERE id = ?
+    `).bind(
+      overallScore,
+      JSON.stringify(summary),
+      overallScore,
+      progress.id
+    ).run()
+
+    const deliverableContent = {
+      moduleCode,
+      generatedAt: nowIso,
+      overallScore,
+      summary,
+      metrics: metrics.map((metric: any) => ({
+        code: metric.metric_code,
+        label: metric.metric_label,
+        value: metric.value,
+        status: metric.status,
+        explanation: metric.explanation
+      })),
+      inputs: {
+        period: inputs.period_label,
+        currency: inputs.currency ?? 'XOF',
+        revenue: inputs.revenue_total,
+        ebitda: inputs.ebitda,
+        netIncome: inputs.net_income,
+        cashOnHand: inputs.cash_on_hand,
+        runwayMonths: inputs.runway_months,
+        debtService: inputs.debt_service
+      }
+    }
+
+    const summaryText = `Diagnostic validé le ${new Date(nowIso).toLocaleDateString('fr-FR')} · Score financier ${overallScore}%`
+    const kpiSummary = metrics.map((metric: any) => ({
+      code: metric.metric_code,
+      label: metric.metric_label,
+      value: metric.value,
+      status: metric.status
+    }))
+
+    const existingDeliverable = await c.env.DB.prepare(`
+      SELECT id
+      FROM deliverables
+      WHERE user_id = ? AND module_id = ? AND deliverable_type = 'report'
+      LIMIT 1
+    `).bind(payload.userId, module.id).first()
+
+    if (existingDeliverable?.id) {
+      await c.env.DB.prepare(`
+        UPDATE deliverables
+        SET title = ?,
+            file_url = ?,
+            content_json = ?,
+            status = 'ready',
+            summary = ?,
+            ai_score = ?,
+            coach_comment = ?,
+            validated_at = datetime('now'),
+            period_covered = ?,
+            currency = ?,
+            kpi_summary_json = ?
+        WHERE id = ?
+      `).bind(
+        `${module.title ?? 'Analyse financière'} - Diagnostic validé`,
+        deliverableUrl,
+        JSON.stringify(deliverableContent),
+        summaryText,
+        overallScore,
+        body.comment ?? null,
+        inputs.period_label ?? null,
+        inputs.currency ?? 'XOF',
+        JSON.stringify(kpiSummary),
+        existingDeliverable.id
+      ).run()
+    } else {
+      await c.env.DB.prepare(`
+        INSERT INTO deliverables (
+          user_id,
+          project_id,
+          module_id,
+          deliverable_type,
+          title,
+          file_url,
+          content_json,
+          status,
+          summary,
+          ai_score,
+          coach_comment,
+          validated_at,
+          created_at,
+          period_covered,
+          currency,
+          kpi_summary_json
+        ) VALUES (?, ?, ?, 'report', ?, ?, ?, 'ready', ?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?)
+      `).bind(
+        payload.userId,
+        progress.project_id ?? null,
+        module.id,
+        `${module.title ?? 'Analyse financière'} - Diagnostic validé`,
+        deliverableUrl,
+        JSON.stringify(deliverableContent),
+        summaryText,
+        overallScore,
+        body.comment ?? null,
+        inputs.period_label ?? null,
+        inputs.currency ?? 'XOF',
+        JSON.stringify(kpiSummary)
+      ).run()
+    }
+
+    return c.json({
+      success: true,
+      validatedAt: nowIso,
+      score: overallScore,
+      deliverableUrl
+    })
+  } catch (error) {
+    console.error('Finance validation error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+app.get('/api/finance/deliverable', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const moduleCode = c.req.query('module')?.trim() || 'step2_financial_analysis'
+
+    const module = await c.env.DB.prepare(`
+      SELECT id, module_code, title
+      FROM modules
+      WHERE module_code = ?
+      LIMIT 1
+    `).bind(moduleCode).first()
+
+    if (!module) {
+      return c.json({ error: 'Module financier introuvable' }, 404)
+    }
+
+    if (getModuleVariant(module.module_code as string) !== 'finance') {
+      return c.json({ error: 'Ce module ne correspond pas à la phase financière.' }, 400)
+    }
+
+    const progress = await c.env.DB.prepare(`
+      SELECT id, status, financial_score, financial_summary_json, financial_last_refresh, validated_at
+      FROM progress
+      WHERE user_id = ? AND module_id = ?
+      LIMIT 1
+    `).bind(payload.userId, module.id).first()
+
+    if (!progress?.id) {
+      return c.json({ error: 'Progress non trouvé' }, 404)
+    }
+
+    if (progress.status !== 'validated') {
+      return c.json({ error: 'Diagnostic non validé', status: progress.status }, 409)
+    }
+
+    const deliverable = await c.env.DB.prepare(`
+      SELECT id, title, file_url, content_json, summary, ai_score, coach_comment, validated_at, status, period_covered, currency, kpi_summary_json
+      FROM deliverables
+      WHERE user_id = ? AND module_id = ? AND deliverable_type = 'report'
+      ORDER BY validated_at DESC, created_at DESC
+      LIMIT 1
+    `).bind(payload.userId, module.id).first()
+
+    const inputs = await getFinancialInputsRow(c.env.DB, payload.userId, module.id)
+    const metricsRes = await c.env.DB.prepare(`
+      SELECT metric_code, metric_label, value, status, explanation
+      FROM financial_metrics
+      WHERE progress_id = ?
+    `).bind(progress.id).all()
+    const metrics = Array.isArray(metricsRes.results) ? metricsRes.results as any[] : []
+
+    let content = null
+    if (deliverable?.content_json) {
+      try {
+        content = JSON.parse(deliverable.content_json as string)
+      } catch (error) {
+        console.warn('Impossible de parser le livrable financier', error)
+      }
+    }
+
+    return c.json({
+      success: true,
+      module: {
+        code: module.module_code,
+        title: module.title
+      },
+      progress: {
+        status: progress.status,
+        score: typeof progress.financial_score === 'number' ? Number(progress.financial_score) : null,
+        summary: progress.financial_summary_json ? JSON.parse(progress.financial_summary_json) : null,
+        lastRefresh: progress.financial_last_refresh,
+        validatedAt: progress.validated_at
+      },
+      deliverable: deliverable ? {
+        id: deliverable.id,
+        title: deliverable.title,
+        fileUrl: deliverable.file_url,
+        summary: deliverable.summary,
+        score: deliverable.ai_score,
+        coachComment: deliverable.coach_comment,
+        validatedAt: deliverable.validated_at,
+        status: deliverable.status,
+        period: deliverable.period_covered,
+        currency: deliverable.currency,
+        kpiSummary: deliverable.kpi_summary_json ? JSON.parse(deliverable.kpi_summary_json as string) : null
+      } : null,
+      metrics,
+      inputs,
+      content
+    })
+  } catch (error) {
+    console.error('Finance deliverable fetch error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+app.post('/api/finance/deliverable/refresh', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const body = await c.req.json().catch(() => ({})) as { moduleCode?: string }
+    const moduleCode = body?.moduleCode?.trim() || 'step2_financial_analysis'
+
+    const module = await c.env.DB.prepare(`
+      SELECT id, module_code, title
+      FROM modules
+      WHERE module_code = ?
+      LIMIT 1
+    `).bind(moduleCode).first()
+
+    if (!module) {
+      return c.json({ error: 'Module financier introuvable' }, 404)
+    }
+
+    if (getModuleVariant(module.module_code as string) !== 'finance') {
+      return c.json({ error: 'Ce module ne correspond pas à la phase financière.' }, 400)
+    }
+
+    const progressRow = await c.env.DB.prepare(`
+      SELECT id, financial_score, financial_summary_json, financial_last_refresh, status, project_id
+      FROM progress
+      WHERE user_id = ? AND module_id = ?
+      LIMIT 1
+    `).bind(payload.userId, module.id).first()
+
+    if (!progressRow?.id) {
+      return c.json({ error: 'Progress non trouvé' }, 404)
+    }
+
+    if (progressRow.status !== 'validated') {
+      return c.json({ error: 'Le module doit être validé avant de régénérer le livrable.', status: progressRow.status }, 409)
+    }
+
+    const metricsRes = await c.env.DB.prepare(`
+      SELECT metric_code, metric_label, value, status, explanation
+      FROM financial_metrics
+      WHERE progress_id = ?
+    `).bind(progressRow.id).all()
+    const metrics = Array.isArray(metricsRes.results) ? metricsRes.results as any[] : []
+
+    if (metrics.length === 0) {
+      return c.json({ error: 'Aucune analyse existante. Relancez B4 avant la régénération.' }, 400)
+    }
+
+    const inputs = await getFinancialInputsRow(c.env.DB, payload.userId, module.id)
+    const summary = progressRow.financial_summary_json ? JSON.parse(progressRow.financial_summary_json) : null
+    const score = typeof progressRow.financial_score === 'number' ? Number(progressRow.financial_score) : null
+    const nowIso = new Date().toISOString()
+    const deliverableUrl = `/module/${moduleCode}/download`
+
+    const deliverableContent = {
+      moduleCode,
+      refreshedAt: nowIso,
+      summary,
+      overallScore: score,
+      metrics: metrics.map((metric: any) => ({
+        code: metric.metric_code,
+        label: metric.metric_label,
+        value: metric.value,
+        status: metric.status,
+        explanation: metric.explanation
+      })),
+      inputs: inputs ? {
+        period: inputs.period_label,
+        currency: inputs.currency ?? 'XOF',
+        revenue: inputs.revenue_total,
+        ebitda: inputs.ebitda,
+        netIncome: inputs.net_income,
+        cashOnHand: inputs.cash_on_hand,
+        runwayMonths: inputs.runway_months
+      } : null
+    }
+
+    const summaryText = score !== null
+      ? `Diagnostic régénéré le ${new Date(nowIso).toLocaleDateString('fr-FR')} · Score ${score}%`
+      : `Diagnostic régénéré le ${new Date(nowIso).toLocaleDateString('fr-FR')}`
+
+    const kpiSummary = metrics.map((metric: any) => ({
+      code: metric.metric_code,
+      label: metric.metric_label,
+      value: metric.value,
+      status: metric.status
+    }))
+
+    const deliverable = await c.env.DB.prepare(`
+      SELECT id
+      FROM deliverables
+      WHERE user_id = ? AND module_id = ? AND deliverable_type = 'report'
+      LIMIT 1
+    `).bind(payload.userId, module.id).first()
+
+    if (deliverable?.id) {
+      await c.env.DB.prepare(`
+        UPDATE deliverables
+        SET content_json = ?,
+            summary = ?,
+            validated_at = datetime('now'),
+            status = 'ready',
+            kpi_summary_json = ?,
+            period_covered = ?,
+            currency = ?,
+            ai_score = COALESCE(ai_score, ?),
+            file_url = ?
+        WHERE id = ?
+      `).bind(
+        JSON.stringify(deliverableContent),
+        summaryText,
+        JSON.stringify(kpiSummary),
+        inputs?.period_label ?? null,
+        inputs?.currency ?? 'XOF',
+        score,
+        deliverableUrl,
+        deliverable.id
+      ).run()
+    } else {
+      await c.env.DB.prepare(`
+        INSERT INTO deliverables (
+          user_id,
+          project_id,
+          module_id,
+          deliverable_type,
+          title,
+          file_url,
+          content_json,
+          status,
+          summary,
+          ai_score,
+          coach_comment,
+          validated_at,
+          created_at,
+          period_covered,
+          currency,
+          kpi_summary_json
+        ) VALUES (?, ?, ?, 'report', ?, ?, ?, 'ready', ?, ?, NULL, datetime('now'), datetime('now'), ?, ?, ?)
+      `).bind(
+        payload.userId,
+        progressRow.project_id ?? null,
+        module.id,
+        `${module.title ?? 'Analyse financière'} - Diagnostic régénéré`,
+        deliverableUrl,
+        JSON.stringify(deliverableContent),
+        summaryText,
+        score,
+        inputs?.period_label ?? null,
+        inputs?.currency ?? 'XOF',
+        JSON.stringify(kpiSummary)
+      ).run()
+    }
+
+    await c.env.DB.prepare(`
+      UPDATE progress
+      SET financial_last_refresh = datetime('now'),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(progressRow.id).run()
+
+    return c.json({
+      success: true,
+      refreshedAt: nowIso,
+      summary: summaryText,
+      score
+    })
+  } catch (error) {
+    console.error('Finance deliverable refresh error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
 // API: Save improved answer
 app.post('/api/module/improve-answer', async (c) => {
   try {
@@ -973,25 +3584,57 @@ app.post('/api/module/improve-answer', async (c) => {
     if (!module) return c.json({ error: 'Module non trouvé' }, 404)
 
     const progress = await c.env.DB.prepare(`
-      SELECT id FROM progress WHERE user_id = ? AND module_id = ?
+      SELECT id, status FROM progress WHERE user_id = ? AND module_id = ?
     `).bind(payload.userId, module.id).first()
 
     if (!progress) return c.json({ error: 'Progress non trouvé' }, 404)
 
-    // Update answer and increment iteration count
+    const question = await c.env.DB.prepare(`
+      SELECT id, user_response FROM questions
+      WHERE progress_id = ? AND question_number = ?
+    `).bind(progress.id, question_number).first()
+
+    if (!question) return c.json({ error: 'Question non trouvée' }, 404)
+
+    const previousResponse = (question.user_response as string | null) ?? ''
+    const normalizedPrevious = previousResponse.trim()
+    const normalizedNew = improved_answer.trim()
+
+    if (!normalizedNew.length) {
+      return c.json({ error: 'Réponse vide non autorisée' }, 400)
+    }
+
+    if (normalizedPrevious === normalizedNew) {
+      return c.json({ success: true, unchanged: true })
+    }
+
+    if (normalizedPrevious) {
+      await c.env.DB.prepare(`
+        INSERT INTO question_history (question_id, previous_response)
+        VALUES (?, ?)
+      `).bind(question.id, previousResponse).run()
+    }
+
     await c.env.DB.prepare(`
       UPDATE questions 
       SET user_response = ?, 
-          iteration_count = iteration_count + 1,
+          iteration_count = COALESCE(iteration_count, 0) + 1,
           updated_at = datetime('now')
-      WHERE progress_id = ? AND question_number = ?
-    `).bind(improved_answer, progress.id, question_number).run()
+      WHERE id = ?
+    `).bind(normalizedNew, question.id).run()
 
     // Also update user_answers
     await c.env.DB.prepare(`
       INSERT OR REPLACE INTO user_answers (user_id, module_code, question_id, answer_text, updated_at)
       VALUES (?, ?, ?, ?, datetime('now'))
-    `).bind(payload.userId, module_code, question_number, improved_answer).run()
+    `).bind(payload.userId, module_code, question_number, normalizedNew).run()
+
+    await c.env.DB.prepare(`
+      UPDATE progress
+      SET status = CASE WHEN status = 'validated' THEN 'in_progress' ELSE status END,
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(progress.id).run()
 
     return c.json({ success: true })
   } catch (error) {
@@ -1009,39 +3652,449 @@ app.post('/api/module/validate', async (c) => {
     const payload = await verifyToken(token)
     if (!payload) return c.json({ error: 'Token invalide' }, 401)
 
-    const { moduleCode } = await c.req.json()
+    const body = await c.req.json().catch(() => ({})) as { moduleCode?: string; comment?: string }
+    const moduleCode = body?.moduleCode?.trim()
+    const comment = typeof body?.comment === 'string' ? body.comment.trim() : ''
+
+    if (!moduleCode) {
+      return c.json({ error: 'moduleCode est requis' }, 400)
+    }
 
     const module = await c.env.DB.prepare(`
-      SELECT id FROM modules WHERE module_code = ?
+      SELECT id, title, module_code
+      FROM modules
+      WHERE module_code = ?
     `).bind(moduleCode).first()
 
     if (!module) return c.json({ error: 'Module non trouvé' }, 404)
 
-    // Mettre à jour le statut du progrès
-    await c.env.DB.prepare(`
-      UPDATE progress 
-      SET status = 'validated',
-          completed_at = datetime('now'),
-          updated_at = datetime('now')
+    const progress = await c.env.DB.prepare(`
+      SELECT id, project_id, ai_score, ai_last_analysis, quiz_passed, quiz_score, status
+      FROM progress
       WHERE user_id = ? AND module_id = ?
-    `).bind(payload.userId, module.id).run()
+    `).bind(payload.userId, module.id).first()
 
-    // Créer un livrable
+    if (!progress) return c.json({ error: 'Progress non trouvé' }, 404)
+
+    const questions = await c.env.DB.prepare(`
+      SELECT question_number, question_text, user_response, ai_feedback, quality_score, iteration_count, updated_at
+      FROM questions
+      WHERE progress_id = ?
+      ORDER BY question_number
+    `).bind(progress.id).all()
+
+    const questionRows = Array.isArray(questions.results) ? questions.results as any[] : []
+
+    const snapshot = buildSectionsSnapshot(module.module_code as string, questionRows)
+    const sections = snapshot.sections
+    const expectedQuestionCount = sections.length
+    const answeredBlocks = sections.filter((section) => section.answer.length > 0).length
+    const missingAnswers = snapshot.missingAnswers
+    const clarifications = snapshot.clarifications
+    const qualityMissing = snapshot.qualityMissing
+    const latestAnswerTimestamp = snapshot.latestAnswerTimestamp
+
+    const aiScore = typeof progress.ai_score === 'number' ? Number(progress.ai_score) : 0
+    const quizPassed = Number(progress.quiz_passed ?? 0) === 1
+    const lastAnalysisDate = parseDateValue(progress.ai_last_analysis as string | null)
+    const latestActivity = latestAnswerTimestamp ?? 0
+    const needsRefresh = !!(lastAnalysisDate && latestActivity && latestActivity > lastAnalysisDate.getTime())
+
+    const blockingReasons: string[] = []
+
+    if (!quizPassed) {
+      blockingReasons.push('Le quiz de validation (B2) doit être réussi avec un score d’au moins 80 %.')
+    }
+
+    if (!lastAnalysisDate) {
+      blockingReasons.push('L’analyse IA (B4) doit être effectuée avant la validation.')
+    }
+
+    if (qualityMissing > 0) {
+      blockingReasons.push('Relancez l’analyse IA après vos améliorations pour obtenir un score sur chaque bloc.')
+    }
+
+    if (needsRefresh) {
+      blockingReasons.push('Certaines réponses ont été modifiées après la dernière analyse IA. Relancez l’étape B4 pour actualiser le score.')
+    }
+
+    if (answeredBlocks < expectedQuestionCount) {
+      const missingCount = expectedQuestionCount - answeredBlocks
+      blockingReasons.push(`${missingCount} bloc${missingCount > 1 ? 's' : ''} du Canvas n’est pas encore complété.`)
+    }
+
+    if (clarifications > 0) {
+      blockingReasons.push(`L’IA attend encore des précisions sur ${clarifications} bloc${clarifications > 1 ? 's' : ''}.`)
+    }
+
+    if (aiScore < MIN_VALIDATION_SCORE) {
+      blockingReasons.push(`Le score IA doit atteindre au moins ${MIN_VALIDATION_SCORE} % (score actuel : ${aiScore} %).`)
+    }
+
+    if (blockingReasons.length > 0) {
+      return c.json({ error: 'Conditions de validation non remplies', blockingReasons }, 400)
+    }
+
+    const deliverableUrl = `/module/${moduleCode}/download`
+    const nowIso = new Date().toISOString()
+
     await c.env.DB.prepare(`
-      INSERT OR REPLACE INTO deliverables (
-        user_id, module_id, title, status, file_url, created_at
-      ) VALUES (?, ?, ?, ?, ?, datetime('now'))
-    `).bind(
-      payload.userId, 
-      module.id, 
-      'Business Model Canvas', 
-      'ready', 
-      `/module/${moduleCode}/download`
-    ).run()
+      UPDATE progress
+      SET status = 'validated',
+          validated_at = datetime('now'),
+          completed_at = COALESCE(completed_at, datetime('now')),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(progress.id).run()
 
-    return c.json({ success: true })
+    await c.env.DB.prepare(`
+      UPDATE questions
+      SET is_validated = 1
+      WHERE progress_id = ?
+    `).bind(progress.id).run()
+
+    const deliverableContent = {
+      moduleCode,
+      validatedAt: nowIso,
+      score: aiScore,
+      sections: sections.map((section) => ({
+        questionId: section.questionId,
+        section: section.section,
+        question: section.questionText,
+        answer: section.answer,
+        score: section.percentage,
+        scoreLabel: section.scoreLabel,
+        suggestions: section.suggestions,
+        questions: section.questions
+      }))
+    }
+
+    const summaryText = `Canvas validé le ${new Date(nowIso).toLocaleDateString('fr-FR')} · Score IA ${aiScore}%`
+
+    const existingDeliverable = await c.env.DB.prepare(`
+      SELECT id FROM deliverables WHERE user_id = ? AND module_id = ? LIMIT 1
+    `).bind(payload.userId, module.id).first()
+
+    if (existingDeliverable) {
+      await c.env.DB.prepare(`
+        UPDATE deliverables
+        SET deliverable_type = ?,
+            title = ?,
+            file_url = ?,
+            content_json = ?,
+            status = 'ready',
+            summary = ?,
+            ai_score = ?,
+            coach_comment = ?,
+            validated_at = datetime('now')
+        WHERE id = ?
+      `).bind(
+        'canvas',
+        `${module.title ?? 'Module'} - Canvas validé`,
+        deliverableUrl,
+        JSON.stringify(deliverableContent),
+        summaryText,
+        aiScore,
+        comment || null,
+        existingDeliverable.id
+      ).run()
+    } else {
+      await c.env.DB.prepare(`
+        INSERT INTO deliverables (
+          user_id,
+          project_id,
+          module_id,
+          deliverable_type,
+          title,
+          file_url,
+          content_json,
+          status,
+          summary,
+          ai_score,
+          coach_comment,
+          validated_at,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, datetime('now'), datetime('now'))
+      `).bind(
+        payload.userId,
+        progress.project_id ?? null,
+        module.id,
+        'canvas',
+        `${module.title ?? 'Module'} - Canvas validé`,
+        deliverableUrl,
+        JSON.stringify(deliverableContent),
+        summaryText,
+        aiScore,
+        comment || null
+      ).run()
+    }
+
+    return c.json({
+      success: true,
+      validatedAt: nowIso,
+      deliverableUrl,
+      score: aiScore
+    })
   } catch (error) {
     console.error('Validation error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+// API: Récupérer le livrable (B7)
+app.get('/api/module/:code/deliverable', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const moduleCode = c.req.param('code')
+    const module = await c.env.DB.prepare(`
+      SELECT id, title, module_code
+      FROM modules
+      WHERE module_code = ?
+    `).bind(moduleCode).first()
+
+    if (!module) return c.json({ error: 'Module non trouvé' }, 404)
+
+    const progress = await c.env.DB.prepare(`
+      SELECT id, status, ai_score, validated_at, ai_last_analysis, quiz_score, quiz_passed
+      FROM progress
+      WHERE user_id = ? AND module_id = ?
+    `).bind(payload.userId, module.id).first()
+
+    if (!progress) return c.json({ error: 'Progress non trouvé' }, 404)
+
+    if (progress.status !== 'validated') {
+      return c.json({ error: 'Module non validé', status: progress.status }, 409)
+    }
+
+    const deliverable = await c.env.DB.prepare(`
+      SELECT id, deliverable_type, title, file_url, content_json, status, summary, ai_score, coach_comment, validated_at, created_at
+      FROM deliverables
+      WHERE user_id = ? AND module_id = ?
+      ORDER BY validated_at DESC, created_at DESC
+      LIMIT 1
+    `).bind(payload.userId, module.id).first()
+
+    const questionsRes = await c.env.DB.prepare(`
+      SELECT question_number, question_text, user_response, ai_feedback, quality_score, iteration_count, updated_at
+      FROM questions
+      WHERE progress_id = ?
+      ORDER BY question_number
+    `).bind(progress.id).all()
+
+    const questionRows = Array.isArray(questionsRes.results) ? questionsRes.results as any[] : []
+    const snapshot = buildSectionsSnapshot(module.module_code as string, questionRows)
+
+    const sections = snapshot.sections.map((section) => ({
+      order: section.order,
+      questionId: section.questionId,
+      section: section.section,
+      question: section.questionText,
+      answer: section.answer,
+      score: section.percentage,
+      scoreLabel: section.scoreLabel,
+      suggestions: section.suggestions,
+      questions: section.questions
+    }))
+
+    let deliverableContent: any = null
+    if (deliverable?.content_json) {
+      try {
+        deliverableContent = JSON.parse(deliverable.content_json as string)
+      } catch (error) {
+        console.warn('Impossible de parser deliverable.content_json', error)
+      }
+    }
+
+    const validatedAt = deliverable?.validated_at ?? progress.validated_at
+    const aiScore = typeof deliverable?.ai_score === 'number'
+      ? Number(deliverable.ai_score)
+      : typeof progress.ai_score === 'number'
+        ? Number(progress.ai_score)
+        : null
+
+    return c.json({
+      success: true,
+      module: {
+        code: module.module_code,
+        title: module.title
+      },
+      progress: {
+        status: progress.status,
+        aiScore,
+        validatedAt,
+        aiLastAnalysis: progress.ai_last_analysis,
+        quizScore: progress.quiz_score,
+        quizPassed: progress.quiz_passed
+      },
+      deliverable: deliverable
+        ? {
+            id: deliverable.id,
+            status: deliverable.status,
+            summary: deliverable.summary,
+            aiScore: deliverable.ai_score,
+            coachComment: deliverable.coach_comment,
+            validatedAt: deliverable.validated_at,
+            fileUrl: deliverable.file_url,
+            title: deliverable.title
+          }
+        : null,
+      content: {
+        meta: {
+          validatedAt: deliverableContent?.validatedAt ?? validatedAt,
+          score: deliverableContent?.score ?? aiScore
+        },
+        sections
+      },
+      canRefresh: progress.status === 'validated'
+    })
+  } catch (error) {
+    console.error('Deliverable fetch error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+// API: Régénérer le livrable (B7)
+app.post('/api/module/:code/deliverable/refresh', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const moduleCode = c.req.param('code')
+    const module = await c.env.DB.prepare(`
+      SELECT id, title, module_code
+      FROM modules
+      WHERE module_code = ?
+    `).bind(moduleCode).first()
+
+    if (!module) return c.json({ error: 'Module non trouvé' }, 404)
+
+    const progress = await c.env.DB.prepare(`
+      SELECT id, status, ai_score, validated_at, project_id
+      FROM progress
+      WHERE user_id = ? AND module_id = ?
+    `).bind(payload.userId, module.id).first()
+
+    if (!progress) return c.json({ error: 'Progress non trouvé' }, 404)
+
+    if (progress.status !== 'validated') {
+      return c.json({ error: 'Le module doit être validé avant de régénérer le livrable.', status: progress.status }, 409)
+    }
+
+    const deliverable = await c.env.DB.prepare(`
+      SELECT id, coach_comment
+      FROM deliverables
+      WHERE user_id = ? AND module_id = ?
+      ORDER BY validated_at DESC, created_at DESC
+      LIMIT 1
+    `).bind(payload.userId, module.id).first()
+
+    const questionsRes = await c.env.DB.prepare(`
+      SELECT question_number, question_text, user_response, ai_feedback, quality_score, iteration_count, updated_at
+      FROM questions
+      WHERE progress_id = ?
+      ORDER BY question_number
+    `).bind(progress.id).all()
+
+    const questionRows = Array.isArray(questionsRes.results) ? questionsRes.results as any[] : []
+    const snapshot = buildSectionsSnapshot(module.module_code as string, questionRows)
+    const sections = snapshot.sections
+
+    const deliverableUrl = `/module/${moduleCode}/download`
+    const refreshIso = new Date().toISOString()
+    const aiScore = typeof progress.ai_score === 'number' ? Number(progress.ai_score) : null
+
+    const deliverableContent = {
+      moduleCode,
+      refreshedAt: refreshIso,
+      validatedAt: progress.validated_at ?? refreshIso,
+      score: aiScore,
+      sections: sections.map((section) => ({
+        questionId: section.questionId,
+        section: section.section,
+        question: section.questionText,
+        answer: section.answer,
+        score: section.percentage,
+        scoreLabel: section.scoreLabel,
+        suggestions: section.suggestions,
+        questions: section.questions
+      }))
+    }
+
+    const formattedDate = new Date(refreshIso).toLocaleDateString('fr-FR')
+    const summaryText = aiScore !== null
+      ? `Canvas généré le ${formattedDate} · Score IA ${aiScore}%`
+      : `Canvas généré le ${formattedDate}`
+
+    if (deliverable) {
+      await c.env.DB.prepare(`
+        UPDATE deliverables
+        SET deliverable_type = ?,
+            title = ?,
+            file_url = ?,
+            content_json = ?,
+            status = 'ready',
+            summary = ?,
+            ai_score = ?,
+            coach_comment = ?,
+            validated_at = datetime('now')
+        WHERE id = ?
+      `).bind(
+        'canvas',
+        `${module.title ?? 'Module'} - Canvas validé`,
+        deliverableUrl,
+        JSON.stringify(deliverableContent),
+        summaryText,
+        aiScore,
+        deliverable.coach_comment ?? null,
+        deliverable.id
+      ).run()
+    } else {
+      await c.env.DB.prepare(`
+        INSERT INTO deliverables (
+          user_id,
+          project_id,
+          module_id,
+          deliverable_type,
+          title,
+          file_url,
+          content_json,
+          status,
+          summary,
+          ai_score,
+          coach_comment,
+          validated_at,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, datetime('now'), datetime('now'))
+      `).bind(
+        payload.userId,
+        progress.project_id ?? null,
+        module.id,
+        'canvas',
+        `${module.title ?? 'Module'} - Canvas validé`,
+        deliverableUrl,
+        JSON.stringify(deliverableContent),
+        summaryText,
+        aiScore,
+        null
+      ).run()
+    }
+
+    return c.json({
+      success: true,
+      refreshedAt: refreshIso,
+      summary: summaryText,
+      aiScore
+    })
+  } catch (error) {
+    console.error('Deliverable refresh error:', error)
     return c.json({ error: 'Erreur serveur' }, 500)
   }
 })

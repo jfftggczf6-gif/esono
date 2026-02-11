@@ -1,4 +1,4 @@
-// Dashboard utilities
+// Dashboard utilities — Architecture 8 modules
 export async function getUserWithProgress(db: D1Database, userId: number) {
   // Get user info
   const user = await db.prepare(`
@@ -18,42 +18,47 @@ export async function getUserWithProgress(db: D1Database, userId: number) {
     LIMIT 1
   `).bind(userId).first()
 
-  // Get all modules
+  // Get all active modules (includes new 8-module architecture)
   const modules = await db.prepare(`
-    SELECT id, module_code, title, description, step_number, estimated_time
+    SELECT id, module_code, title, description, step_number, estimated_time,
+           module_number, category, icon, color
     FROM modules
     WHERE is_active = 1
-    ORDER BY step_number, display_order
+    ORDER BY COALESCE(module_number, step_number), display_order
   `).all()
 
   // Get user's progress
   const progress = await db.prepare(`
-    SELECT module_id, status, quiz_score, quiz_passed, completed_at
+    SELECT module_id, status, quiz_score, quiz_passed, completed_at,
+           ai_score, financial_score, coach_validated
     FROM progress
     WHERE user_id = ? AND project_id = ?
   `).bind(userId, project?.id || null).all()
 
   // Calculate overall progress
   const totalModules = modules.results.length
-  const completedModules = progress.results.filter((p: any) => p.status === 'completed').length
+  const completedModules = progress.results.filter((p: any) => 
+    p.status === 'completed' || p.status === 'validated'
+  ).length
   const progressPercentage = totalModules > 0 ? Math.round((completedModules / totalModules) * 100) : 0
 
-  // Determine current step (1-5)
-  const completedSteps = new Set(
+  // Determine current step based on completed modules
+  const completedModuleIds = new Set(
     progress.results
-      .filter((p: any) => p.status === 'completed')
-      .map((p: any) => {
-        const module = modules.results.find((m: any) => m.id === p.module_id)
-        return module?.step_number
-      })
+      .filter((p: any) => p.status === 'completed' || p.status === 'validated')
+      .map((p: any) => p.module_id)
   )
-  const currentStep = completedSteps.size + 1
 
-  // Get next recommended module
+  // Find next module to work on
   const nextModule = modules.results.find((m: any) => {
-    const moduleProgress = progress.results.find((p: any) => p.module_id === m.id)
-    return !moduleProgress || moduleProgress.status !== 'completed'
+    return !completedModuleIds.has(m.id)
   })
+
+  // Count by category
+  const hybridModules = modules.results.filter((m: any) => m.category === 'hybrid')
+  const autoModules = modules.results.filter((m: any) => m.category === 'automatic')
+  const completedHybrid = hybridModules.filter((m: any) => completedModuleIds.has(m.id)).length
+  const completedAuto = autoModules.filter((m: any) => completedModuleIds.has(m.id)).length
 
   return {
     user,
@@ -64,8 +69,12 @@ export async function getUserWithProgress(db: D1Database, userId: number) {
       totalModules,
       completedModules,
       progressPercentage,
-      currentStep,
-      nextModule
+      currentStep: completedModules + 1,
+      nextModule,
+      hybridTotal: hybridModules.length,
+      hybridCompleted: completedHybrid,
+      autoTotal: autoModules.length,
+      autoCompleted: completedAuto
     }
   }
 }
