@@ -5631,14 +5631,40 @@ moduleRoutes.get('/module/:code/download', async (c) => {
     // ═══ Module 3 Inputs Financiers: dedicated download page ═══
     if (moduleCode === 'mod3_inputs') {
       const fiRow = await c.env.DB.prepare('SELECT * FROM financial_inputs WHERE user_id = ? AND module_id = ? LIMIT 1')
-        .bind(payload.userId, module.id).first()
+        .bind(payload.userId, module.id).first() as any
 
+      // Parse each financial input tab to check completion
+      const inputTabs = [
+        { key: 'infos_generales_json', label: 'Informations Générales', icon: '🏢' },
+        { key: 'donnees_historiques_json', label: 'Données Historiques', icon: '📜' },
+        { key: 'produits_services_json', label: 'Produits & Services', icon: '📦' },
+        { key: 'ressources_humaines_json', label: 'Ressources Humaines', icon: '👥' },
+        { key: 'hypotheses_croissance_json', label: 'Hypothèses de Croissance', icon: '📈' },
+        { key: 'couts_fixes_variables_json', label: 'Coûts Fixes & Variables', icon: '💰' },
+        { key: 'bfr_tresorerie_json', label: 'BFR & Trésorerie', icon: '📊' },
+        { key: 'investissements_json', label: 'Investissements (CAPEX)', icon: '🏗️' },
+        { key: 'financement_json', label: 'Financement & Endettement', icon: '💳' },
+      ]
+
+      let filledCount = 0
+      const tabStatus: { label: string, icon: string, filled: boolean }[] = []
+      for (const tab of inputTabs) {
+        let filled = false
+        if (fiRow && fiRow[tab.key]) {
+          try {
+            const parsed = JSON.parse(fiRow[tab.key])
+            filled = Object.keys(parsed).length > 0
+          } catch {}
+        }
+        if (filled) filledCount++
+        tabStatus.push({ label: tab.label, icon: tab.icon, filled })
+      }
+
+      // Compute score
       let inputsAnalysis: InputsAnalysisResult | null = null
       if (fiRow && (fiRow as any).analysis_json) {
         try { inputsAnalysis = JSON.parse((fiRow as any).analysis_json) } catch {}
       }
-
-      // If no analysis, run one
       if (!inputsAnalysis && fiRow) {
         const FI_COLS2: Record<InputTabKey, string> = {
           infos_generales: 'infos_generales_json', donnees_historiques: 'donnees_historiques_json',
@@ -5648,7 +5674,7 @@ moduleRoutes.get('/module/:code/download', async (c) => {
         }
         const allData2: Record<InputTabKey, Record<string, any>> = {} as any
         for (const tabKey of INPUT_TAB_ORDER) {
-          const raw = (fiRow as any)[FI_COLS2[tabKey]]
+          const raw = (fiRow as any)?.[FI_COLS2[tabKey]]
           allData2[tabKey] = raw ? JSON.parse(raw) : {}
         }
         inputsAnalysis = analyzeInputs(allData2)
@@ -5656,103 +5682,173 @@ moduleRoutes.get('/module/:code/download', async (c) => {
 
       const readiness = inputsAnalysis?.readinessScore ?? 0
       const readinessLbl = getInputsReadinessLabel(readiness)
-      const sColor = readinessLbl.color === 'green' ? '#059669' : readinessLbl.color === 'blue' ? '#0284c7' : readinessLbl.color === 'yellow' ? '#d97706' : '#dc2626'
+      const aiScore = readiness
+      const inputsScoreLabel = aiScore >= 80 ? { label: 'Excellent', color: 'green' } : aiScore >= 60 ? { label: 'Bon', color: 'blue' } : aiScore >= 40 ? { label: 'À améliorer', color: 'yellow' } : { label: 'Insuffisant', color: 'red' }
 
-      // Company name
-      let companyName = 'Mon Entreprise'
-      let entrepreneurName = 'Entrepreneur'
-      if (fiRow && (fiRow as any).infos_generales_json) {
-        try {
-          const infos = JSON.parse((fiRow as any).infos_generales_json)
-          companyName = infos.nom_entreprise || companyName
-          entrepreneurName = infos.dirigeant_nom || entrepreneurName
-        } catch {}
-      }
-      const userRow = await c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(payload.userId).first()
-      if (userRow && (userRow as any).name) entrepreneurName = (userRow as any).name
-
-      const { navItems: resolvedNavItems, activeNav } = resolveNavigationForStage(moduleCode, 'download')
-      const validatedDate = progress.validated_at ? new Date(progress.validated_at as string).toLocaleDateString('fr-FR') : null
-
-      const diagnosticHtml = inputsAnalysis ? generateInputsDiagnosticHtml(inputsAnalysis, companyName, entrepreneurName) : null
-
-      const pageContent = (
-        <div class="esono-grid">
-          <section class="esono-hero" style={`background:linear-gradient(135deg, ${sColor}15 0%, ${sColor}05 100%);border:1px solid ${sColor}30;`}>
-            <div class="esono-hero__header">
-              <div>
-                <h2 class="esono-hero__title"><i class="fas fa-file-invoice-dollar" style="margin-right:8px;"></i>Livrable — Inputs Financiers</h2>
-                <p class="esono-hero__description">{companyName} — Score Readiness: <strong style={`color:${sColor};`}>{readiness}%</strong> ({readinessLbl.label})</p>
+      return c.html(
+        <html lang="fr">
+          <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>Livrable Inputs Financiers - ESONO</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+            <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet" />
+          </head>
+          <body class="bg-slate-50">
+            <nav class="bg-white shadow-sm border-b border-slate-200">
+              <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+                <a href="/entrepreneur" class="text-indigo-600 hover:text-indigo-700 flex items-center gap-2 font-medium">
+                  <i class="fas fa-arrow-left"></i>
+                  <span>Retour au dashboard</span>
+                </a>
+                <span class="text-xs text-slate-500 flex items-center gap-2">
+                  <i class="fas fa-chart-bar"></i>
+                  Module 3 · Inputs Financiers
+                </span>
               </div>
-              <span class={`esono-hero__badge`} style={`background:${isValidated ? '#dcfce7' : '#fef3c7'};color:${isValidated ? '#166534' : '#92400e'};`}>
-                <i class={`fas ${isValidated ? 'fa-check-circle' : 'fa-clock'}`}></i>
-                {isValidated ? `Validé le ${validatedDate}` : 'Brouillon'}
-              </span>
-            </div>
-            <div class="esono-hero__metrics">
-              <div class="esono-hero__metric"><p class="esono-hero__metric-value" style={`color:${sColor};`}>{readiness}%</p><p class="esono-hero__metric-label">Readiness</p></div>
-              <div class="esono-hero__metric"><p class="esono-hero__metric-value">{inputsAnalysis?.overallCompleteness ?? 0}%</p><p class="esono-hero__metric-label">Complétude</p></div>
-              <div class="esono-hero__metric"><p class="esono-hero__metric-value">{inputsAnalysis?.alerts.filter(a => a.level === 'error').length ?? 0}</p><p class="esono-hero__metric-label">Erreurs</p></div>
-              <div class="esono-hero__metric"><p class="esono-hero__metric-value">{inputsAnalysis?.recommendations.length ?? 0}</p><p class="esono-hero__metric-label">Recommandations</p></div>
-            </div>
-          </section>
+            </nav>
 
-          {/* Diagnostic HTML iframe */}
-          {diagnosticHtml && (
-            <section class="esono-card">
-              <div class="esono-card__header">
-                <h2 class="esono-card__title"><i class="fas fa-stethoscope esono-card__title-icon"></i>Diagnostic Inputs Financiers</h2>
-              </div>
-              <div class="esono-card__body" style="padding:0;">
-                <iframe
-                  id="diagnosticFrame"
-                  srcdoc={diagnosticHtml}
-                  style="width:100%;min-height:800px;border:none;border-radius:0 0 12px 12px;"
-                  title="Diagnostic Inputs Financiers"
-                ></iframe>
-              </div>
-            </section>
-          )}
+            <main class="max-w-6xl mx-auto px-4 py-8 space-y-8">
+              {!isValidated && (
+                <section class="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 text-amber-800">
+                  <div class="flex items-start gap-3">
+                    <span class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-amber-100 text-amber-600">
+                      <i class="fas fa-triangle-exclamation"></i>
+                    </span>
+                    <div>
+                      <h2 class="text-sm font-semibold">Livrable en mode brouillon</h2>
+                      <p class="text-sm">Validez le module pour générer la version officielle des Inputs Financiers.</p>
+                    </div>
+                  </div>
+                  <a href={`/module/${moduleCode}/validate`} class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold">
+                    <i class="fas fa-check-double"></i>
+                    Passer à la validation
+                  </a>
+                </section>
+              )}
 
-          {/* Download actions */}
-          <div class="esono-form__actions">
-            <a href="/module/mod3_inputs/inputs" class="esono-btn esono-btn--secondary">
-              <i class="fas fa-pen-to-square"></i> Modifier les inputs
-            </a>
-            <a href="/module/mod3_inputs/analysis" class="esono-btn esono-btn--secondary">
-              <i class="fas fa-robot"></i> Relancer l'analyse
-            </a>
-            <button type="button" class="esono-btn esono-btn--primary" onclick="printDiagnostic()">
-              <i class="fas fa-print"></i> Imprimer / PDF
-            </button>
-            <a href="/api/inputs/diagnostic?module=mod3_inputs" target="_blank" class="esono-btn esono-btn--accent">
-              <i class="fas fa-external-link-alt"></i> Diagnostic HTML
-            </a>
-            <a href="/dashboard" class="esono-btn esono-btn--ghost">
-              <i class="fas fa-arrow-left"></i> Dashboard
-            </a>
-          </div>
-        </div>
+              <header class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <p class="text-xs uppercase tracking-wider text-slate-500">{isValidated ? 'Livrable final' : 'Livrable brouillon'}</p>
+                  <h1 class="text-3xl font-bold text-slate-900">Inputs Financiers</h1>
+                  <p class="mt-2 text-slate-600">Données financières validées avec alertes de cohérence et scoring de complétude.</p>
+                </div>
+                <div class="flex items-center gap-3 flex-wrap">
+                  <span class={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold ${inputsScoreLabel.color === 'green' ? 'bg-emerald-100 text-emerald-700' : inputsScoreLabel.color === 'blue' ? 'bg-blue-100 text-blue-700' : inputsScoreLabel.color === 'yellow' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                    <i class="fas fa-chart-line"></i>
+                    {aiScore}% — {inputsScoreLabel.label}
+                  </span>
+                  <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold bg-emerald-100 text-emerald-700">
+                    <i class="fas fa-th-large"></i>
+                    {filledCount}/9 blocs
+                  </span>
+                </div>
+              </header>
+
+              <section class="grid gap-4 md:grid-cols-2">
+                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                  <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <i class="fas fa-download text-emerald-500"></i>
+                    Livrables disponibles
+                  </h2>
+                  <div class="space-y-3">
+                    <a href="/api/inputs/diagnostic?module=mod3_inputs" target="_blank"
+                      class="flex items-center gap-3 p-3 rounded-xl border border-green-300 bg-green-50 hover:bg-green-100 transition ring-2 ring-green-200">
+                      <div class="w-10 h-10 rounded-lg bg-green-600 text-white flex items-center justify-center">
+                        <i class="fas fa-file-lines"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-green-900 text-sm">Livrable Inputs Complet</p>
+                        <p class="text-xs text-green-700">Diagnostic financier, alertes de cohérence, recommandations</p>
+                        <span class="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-bold">
+                          <i class="fas fa-star text-[8px]"></i> RECOMMANDÉ
+                        </span>
+                      </div>
+                    </a>
+                    <a href="/module/mod3_inputs/analysis" class="flex items-center gap-3 p-3 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 transition">
+                      <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                        <i class="fas fa-file-code"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-emerald-900 text-sm">Diagnostic Résumé</p>
+                        <p class="text-xs text-emerald-700">Rapport synthétique avec scores par section et alertes</p>
+                      </div>
+                    </a>
+                    <div class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50">
+                      <div class="w-10 h-10 rounded-lg bg-slate-100 text-slate-400 flex items-center justify-center">
+                        <i class="fas fa-file-excel"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-slate-600 text-sm">Excel Inputs (9 onglets)</p>
+                        <p class="text-xs text-slate-500">Prochainement disponible</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                  <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <i class="fas fa-chart-bar text-emerald-500"></i>
+                    Blocs Inputs renseignés
+                  </h2>
+                  <div class="space-y-3">
+                    {tabStatus.map((tab, idx) => {
+                      const quality = tab.filled ? 100 : 0
+                      const barColor = tab.filled ? '#059669' : '#e5e7eb'
+                      return (
+                        <div class="space-y-1" key={`inp-${idx}`}>
+                          <div class="flex justify-between text-sm">
+                            <span class="font-medium text-slate-700">{tab.icon} {tab.label}</span>
+                            <span class="font-bold" style={`color:${barColor}`}>{tab.filled ? '✓' : '—'}</span>
+                          </div>
+                          <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div class="h-full rounded-full" style={`width:${quality}%;background:${barColor}`}></div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </section>
+
+              <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2 mb-4">
+                  <i class="fas fa-rocket text-indigo-500"></i>
+                  Prochaines étapes
+                </h2>
+                <div class="grid gap-4 md:grid-cols-2">
+                  <a href="/module/mod3_inputs/inputs" class="block rounded-2xl border border-slate-200 hover:border-green-300 hover:bg-green-50 transition p-4">
+                    <div class="flex items-center gap-3">
+                      <div class="w-10 h-10 rounded-full bg-green-100 text-green-600 flex items-center justify-center">
+                        <i class="fas fa-pen-to-square"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-slate-900">Modifier les inputs</p>
+                        <p class="text-sm text-slate-600">Ajustez vos données financières.</p>
+                      </div>
+                    </div>
+                  </a>
+                  <a href="/entrepreneur" class="block rounded-2xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 transition p-4">
+                    <div class="flex items-center gap-3">
+                      <div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                        <i class="fas fa-home"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-slate-900">Page principale</p>
+                        <p class="text-sm text-slate-600">Revenez au parcours Investment Readiness.</p>
+                      </div>
+                    </div>
+                  </a>
+                </div>
+              </section>
+            </main>
+          </body>
+        </html>
       )
-
-      const extraScripts = `
-        function printDiagnostic() {
-          const frame = document.getElementById('diagnosticFrame');
-          if (frame && frame.contentWindow) { frame.contentWindow.print(); }
-        }
-      `
-
-      return c.html(renderEsanoLayout({
-        pageTitle: 'Livrable Inputs Financiers — Module 3',
-        navItems: resolvedNavItems,
-        activeNav,
-        content: pageContent,
-        extraScripts
-      }))
     }
     // ═══ End Inputs Financiers dedicated download ═══
 
-    // ═══ Module 4 Framework Analyse PME: dedicated download page ═══
+    // ═══ Module 4 Framework Analyse PME: dedicated download page (BMC-style layout) ═══
     if (moduleCode === 'mod4_framework') {
       // Get Module 3 inputs data
       const mod3 = await c.env.DB.prepare('SELECT id FROM modules WHERE module_code = ?')
@@ -5762,8 +5858,6 @@ moduleRoutes.get('/module/:code/download', async (c) => {
       let pmeAnalysis: any = null
       let pmeInput: any = null
       let companyName = 'Mon Entreprise'
-      let previewHtml = ''
-
 
       if (mod3) {
         const inputsRow = await c.env.DB.prepare(
@@ -5783,16 +5877,11 @@ moduleRoutes.get('/module/:code/download', async (c) => {
             const invData = inputsRow.investissements_json ? JSON.parse(inputsRow.investissements_json) : {}
             const finData = inputsRow.financement_json ? JSON.parse(inputsRow.financement_json) : {}
 
-            // Get project name
             if (progress.project_id) {
               const proj = await c.env.DB.prepare('SELECT name FROM projects WHERE id = ?').bind(progress.project_id).first<any>()
               if (proj?.name) companyName = proj.name
             }
 
-            const userRow = await c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(payload.userId).first<any>()
-            const userName = (userRow?.name as string) ?? 'Entrepreneur'
-
-            // Build PmeInputData inline
             const acts = produits?.produits ?? produits?.activites ?? []
             const activities = Array.isArray(acts) && acts.length > 0
               ? acts.map((a: any) => ({ name: a.nom || a.name || 'Activité', isStrategic: a.strategique !== false }))
@@ -5846,14 +5935,13 @@ moduleRoutes.get('/module/:code/download', async (c) => {
             } as PmeInputData
 
             pmeAnalysis = analyzePme(pmeInput)
-            previewHtml = generatePmePreviewHtml(pmeAnalysis, pmeInput)
           } catch (e: any) {
             console.error('PME analysis error on download page:', e?.message || e)
           }
         }
       }
 
-      const aiScore = pmeAnalysis ? Math.round(
+      const fwAiScore = pmeAnalysis ? Math.round(
         (pmeAnalysis.historique.margeEbitdaPct[2] > 0 ? 30 : 0) +
         (pmeAnalysis.historique.margeBrutePct[2] >= 25 ? 20 : 10) +
         (pmeAnalysis.alertes.filter((a: any) => a.type === 'danger').length === 0 ? 20 : 0) +
@@ -5861,153 +5949,209 @@ moduleRoutes.get('/module/:code/download', async (c) => {
         (pmeAnalysis.forces.length >= 3 ? 10 : 5)
       ) : 0
 
-      const scoreLabel = aiScore >= 80 ? 'Sain' : aiScore >= 60 ? 'Correct' : aiScore >= 40 ? 'Fragile' : 'Critique'
-      const scoreColor = aiScore >= 80 ? '#059669' : aiScore >= 60 ? '#0284c7' : aiScore >= 40 ? '#d97706' : '#dc2626'
+      const fwScoreLabel = fwAiScore >= 80 ? { label: 'Excellent', color: 'green' } : fwAiScore >= 60 ? { label: 'Bon', color: 'blue' } : fwAiScore >= 40 ? { label: 'À améliorer', color: 'yellow' } : { label: 'Insuffisant', color: 'red' }
 
-      const { navItems: resolvedNavItems, activeNav } = resolveNavigationForStage(moduleCode, 'download')
-      const extraScripts = ''
-
-      // Build bodyContent outside of template literal to avoid minification issues
-      const alertes = pmeAnalysis?.alertes ?? []
-      const forces = pmeAnalysis?.forces ?? []
-      const faiblesses = pmeAnalysis?.faiblesses ?? []
-      const dangerCount = alertes.filter((a: any) => a.type === 'danger').length
-
-      const alertesHtml = alertes.length > 0 ? alertes.map((a: any) => {
-        const bg = a.type === 'danger' ? 'background:#fee2e2;color:#991b1b;border-left:4px solid #dc2626;'
-          : a.type === 'warning' ? 'background:#fff7ed;color:#9a3412;border-left:4px solid #d97706;'
-          : 'background:#eff6ff;color:#1e40af;border-left:4px solid #2563eb;'
-        const dot = a.type === 'danger' ? '\u{1F534}' : a.type === 'warning' ? '\u{1F7E0}' : '\u{1F535}'
-        return '<div style="padding:12px 16px;border-radius:10px;font-size:13px;' + bg + '">' + dot + ' ' + a.message + '</div>'
-      }).join('') : ''
-
-      const forcesHtml = forces.map((f: string) =>
-        '<div style="padding:8px 0;font-size:13px;border-bottom:1px solid #f1f5f9;">\u2705 ' + f + '</div>'
-      ).join('')
-
-      const faiblessesHtml = faiblesses.map((f: string) =>
-        '<div style="padding:8px 0;font-size:13px;border-bottom:1px solid #f1f5f9;">\u26A0\uFE0F ' + f + '</div>'
-      ).join('')
-
-      const sheetsData = [
-        ['1', 'Donn\u00e9es Historiques', '3 derni\u00e8res ann\u00e9es \u00b7 CA, marges, tr\u00e9sorerie', 'fas fa-history', '#2E5090'],
-        ['2', 'Analyse des Marges', 'Par activit\u00e9 \u00b7 Classification strat\u00e9gique', 'fas fa-chart-pie', '#059669'],
-        ['3', 'Structure de Co\u00fbts', 'Ratios d\'efficacit\u00e9 \u00b7 Benchmarks CI', 'fas fa-cogs', '#d97706'],
-        ['4', 'Tr\u00e9sorerie & BFR', 'DSO/DPO \u00b7 DSCR \u00b7 Endettement', 'fas fa-money-bill-wave', '#dc2626'],
-        ['5', 'Hypoth\u00e8ses de Projection', 'Croissance \u00b7 CAPEX \u00b7 Inflation', 'fas fa-lightbulb', '#7c3aed'],
-        ['6', 'Projection 5 Ans', 'Compte de r\u00e9sultat \u00b7 Cash-flow \u00b7 Point mort', 'fas fa-chart-line', '#0284c7'],
-        ['7', 'Analyse par Sc\u00e9narios', 'Prudent \u00b7 Central \u00b7 Ambitieux + sensibilit\u00e9', 'fas fa-exchange-alt', '#f59e0b'],
-        ['8', 'Synth\u00e8se Ex\u00e9cutive', '3 slides max \u00b7 Comit\u00e9 d\'investissement', 'fas fa-file-alt', '#1a2332'],
+      // Framework analysis blocks
+      const fwBlocks = [
+        { key: 'ratios', label: 'Ratios Clés', icon: '📊', filled: hasInputsData && pmeAnalysis?.historique?.margeBrutePct?.[2] !== undefined },
+        { key: 'benchmarks', label: 'Benchmarks Sectoriels', icon: '🏢', filled: hasInputsData && pmeAnalysis?.historique?.margeEbitdaPct?.[2] !== undefined },
+        { key: 'scenarios', label: 'Scénarios (Prudent/Central/Ambitieux)', icon: '📈', filled: hasInputsData && pmeAnalysis?.projection?.caProjection?.length > 0 },
+        { key: 'sensibilite', label: 'Analyse de Sensibilité', icon: '🎯', filled: hasInputsData && pmeAnalysis?.alertes?.length >= 0 },
+        { key: 'remboursement', label: 'Capacité de Remboursement', icon: '💳', filled: hasInputsData && pmeAnalysis?.tresorerie?.dscr?.[2] !== undefined },
+        { key: 'scoring', label: 'Scoring Investment Readiness', icon: '🏆', filled: hasInputsData && fwAiScore > 0 },
+        { key: 'recommandations', label: 'Recommandations', icon: '💡', filled: hasInputsData && (pmeAnalysis?.forces?.length > 0 || pmeAnalysis?.faiblesses?.length > 0) },
       ]
-      const sheetsHtml = sheetsData.map(function(s) {
-        return '<div style="display:flex;gap:12px;padding:14px;border-radius:12px;background:#f8fafc;align-items:flex-start;">'
-          + '<div style="width:36px;height:36px;border-radius:10px;background:' + s[4] + '15;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
-          + '<i class="' + s[3] + '" style="color:' + s[4] + ';font-size:14px;"></i></div>'
-          + '<div><div style="font-size:13px;font-weight:600;color:#1a2332;">Feuille ' + s[0] + ' \u2014 ' + s[1] + '</div>'
-          + '<div style="font-size:11px;color:#64748b;">' + s[2] + '</div></div></div>'
-      }).join('')
+      const fwFilledCount = fwBlocks.filter(b => b.filled).length
 
-      let bodyHtml = ''
-      bodyHtml += '<div style="margin-bottom:16px;display:flex;align-items:center;gap:8px;">'
-      bodyHtml += '<a href="/dashboard" style="color:var(--esono-text-muted);text-decoration:none;font-size:14px;"><i class="fas fa-arrow-left" style="margin-right:4px;"></i> Tableau de bord</a>'
-      bodyHtml += '<span style="color:var(--esono-text-muted);">\u203A</span>'
-      bodyHtml += '<span style="font-size:14px;color:var(--esono-primary);font-weight:600;">Module 4 \u00b7 Framework PME</span></div>'
+      return c.html(
+        <html lang="fr">
+          <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>Livrable Framework Analyse - ESONO</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+            <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet" />
+          </head>
+          <body class="bg-slate-50">
+            <nav class="bg-white shadow-sm border-b border-slate-200">
+              <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+                <a href="/entrepreneur" class="text-indigo-600 hover:text-indigo-700 flex items-center gap-2 font-medium">
+                  <i class="fas fa-arrow-left"></i>
+                  <span>Retour au dashboard</span>
+                </a>
+                <span class="text-xs text-slate-500 flex items-center gap-2">
+                  <i class="fas fa-chart-line"></i>
+                  Module 4 · Framework d'Analyse
+                </span>
+              </div>
+            </nav>
 
-      if (!hasInputsData) {
-        bodyHtml += '<div style="background:linear-gradient(135deg,#fff7ed,#fef3c7);border:1px solid #f59e0b;border-radius:16px;padding:40px;text-align:center;margin:24px 0;">'
-        bodyHtml += '<div style="font-size:48px;margin-bottom:16px;">\u{1F4CB}</div>'
-        bodyHtml += '<h2 style="color:#92400e;font-size:20px;margin-bottom:8px;">Donn\u00e9es financi\u00e8res requises</h2>'
-        bodyHtml += '<p style="color:#78350f;font-size:14px;margin-bottom:24px;">Compl\u00e9tez d\'abord les Inputs Entrepreneur (Module 3) pour g\u00e9n\u00e9rer votre Framework Analyse PME.</p>'
-        bodyHtml += '<a href="/module/mod3_inputs/video" style="display:inline-flex;align-items:center;gap:8px;background:#f59e0b;color:white;padding:12px 24px;border-radius:12px;font-weight:600;text-decoration:none;"><i class="fas fa-arrow-right"></i> Commencer Module 3</a></div>'
-      } else {
-        // Draft warning
-        if (!isValidated) {
-          bodyHtml += '<div style="background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1px solid #fbbf24;border-radius:12px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;gap:12px;">'
-          bodyHtml += '<i class="fas fa-exclamation-triangle" style="color:#f59e0b;font-size:18px;"></i>'
-          bodyHtml += '<div><strong style="color:#92400e;">Livrable en mode brouillon</strong>'
-          bodyHtml += '<span style="font-size:13px;color:#78350f;margin-left:8px;">Vous pouvez t\u00e9l\u00e9charger, mais la validation coach n\'est pas encore faite</span></div>'
-          bodyHtml += '<a href="/module/' + moduleCode + '/validate" style="margin-left:auto;background:#f59e0b;color:white;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;">Passer \u00e0 la validation</a></div>'
-        }
+            <main class="max-w-6xl mx-auto px-4 py-8 space-y-8">
+              {!isValidated && (
+                <section class="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 text-amber-800">
+                  <div class="flex items-start gap-3">
+                    <span class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-amber-100 text-amber-600">
+                      <i class="fas fa-triangle-exclamation"></i>
+                    </span>
+                    <div>
+                      <h2 class="text-sm font-semibold">Livrable en mode brouillon</h2>
+                      <p class="text-sm">Validez le module pour générer la version officielle du Framework d'Analyse.</p>
+                    </div>
+                  </div>
+                  <a href={`/module/${moduleCode}/validate`} class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold">
+                    <i class="fas fa-check-double"></i>
+                    Passer à la validation
+                  </a>
+                </section>
+              )}
 
-        // Hero header
-        bodyHtml += '<div style="background:linear-gradient(135deg,#1a2e50 0%,#2E5090 40%,#4472C4 100%);border-radius:20px;padding:40px 32px;color:white;margin-bottom:24px;">'
-        bodyHtml += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;">'
-        bodyHtml += '<div style="font-size:36px;">\u{1F4CA}</div><div>'
-        bodyHtml += '<h1 style="font-size:26px;font-weight:800;margin:0;">Framework Analyse PME</h1>'
-        bodyHtml += '<p style="opacity:0.7;font-size:14px;">' + companyName + ' \u2014 Analyse financi\u00e8re 5 ans</p></div></div>'
-        bodyHtml += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;">'
-        bodyHtml += '<div style="background:rgba(255,255,255,0.12);border-radius:14px;padding:20px;text-align:center;"><div style="font-size:32px;font-weight:800;">' + aiScore + '</div><div style="font-size:11px;opacity:0.7;">Score Sant\u00e9</div><div style="margin-top:4px;padding:2px 10px;border-radius:99px;display:inline-block;font-size:11px;font-weight:600;background:' + scoreColor + ';">' + scoreLabel + '</div></div>'
-        bodyHtml += '<div style="background:rgba(255,255,255,0.12);border-radius:14px;padding:20px;text-align:center;"><div style="font-size:32px;font-weight:800;">' + alertes.length + '</div><div style="font-size:11px;opacity:0.7;">Alertes</div><div style="margin-top:4px;font-size:11px;opacity:0.6;">' + dangerCount + ' critiques</div></div>'
-        bodyHtml += '<div style="background:rgba(255,255,255,0.12);border-radius:14px;padding:20px;text-align:center;"><div style="font-size:32px;font-weight:800;">8</div><div style="font-size:11px;opacity:0.7;">Feuilles Excel</div><div style="margin-top:4px;font-size:11px;opacity:0.6;">Analyse compl\u00e8te</div></div>'
-        bodyHtml += '<div style="background:rgba(255,255,255,0.12);border-radius:14px;padding:20px;text-align:center;"><div style="font-size:32px;font-weight:800;">3</div><div style="font-size:11px;opacity:0.7;">Sc\u00e9narios</div><div style="margin-top:4px;font-size:11px;opacity:0.6;">5 ans</div></div>'
-        bodyHtml += '</div></div>'
+              <header class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <p class="text-xs uppercase tracking-wider text-slate-500">{isValidated ? 'Livrable final' : 'Livrable brouillon'}</p>
+                  <h1 class="text-3xl font-bold text-slate-900">Framework d'Analyse PME</h1>
+                  <p class="mt-2 text-slate-600">Analyse financière complète : ratios, benchmarks, scénarios et scoring Investment Readiness.</p>
+                </div>
+                <div class="flex items-center gap-3 flex-wrap">
+                  <span class={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold ${fwScoreLabel.color === 'green' ? 'bg-emerald-100 text-emerald-700' : fwScoreLabel.color === 'blue' ? 'bg-blue-100 text-blue-700' : fwScoreLabel.color === 'yellow' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                    <i class="fas fa-chart-line"></i>
+                    {fwAiScore}% — {fwScoreLabel.label}
+                  </span>
+                  <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold bg-emerald-100 text-emerald-700">
+                    <i class="fas fa-th-large"></i>
+                    {fwFilledCount}/7 blocs
+                  </span>
+                </div>
+              </header>
 
-        // Download options
-        bodyHtml += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:24px;">'
-        // Excel
-        bodyHtml += '<a href="/api/pme/framework?format=excel" style="text-decoration:none;"><div style="background:white;border-radius:16px;padding:24px;border:2px solid #059669;text-align:center;transition:all 0.2s;cursor:pointer;">'
-        bodyHtml += '<div style="background:#ecfdf5;width:56px;height:56px;border-radius:14px;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;font-size:24px;"><i class="fas fa-file-excel" style="color:#059669;"></i></div>'
-        bodyHtml += '<h3 style="font-size:15px;font-weight:700;color:#1a2332;margin-bottom:4px;">Excel 8 feuilles</h3>'
-        bodyHtml += '<p style="font-size:12px;color:#64748b;">Analyse compl\u00e8te \u00b7 SpreadsheetML</p>'
-        bodyHtml += '<div style="margin-top:12px;background:#059669;color:white;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:600;"><i class="fas fa-download" style="margin-right:4px;"></i> T\u00e9l\u00e9charger Excel</div>'
-        bodyHtml += '<div style="margin-top:6px;display:inline-block;background:#ecfdf5;color:#059669;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;">RECOMMAND\u00c9</div></div></a>'
-        // HTML
-        bodyHtml += '<a href="/api/pme/framework?format=html" target="_blank" style="text-decoration:none;"><div style="background:white;border-radius:16px;padding:24px;border:1px solid rgba(0,0,0,0.08);text-align:center;transition:all 0.2s;cursor:pointer;">'
-        bodyHtml += '<div style="background:#eff6ff;width:56px;height:56px;border-radius:14px;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;font-size:24px;"><i class="fas fa-chart-line" style="color:#2563eb;"></i></div>'
-        bodyHtml += '<h3 style="font-size:15px;font-weight:700;color:#1a2332;margin-bottom:4px;">Synth\u00e8se HTML</h3>'
-        bodyHtml += '<p style="font-size:12px;color:#64748b;">Aper\u00e7u visuel \u00b7 Imprimable</p>'
-        bodyHtml += '<div style="margin-top:12px;background:#2563eb;color:white;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:600;"><i class="fas fa-external-link-alt" style="margin-right:4px;"></i> Ouvrir</div></div></a>'
-        // JSON
-        bodyHtml += '<a href="/api/pme/framework?format=json" target="_blank" style="text-decoration:none;"><div style="background:white;border-radius:16px;padding:24px;border:1px solid rgba(0,0,0,0.08);text-align:center;transition:all 0.2s;cursor:pointer;">'
-        bodyHtml += '<div style="background:#f5f3ff;width:56px;height:56px;border-radius:14px;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;font-size:24px;"><i class="fas fa-code" style="color:#7c3aed;"></i></div>'
-        bodyHtml += '<h3 style="font-size:15px;font-weight:700;color:#1a2332;margin-bottom:4px;">Donn\u00e9es JSON</h3>'
-        bodyHtml += '<p style="font-size:12px;color:#64748b;">API brute \u00b7 Int\u00e9gration</p>'
-        bodyHtml += '<div style="margin-top:12px;background:#7c3aed;color:white;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:600;"><i class="fas fa-external-link-alt" style="margin-right:4px;"></i> Voir JSON</div></div></a>'
-        bodyHtml += '</div>'
+              <section class="grid gap-4 md:grid-cols-2">
+                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                  <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <i class="fas fa-download text-emerald-500"></i>
+                    Livrables disponibles
+                  </h2>
+                  <div class="space-y-3">
+                    <a href="/api/pme/framework?format=excel" target="_blank"
+                      class="flex items-center gap-3 p-3 rounded-xl border border-green-300 bg-green-50 hover:bg-green-100 transition ring-2 ring-green-200">
+                      <div class="w-10 h-10 rounded-lg bg-green-600 text-white flex items-center justify-center">
+                        <i class="fas fa-file-excel"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-green-900 text-sm">Framework Excel Complet (8 feuilles)</p>
+                        <p class="text-xs text-green-700">Historique, Marges, Coûts, Trésorerie, Projections, Scénarios, Synthèse</p>
+                        <span class="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-bold">
+                          <i class="fas fa-star text-[8px]"></i> RECOMMANDÉ
+                        </span>
+                      </div>
+                    </a>
+                    <a href="/api/pme/framework?format=html" target="_blank"
+                      class="flex items-center gap-3 p-3 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 transition">
+                      <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                        <i class="fas fa-chart-line"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-emerald-900 text-sm">Synthèse HTML</p>
+                        <p class="text-xs text-emerald-700">Aperçu visuel imprimable avec graphiques</p>
+                      </div>
+                    </a>
+                    <div class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50">
+                      <div class="w-10 h-10 rounded-lg bg-slate-100 text-slate-400 flex items-center justify-center">
+                        <i class="fas fa-file-pdf"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-slate-600 text-sm">PDF Framework Complet</p>
+                        <p class="text-xs text-slate-500">Prochainement disponible</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-        // Alertes
-        if (alertesHtml) {
-          bodyHtml += '<div style="background:white;border-radius:16px;padding:24px;margin-bottom:24px;border:1px solid rgba(0,0,0,0.08);">'
-          bodyHtml += '<h3 style="font-size:16px;font-weight:700;color:#1a2332;margin-bottom:16px;"><i class="fas fa-exclamation-triangle" style="color:#f59e0b;margin-right:8px;"></i>Alertes & Points de vigilance</h3>'
-          bodyHtml += '<div style="display:flex;flex-direction:column;gap:8px;">' + alertesHtml + '</div></div>'
-        }
+                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                  <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <i class="fas fa-chart-bar text-emerald-500"></i>
+                    Blocs Framework renseignés
+                  </h2>
+                  <div class="space-y-3">
+                    {fwBlocks.map((bloc, idx) => {
+                      const quality = bloc.filled ? 100 : 0
+                      const barColor = bloc.filled ? '#059669' : '#e5e7eb'
+                      return (
+                        <div class="space-y-1" key={`fw-${idx}`}>
+                          <div class="flex justify-between text-sm">
+                            <span class="font-medium text-slate-700">{bloc.icon} {bloc.label}</span>
+                            <span class="font-bold" style={`color:${barColor}`}>{bloc.filled ? '✓' : '—'}</span>
+                          </div>
+                          <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div class="h-full rounded-full" style={`width:${quality}%;background:${barColor}`}></div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </section>
 
-        // Forces & Faiblesses
-        bodyHtml += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px;">'
-        bodyHtml += '<div style="background:white;border-radius:16px;padding:24px;border:1px solid rgba(0,0,0,0.08);">'
-        bodyHtml += '<h3 style="font-size:16px;font-weight:700;color:#059669;margin-bottom:12px;"><i class="fas fa-thumbs-up" style="margin-right:8px;"></i> Forces</h3>' + forcesHtml + '</div>'
-        bodyHtml += '<div style="background:white;border-radius:16px;padding:24px;border:1px solid rgba(0,0,0,0.08);">'
-        bodyHtml += '<h3 style="font-size:16px;font-weight:700;color:#d97706;margin-bottom:12px;"><i class="fas fa-exclamation-circle" style="margin-right:8px;"></i> Faiblesses</h3>' + faiblessesHtml + '</div></div>'
+              {/* Framework PME Preview */}
+              {hasInputsData && (
+                <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                      <div class="w-8 h-8 rounded-lg bg-green-600 text-white flex items-center justify-center text-sm">
+                        <i class="fas fa-chart-line"></i>
+                      </div>
+                      <div>
+                        <h2 class="text-base font-semibold text-slate-900">Aperçu du Framework Analyse PME</h2>
+                        <p class="text-xs text-slate-500">Historique, Ratios, Projections 5 ans, Scénarios, Synthèse</p>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <a href="/api/pme/framework?format=html" target="_blank" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-semibold transition">
+                        <i class="fas fa-external-link-alt"></i>
+                        Ouvrir
+                      </a>
+                      <button onClick="window.frames['fwPreview'].contentWindow.print()" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition">
+                        <i class="fas fa-print"></i>
+                        Imprimer / PDF
+                      </button>
+                    </div>
+                  </div>
+                  <iframe name="fwPreview" src="/api/pme/framework?format=html" style="width:100%;height:800px;border:none;" title="Framework Analyse PME"></iframe>
+                </section>
+              )}
 
-        // Feuilles Excel
-        bodyHtml += '<div style="background:white;border-radius:16px;padding:24px;margin-bottom:24px;border:1px solid rgba(0,0,0,0.08);">'
-        bodyHtml += '<h3 style="font-size:16px;font-weight:700;color:#1a2332;margin-bottom:16px;"><i class="fas fa-table" style="color:#2E5090;margin-right:8px;"></i>Contenu du livrable Excel (8 feuilles)</h3>'
-        bodyHtml += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' + sheetsHtml + '</div></div>'
-
-        // Apercu HTML
-        bodyHtml += '<div style="background:white;border-radius:16px;padding:24px;margin-bottom:24px;border:1px solid rgba(0,0,0,0.08);">'
-        bodyHtml += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">'
-        bodyHtml += '<h3 style="font-size:16px;font-weight:700;color:#1a2332;"><i class="fas fa-eye" style="color:#2E5090;margin-right:8px;"></i>Aper\u00e7u du Framework PME</h3>'
-        bodyHtml += '<div style="display:flex;gap:8px;"><a href="/api/pme/framework?format=html" target="_blank" style="background:#2E5090;color:white;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:600;text-decoration:none;"><i class="fas fa-external-link-alt" style="margin-right:4px;"></i> Ouvrir</a>'
-        bodyHtml += '<button onclick="window.frames[\'pmePreview\'].print()" style="background:#64748b;color:white;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:600;border:none;cursor:pointer;"><i class="fas fa-print" style="margin-right:4px;"></i> Imprimer / PDF</button></div></div>'
-        bodyHtml += '<iframe name="pmePreview" src="/api/pme/framework?format=html" style="width:100%;height:600px;border:2px solid #e5e7eb;border-radius:12px;background:white;" loading="lazy"></iframe></div>'
-
-        // Prochaines etapes
-        bodyHtml += '<div style="background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border-radius:16px;padding:24px;margin-bottom:24px;border:1px solid #bae6fd;">'
-        bodyHtml += '<h3 style="font-size:16px;font-weight:700;color:#0c4a6e;margin-bottom:16px;"><i class="fas fa-route" style="margin-right:8px;"></i> Prochaines \u00e9tapes</h3>'
-        bodyHtml += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">'
-        bodyHtml += '<a href="/module/mod3_inputs/video" style="text-decoration:none;display:flex;gap:12px;padding:16px;border-radius:12px;background:white;align-items:center;"><div style="width:40px;height:40px;border-radius:10px;background:#dbeafe;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fas fa-edit" style="color:#2563eb;"></i></div><div><div style="font-size:13px;font-weight:600;color:#1a2332;">Modifier les Inputs</div><div style="font-size:11px;color:#64748b;">Ajuster vos donn\u00e9es financi\u00e8res</div></div></a>'
-        bodyHtml += '<a href="/dashboard" style="text-decoration:none;display:flex;gap:12px;padding:16px;border-radius:12px;background:white;align-items:center;"><div style="width:40px;height:40px;border-radius:10px;background:#f3e8ff;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fas fa-th-large" style="color:#7c3aed;"></i></div><div><div style="font-size:13px;font-weight:600;color:#1a2332;">Retour Dashboard</div><div style="font-size:11px;color:#64748b;">Vue d\'ensemble des modules</div></div></a>'
-        bodyHtml += '</div></div>'
-      }
-
-      return c.html(renderEsanoLayout({
-        pageTitle: 'Framework Analyse PME \u2014 ' + companyName,
-        activeNav: activeNav || 'module_finance_deliverable',
-        navItems: resolvedNavItems,
-        content: <div dangerouslySetInnerHTML={{ __html: bodyHtml }} />,
-        extraScripts
-      }))
+              <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2 mb-4">
+                  <i class="fas fa-rocket text-indigo-500"></i>
+                  Prochaines étapes
+                </h2>
+                <div class="grid gap-4 md:grid-cols-2">
+                  <a href="/module/mod3_inputs/inputs" class="block rounded-2xl border border-slate-200 hover:border-green-300 hover:bg-green-50 transition p-4">
+                    <div class="flex items-center gap-3">
+                      <div class="w-10 h-10 rounded-full bg-green-100 text-green-600 flex items-center justify-center">
+                        <i class="fas fa-pen-to-square"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-slate-900">Modifier les inputs</p>
+                        <p class="text-sm text-slate-600">Ajustez vos données financières.</p>
+                      </div>
+                    </div>
+                  </a>
+                  <a href="/entrepreneur" class="block rounded-2xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 transition p-4">
+                    <div class="flex items-center gap-3">
+                      <div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                        <i class="fas fa-home"></i>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-slate-900">Page principale</p>
+                        <p class="text-sm text-slate-600">Revenez au parcours Investment Readiness.</p>
+                      </div>
+                    </div>
+                  </a>
+                </div>
+              </section>
+            </main>
+          </body>
+        </html>
+      )
     }
     // ═══ End Module 4 Framework Analyse PME ═══
 
