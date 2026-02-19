@@ -1,0 +1,1455 @@
+// ═══════════════════════════════════════════════════════════════════
+// Entrepreneur V2 — Single-page NotebookLM-style interface
+// Upload → Generate → 3-Column Layout (Chat / Visualization / Nav)
+// ═══════════════════════════════════════════════════════════════════
+import { Hono } from 'hono'
+import { getCookie } from 'hono/cookie'
+import { verifyToken } from './auth'
+
+type Bindings = {
+  DB: D1Database
+  ANTHROPIC_API_KEY?: string
+}
+
+export const entrepreneurRoutes = new Hono<{ Bindings: Bindings }>()
+
+// ─── Helpers ───────────────────────────────────────────────────
+function getScoreColor(score: number): string {
+  if (score >= 86) return '#22c55e'
+  if (score >= 71) return '#84cc16'
+  if (score >= 51) return '#eab308'
+  if (score >= 31) return '#f97316'
+  return '#ef4444'
+}
+
+function getScoreLabel(score: number): string {
+  if (score >= 86) return 'Excellent'
+  if (score >= 71) return 'Très bien'
+  if (score >= 51) return 'Correct'
+  if (score >= 31) return 'À renforcer'
+  return 'Insuffisant'
+}
+
+const DELIVERABLE_TYPES = [
+  { type: 'diagnostic', label: 'Diagnostic Expert', icon: 'fa-stethoscope', format: 'HTML / PDF' },
+  { type: 'framework', label: 'Framework Analyse', icon: 'fa-table-cells', format: 'Excel / HTML' },
+  { type: 'bmc_analysis', label: 'BMC Analysé', icon: 'fa-map', format: 'Word / PDF' },
+  { type: 'sic_analysis', label: 'SIC Analysé', icon: 'fa-seedling', format: 'Word / PDF' },
+  { type: 'plan_ovo', label: 'Plan Financier OVO', icon: 'fa-chart-line', format: 'XLSM' },
+  { type: 'business_plan', label: 'Business Plan', icon: 'fa-file-contract', format: 'Word' },
+  { type: 'odd', label: 'ODD (Due Diligence)', icon: 'fa-shield-halved', format: 'Excel' },
+]
+
+// ═══════════════════════════════════════════════════════════════════
+// API ENDPOINTS
+// ═══════════════════════════════════════════════════════════════════
+
+// ─── API: Upload file ───────────────────────────────────────────
+entrepreneurRoutes.post('/api/upload', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const formData = await c.req.formData()
+    const file = formData.get('file') as File | null
+    const category = formData.get('category') as string | null
+
+    if (!file || !category) return c.json({ error: 'Fichier et catégorie requis' }, 400)
+
+    const validCategories = ['bmc', 'sic', 'inputs', 'supplementary']
+    if (!validCategories.includes(category)) return c.json({ error: 'Catégorie invalide' }, 400)
+
+    const ext = file.name.split('.').pop()?.toLowerCase() || ''
+    const allowedByCategory: Record<string, string[]> = {
+      bmc: ['doc', 'docx', 'pdf'],
+      sic: ['doc', 'docx', 'xls', 'xlsx', 'pdf'],
+      inputs: ['xls', 'xlsx', 'csv', 'pdf'],
+      supplementary: ['doc', 'docx', 'xls', 'xlsx', 'pdf', 'csv', 'txt', 'png', 'jpg', 'jpeg']
+    }
+
+    if (!allowedByCategory[category]?.includes(ext)) {
+      return c.json({ error: `Type .${ext} non accepté pour ${category}` }, 400)
+    }
+    if (file.size > 10 * 1024 * 1024) return c.json({ error: 'Fichier trop volumineux (max 10 Mo)' }, 400)
+
+    // Replace existing for primary categories
+    if (category !== 'supplementary') {
+      const existing = await c.env.DB.prepare('SELECT id FROM uploads WHERE user_id = ? AND category = ?')
+        .bind(payload.userId, category).first()
+      if (existing) await c.env.DB.prepare('DELETE FROM uploads WHERE id = ?').bind(existing.id).run()
+    }
+
+    const id = crypto.randomUUID()
+    const r2Key = `uploads/${payload.userId}/${category}/${Date.now()}_${file.name}`
+
+    // Store file content as base64 in extracted_text (local dev)
+    const arrayBuffer = await file.arrayBuffer()
+    const bytes = new Uint8Array(arrayBuffer)
+    let base64 = ''
+    const chunk = 8192
+    for (let i = 0; i < bytes.length; i += chunk) {
+      base64 += String.fromCharCode(...bytes.subarray(i, i + chunk))
+    }
+    base64 = btoa(base64)
+
+    await c.env.DB.prepare(`
+      INSERT INTO uploads (id, user_id, category, filename, r2_key, file_type, file_size, extracted_text, uploaded_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).bind(id, payload.userId, category, file.name, r2Key, file.type, file.size, `base64:${base64.slice(0, 500)}`).run()
+
+    return c.json({ success: true, upload: { id, category, filename: file.name, file_type: file.type, file_size: file.size } })
+  } catch (error: any) {
+    console.error('Upload error:', error)
+    return c.json({ error: "Erreur lors de l'upload" }, 500)
+  }
+})
+
+// ─── API: Delete upload ─────────────────────────────────────────
+entrepreneurRoutes.delete('/api/upload/:id', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const uploadId = c.req.param('id')
+    const upload = await c.env.DB.prepare('SELECT id FROM uploads WHERE id = ? AND user_id = ?')
+      .bind(uploadId, payload.userId).first()
+    if (!upload) return c.json({ error: 'Fichier non trouvé' }, 404)
+
+    await c.env.DB.prepare('DELETE FROM uploads WHERE id = ?').bind(uploadId).run()
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('Delete upload error:', error)
+    return c.json({ error: 'Erreur lors de la suppression' }, 500)
+  }
+})
+
+// ─── API: Get uploads ───────────────────────────────────────────
+entrepreneurRoutes.get('/api/uploads', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const uploads = await c.env.DB.prepare(
+      'SELECT id, category, filename, file_type, file_size, uploaded_at FROM uploads WHERE user_id = ? ORDER BY uploaded_at DESC'
+    ).bind(payload.userId).all()
+    return c.json({ success: true, uploads: uploads.results || [] })
+  } catch (error) {
+    console.error('Get uploads error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+// ─── API: Get iterations ────────────────────────────────────────
+entrepreneurRoutes.get('/api/iterations', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const iterations = await c.env.DB.prepare(
+      'SELECT * FROM iterations WHERE user_id = ? ORDER BY version DESC'
+    ).bind(payload.userId).all()
+    return c.json({ success: true, iterations: iterations.results || [] })
+  } catch (error) {
+    console.error('Get iterations error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+// ─── API: Get deliverables ──────────────────────────────────────
+entrepreneurRoutes.get('/api/deliverables', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const deliverables = await c.env.DB.prepare(`
+      SELECT ed.* FROM entrepreneur_deliverables ed
+      INNER JOIN (SELECT type, MAX(version) as max_version FROM entrepreneur_deliverables WHERE user_id = ? GROUP BY type) latest 
+      ON ed.type = latest.type AND ed.version = latest.max_version
+      WHERE ed.user_id = ?
+    `).bind(payload.userId, payload.userId).all()
+    return c.json({ success: true, deliverables: deliverables.results || [] })
+  } catch (error) {
+    console.error('Get deliverables error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+// ─── API: Get chat messages ─────────────────────────────────────
+entrepreneurRoutes.get('/api/chat/messages', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const messages = await c.env.DB.prepare(
+      'SELECT id, role, content, attached_file_id, triggered_iteration_id, created_at FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC'
+    ).bind(payload.userId).all()
+    return c.json({ success: true, messages: messages.results || [] })
+  } catch (error) {
+    console.error('Get chat messages error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+// ─── API: POST /api/ai/generate-all ─────────────────────────────
+entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    // Rate limit: 5 generations per day
+    const todayStart = new Date()
+    todayStart.setHours(0, 0, 0, 0)
+    const genCount = await c.env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM iterations WHERE user_id = ? AND created_at >= ?"
+    ).bind(payload.userId, todayStart.toISOString()).first()
+    
+    if (genCount && (genCount.cnt as number) >= 5) {
+      return c.json({ error: 'Limite atteinte : maximum 5 générations par jour. Réessayez demain.', retryAfter: 86400 }, 429)
+    }
+
+    // Get uploads
+    const uploads = await c.env.DB.prepare(
+      'SELECT id, category, filename, extracted_text FROM uploads WHERE user_id = ? ORDER BY category'
+    ).bind(payload.userId).all()
+
+    const uploadData = (uploads.results || []) as any[]
+    if (uploadData.filter(u => ['bmc', 'sic', 'inputs'].includes(u.category)).length === 0) {
+      return c.json({ error: 'Aucun document uploadé. Veuillez uploader au moins un fichier.' }, 400)
+    }
+
+    // Get user info
+    const user = await c.env.DB.prepare('SELECT name, email FROM users WHERE id = ?').bind(payload.userId).first()
+    const userName = user?.name || 'Entrepreneur'
+
+    // Get current version
+    const lastIter = await c.env.DB.prepare(
+      'SELECT MAX(version) as maxV FROM iterations WHERE user_id = ?'
+    ).bind(payload.userId).first()
+    const newVersion = ((lastIter?.maxV as number) || 0) + 1
+
+    // Build context from uploads
+    const uploadContext = uploadData.map(u => {
+      const text = u.extracted_text || ''
+      const preview = text.startsWith('base64:') ? `[Fichier binaire: ${u.filename}]` : text.slice(0, 2000)
+      return `=== ${u.category.toUpperCase()}: ${u.filename} ===\n${preview}`
+    }).join('\n\n')
+
+    // Build mega-prompt for Claude
+    const systemPrompt = `Tu es un expert en Investment Readiness pour les PME africaines. Tu analyses les documents fournis (BMC, SIC, Inputs Financiers) et génères 7 livrables structurés.
+
+IMPORTANT: Tu DOIS répondre uniquement avec un JSON valide (pas de markdown, pas de commentaires).
+
+Le JSON doit avoir cette structure exacte:
+{
+  "score_global": <number 0-100>,
+  "scores_dimensions": {
+    "modele_economique": <number 0-100>,
+    "impact_social": <number 0-100>,
+    "viabilite_financiere": <number 0-100>,
+    "equipe_gouvernance": <number 0-100>,
+    "maturite_operationnelle": <number 0-100>
+  },
+  "deliverables": {
+    "diagnostic": {
+      "score": <number>,
+      "strengths": ["...", "..."],
+      "weaknesses": ["...", "..."],
+      "recommendations": ["...", "..."],
+      "dimensions": [
+        {"name": "Modèle Économique", "score": <number>, "analysis": "..."},
+        {"name": "Impact Social", "score": <number>, "analysis": "..."},
+        {"name": "Viabilité Financière", "score": <number>, "analysis": "..."},
+        {"name": "Équipe & Gouvernance", "score": <number>, "analysis": "..."},
+        {"name": "Maturité Opérationnelle", "score": <number>, "analysis": "..."}
+      ]
+    },
+    "framework": {
+      "score": <number>,
+      "sections": [{"title": "...", "content": "...", "score": <number>}]
+    },
+    "bmc_analysis": {
+      "score": <number>,
+      "blocks": [{"name": "...", "analysis": "...", "score": <number>, "recommendations": ["..."]}]
+    },
+    "sic_analysis": {
+      "score": <number>,
+      "pillars": [{"name": "...", "analysis": "...", "score": <number>, "recommendations": ["..."]}]
+    },
+    "plan_ovo": {
+      "score": <number>,
+      "projections": {"year1": {}, "year3": {}, "year5": {}},
+      "analysis": "..."
+    },
+    "business_plan": {
+      "score": <number>,
+      "sections": [{"title": "...", "content": "..."}]
+    },
+    "odd": {
+      "score": <number>,
+      "criteria": [{"name": "...", "status": "...", "comment": "..."}]
+    }
+  }
+}`
+
+    const userPrompt = `Entrepreneur: ${userName}
+Documents fournis:
+${uploadContext}
+
+Analyse ces documents et génère les 7 livrables Investment Readiness. Score global sur 100.`
+
+    let result: any = null
+    let source = 'fallback'
+
+    // Try Claude API
+    const apiKey = c.env.ANTHROPIC_API_KEY
+    if (apiKey && apiKey !== 'sk-ant-PLACEHOLDER') {
+      try {
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 30000)
+
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 8192,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userPrompt }]
+          }),
+          signal: controller.signal
+        })
+
+        clearTimeout(timeout)
+
+        if (response.ok) {
+          const data = await response.json() as any
+          const text = data?.content?.[0]?.text || ''
+          // Extract JSON from response
+          let jsonStr = text
+          const jsonMatch = text.match(/\{[\s\S]*\}/)
+          if (jsonMatch) jsonStr = jsonMatch[0]
+          
+          try {
+            result = JSON.parse(jsonStr)
+            source = 'claude'
+          } catch {
+            console.error('Failed to parse Claude JSON response')
+          }
+        }
+      } catch (err: any) {
+        console.error('Claude API error:', err.message)
+      }
+    }
+
+    // Fallback: rule-based generation
+    if (!result) {
+      source = 'fallback'
+      const hasB = uploadData.some(u => u.category === 'bmc')
+      const hasS = uploadData.some(u => u.category === 'sic')
+      const hasI = uploadData.some(u => u.category === 'inputs')
+      const baseScore = 20 + (hasB ? 25 : 0) + (hasS ? 25 : 0) + (hasI ? 20 : 0)
+      const dimScore = (base: number) => Math.min(100, base + Math.floor(Math.random() * 15))
+
+      result = {
+        score_global: baseScore,
+        scores_dimensions: {
+          modele_economique: dimScore(hasB ? 60 : 30),
+          impact_social: dimScore(hasS ? 65 : 25),
+          viabilite_financiere: dimScore(hasI ? 55 : 20),
+          equipe_gouvernance: dimScore(40),
+          maturite_operationnelle: dimScore(35)
+        },
+        deliverables: {
+          diagnostic: {
+            score: baseScore,
+            strengths: hasB ? ['Business Model structuré', 'Proposition de valeur identifiée'] : ['Documents fournis pour analyse'],
+            weaknesses: !hasI ? ['Données financières manquantes'] : ['Projections à affiner'],
+            recommendations: ['Compléter tous les documents (BMC + SIC + Financiers)', 'Quantifier les indicateurs clés', 'Renforcer la gouvernance'],
+            dimensions: [
+              { name: 'Modèle Économique', score: dimScore(hasB ? 60 : 30), analysis: hasB ? 'BMC fourni - analyse en cours' : 'BMC non fourni - données limitées' },
+              { name: 'Impact Social', score: dimScore(hasS ? 65 : 25), analysis: hasS ? 'SIC fourni - impact mesurable' : 'SIC non fourni - impact non évalué' },
+              { name: 'Viabilité Financière', score: dimScore(hasI ? 55 : 20), analysis: hasI ? 'Données financières disponibles' : 'Données financières manquantes' },
+              { name: 'Équipe & Gouvernance', score: dimScore(40), analysis: 'Informations de gouvernance limitées' },
+              { name: 'Maturité Opérationnelle', score: dimScore(35), analysis: 'À évaluer plus en détail' }
+            ]
+          },
+          framework: { score: dimScore(baseScore - 5), sections: [{ title: 'Vue d\'ensemble', content: 'Analyse préliminaire basée sur les documents fournis.', score: baseScore }] },
+          bmc_analysis: { score: dimScore(hasB ? 65 : 20), blocks: hasB ? [{ name: 'Proposition de Valeur', analysis: 'Identifiée dans le document BMC', score: 70, recommendations: ['Préciser la différenciation'] }] : [{ name: 'Non disponible', analysis: 'BMC non fourni', score: 0, recommendations: ['Uploader le BMC'] }] },
+          sic_analysis: { score: dimScore(hasS ? 60 : 15), pillars: hasS ? [{ name: 'Impact Social', analysis: 'SIC en cours d\'analyse', score: 65, recommendations: ['Quantifier les indicateurs'] }] : [{ name: 'Non disponible', analysis: 'SIC non fourni', score: 0, recommendations: ['Uploader le SIC'] }] },
+          plan_ovo: { score: dimScore(hasI ? 50 : 10), projections: { year1: { revenue: 0 }, year3: { revenue: 0 }, year5: { revenue: 0 } }, analysis: hasI ? 'Projections basées sur les inputs financiers' : 'Inputs financiers non fournis' },
+          business_plan: { score: dimScore(baseScore - 10), sections: [{ title: 'Résumé', content: 'Business plan préliminaire basé sur les documents disponibles.' }] },
+          odd: { score: dimScore(baseScore - 15), criteria: [{ name: 'Documentation', status: uploadData.length >= 3 ? 'Complet' : 'Partiel', comment: `${uploadData.length} document(s) fourni(s)` }] }
+        }
+      }
+    }
+
+    // Store iteration
+    const iterationId = crypto.randomUUID()
+    await c.env.DB.prepare(`
+      INSERT INTO iterations (id, user_id, version, score_global, scores_dimensions, trigger_type, trigger_message, created_at)
+      VALUES (?, ?, ?, ?, ?, 'initial', ?, datetime('now'))
+    `).bind(iterationId, payload.userId, newVersion, result.score_global, JSON.stringify(result.scores_dimensions), `Génération v${newVersion} (${source})`).run()
+
+    // Store each deliverable
+    for (const dtype of ['diagnostic', 'framework', 'bmc_analysis', 'sic_analysis', 'plan_ovo', 'business_plan', 'odd']) {
+      const delivData = result.deliverables?.[dtype]
+      if (!delivData) continue
+      const delivId = crypto.randomUUID()
+      await c.env.DB.prepare(`
+        INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, iteration_id, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'generated', datetime('now'))
+      `).bind(delivId, payload.userId, dtype, JSON.stringify(delivData), delivData.score || 0, newVersion, iterationId).run()
+    }
+
+    return c.json({
+      success: true,
+      iteration: { id: iterationId, version: newVersion, score_global: result.score_global },
+      source,
+      deliverableCount: 7
+    })
+  } catch (error: any) {
+    console.error('Generate-all error:', error)
+    return c.json({ error: 'Erreur lors de la génération: ' + error.message }, 500)
+  }
+})
+
+// ─── API: POST /api/chat/message ────────────────────────────────
+entrepreneurRoutes.post('/api/chat/message', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const body = await c.req.json()
+    const { message, context } = body
+    if (!message?.trim()) return c.json({ error: 'Message requis' }, 400)
+
+    // Rate limit: 20 messages per hour
+    const oneHourAgo = new Date(Date.now() - 3600000).toISOString()
+    const msgCount = await c.env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM chat_messages WHERE user_id = ? AND role = 'user' AND created_at >= ?"
+    ).bind(payload.userId, oneHourAgo).first()
+    
+    if (msgCount && (msgCount.cnt as number) >= 20) {
+      return c.json({ error: 'Limite atteinte : 20 messages par heure.', retryAfter: 3600 }, 429)
+    }
+
+    // Save user message
+    const userMsgId = crypto.randomUUID()
+    await c.env.DB.prepare(
+      "INSERT INTO chat_messages (id, user_id, role, content, created_at) VALUES (?, ?, 'user', ?, datetime('now'))"
+    ).bind(userMsgId, payload.userId, message).run()
+
+    // Get recent chat history for context
+    const history = await c.env.DB.prepare(
+      'SELECT role, content FROM chat_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 10'
+    ).bind(payload.userId).all()
+    const chatHistory = ((history.results || []) as any[]).reverse()
+
+    // Get latest deliverables for context
+    const delivs = await c.env.DB.prepare(`
+      SELECT type, content, score FROM entrepreneur_deliverables ed
+      INNER JOIN (SELECT type as t, MAX(version) as mv FROM entrepreneur_deliverables WHERE user_id = ? GROUP BY type) l 
+      ON ed.type = l.t AND ed.version = l.mv WHERE ed.user_id = ?
+    `).bind(payload.userId, payload.userId).all()
+
+    const delivContext = ((delivs.results || []) as any[]).map(d => {
+      const parsed = JSON.parse(d.content || '{}')
+      return `[${d.type}] Score: ${d.score}/100`
+    }).join(', ')
+
+    let responseText = ''
+    const apiKey = c.env.ANTHROPIC_API_KEY
+
+    if (apiKey && apiKey !== 'sk-ant-PLACEHOLDER') {
+      try {
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 25000)
+
+        const messages = chatHistory.map((m: any) => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content
+        }))
+
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 2048,
+            system: `Tu es un conseiller Investment Readiness pour PME africaines. L'entrepreneur te pose des questions sur ses livrables. Contexte livrables: ${delivContext}. Réponds en français, de manière concise et actionnable. ${context ? `Contexte actuel: ${context}` : ''}`,
+            messages
+          }),
+          signal: controller.signal
+        })
+
+        clearTimeout(timeout)
+
+        if (res.ok) {
+          const data = await res.json() as any
+          responseText = data?.content?.[0]?.text || "Je n'ai pas pu traiter votre demande."
+        }
+      } catch (err: any) {
+        console.error('Chat Claude error:', err.message)
+      }
+    }
+
+    // Fallback response
+    if (!responseText) {
+      const lowerMsg = message.toLowerCase()
+      if (lowerMsg.includes('score') || lowerMsg.includes('note')) {
+        responseText = `Votre score actuel reflète l'analyse de vos documents. Pour l'améliorer :\n\n1. **Complétez tous les documents** (BMC, SIC, Inputs Financiers)\n2. **Quantifiez vos indicateurs** clés de performance\n3. **Renforcez votre proposition de valeur**\n\nN'hésitez pas à re-uploader des versions améliorées de vos documents.`
+      } else if (lowerMsg.includes('bmc') || lowerMsg.includes('business model')) {
+        responseText = `Pour améliorer votre BMC :\n\n- **Segments clients** : Soyez plus spécifique sur vos cibles\n- **Proposition de valeur** : Chiffrez l'impact\n- **Canaux** : Détaillez votre stratégie de distribution\n- **Flux de revenus** : Précisez vos tarifs et projections\n\nRe-uploadez votre BMC mis à jour pour une nouvelle analyse.`
+      } else if (lowerMsg.includes('financ') || lowerMsg.includes('inputs')) {
+        responseText = `Pour renforcer votre volet financier :\n\n- **Projections** : Fournissez des projections sur 3-5 ans\n- **Hypothèses** : Documentez vos hypothèses de base\n- **KPIs** : Identifiez vos métriques clés\n- **Break-even** : Calculez votre seuil de rentabilité\n\nUn fichier Excel structuré est recommandé.`
+      } else {
+        responseText = `Merci pour votre message. Voici mes recommandations :\n\n1. Assurez-vous que tous vos documents sont à jour\n2. Vérifiez la cohérence entre votre BMC, votre SIC et vos projections financières\n3. Utilisez le bouton "Générer" pour obtenir une nouvelle analyse après mise à jour\n\nPosez-moi une question spécifique sur un livrable pour des conseils plus ciblés.`
+      }
+    }
+
+    // Save assistant response
+    const assistMsgId = crypto.randomUUID()
+    await c.env.DB.prepare(
+      "INSERT INTO chat_messages (id, user_id, role, content, created_at) VALUES (?, ?, 'assistant', ?, datetime('now'))"
+    ).bind(assistMsgId, payload.userId, responseText).run()
+
+    return c.json({
+      success: true,
+      response: { id: assistMsgId, role: 'assistant', content: responseText }
+    })
+  } catch (error: any) {
+    console.error('Chat message error:', error)
+    return c.json({ error: 'Erreur: ' + error.message }, 500)
+  }
+})
+
+// ─── API: Get single deliverable ────────────────────────────────
+entrepreneurRoutes.get('/api/deliverable/:type', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const dtype = c.req.param('type')
+    const deliverable = await c.env.DB.prepare(`
+      SELECT * FROM entrepreneur_deliverables WHERE user_id = ? AND type = ? ORDER BY version DESC LIMIT 1
+    `).bind(payload.userId, dtype).first()
+
+    if (!deliverable) return c.json({ success: true, deliverable: null })
+    return c.json({ success: true, deliverable })
+  } catch (error) {
+    console.error('Get deliverable error:', error)
+    return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+
+// ═══════════════════════════════════════════════════════════════════
+// MAIN PAGE: /entrepreneur
+// ═══════════════════════════════════════════════════════════════════
+entrepreneurRoutes.get('/entrepreneur', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.redirect('/login')
+    const payload = await verifyToken(token)
+    if (!payload) return c.redirect('/login')
+
+    const user = await c.env.DB.prepare('SELECT id, name, email, user_type FROM users WHERE id = ?')
+      .bind(payload.userId).first()
+    if (!user) return c.redirect('/login')
+
+    // Fetch uploads
+    const uploads = await c.env.DB.prepare(
+      'SELECT id, category, filename, file_type, file_size, uploaded_at FROM uploads WHERE user_id = ? ORDER BY uploaded_at DESC'
+    ).bind(payload.userId).all()
+
+    const uploadsByCategory: Record<string, any> = {}
+    const supplementaryFiles: any[] = []
+    for (const u of (uploads.results || []) as any[]) {
+      if (u.category === 'supplementary') supplementaryFiles.push(u)
+      else uploadsByCategory[u.category] = u
+    }
+
+    // Fetch latest iteration
+    const latestIteration = await c.env.DB.prepare(
+      'SELECT * FROM iterations WHERE user_id = ? ORDER BY version DESC LIMIT 1'
+    ).bind(payload.userId).first() as any
+
+    // Fetch all iterations for sidebar
+    const allIterations = await c.env.DB.prepare(
+      'SELECT id, version, score_global, trigger_type, created_at FROM iterations WHERE user_id = ? ORDER BY version DESC LIMIT 20'
+    ).bind(payload.userId).all()
+
+    // Fetch deliverables
+    const deliverables = await c.env.DB.prepare(`
+      SELECT ed.* FROM entrepreneur_deliverables ed
+      INNER JOIN (SELECT type, MAX(version) as max_version FROM entrepreneur_deliverables WHERE user_id = ? GROUP BY type) latest 
+      ON ed.type = latest.type AND ed.version = latest.max_version WHERE ed.user_id = ?
+    `).bind(payload.userId, payload.userId).all()
+
+    const delivMap: Record<string, any> = {}
+    for (const d of (deliverables.results || []) as any[]) {
+      delivMap[d.type] = d
+    }
+
+    // Fetch chat messages
+    const chatMessages = await c.env.DB.prepare(
+      'SELECT id, role, content, created_at FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC LIMIT 50'
+    ).bind(payload.userId).all()
+
+    const score = latestIteration?.score_global ?? -1
+    const version = latestIteration?.version ?? 0
+    const hasGenerated = !!latestIteration
+    const scoresDim = latestIteration?.scores_dimensions ? JSON.parse(latestIteration.scores_dimensions) : null
+
+    const uploadCount = [uploadsByCategory.bmc, uploadsByCategory.sic, uploadsByCategory.inputs].filter(Boolean).length
+    const scoreColor = score >= 0 ? getScoreColor(score) : '#475569'
+
+    const updatedAt = latestIteration?.created_at
+      ? new Date(latestIteration.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : null
+
+    // Generate button state
+    let btnLabel: string, btnSub: string, btnClass: string, btnDisabled: boolean
+    if (uploadCount === 0) {
+      btnLabel = 'GÉNÉRER LES LIVRABLES'; btnSub = '(0/3 — Uploadez au moins un document)'; btnClass = 'ev2-btn--disabled'; btnDisabled = true
+    } else if (uploadCount < 3) {
+      btnLabel = hasGenerated ? 'REGÉNÉRER' : 'GÉNÉRER LES LIVRABLES'
+      btnSub = `(${uploadCount}/3 inputs — Analyse partielle)`
+      btnClass = uploadCount === 1 ? 'ev2-btn--orange' : 'ev2-btn--yellow'; btnDisabled = false
+    } else {
+      btnLabel = hasGenerated ? 'REGÉNÉRER' : 'GÉNÉRER LES LIVRABLES'
+      btnSub = '(3/3 inputs — Analyse complète)'; btnClass = 'ev2-btn--green'; btnDisabled = false
+    }
+
+    // ── Build HTML ──
+    const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESONO | Investment Readiness</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; overflow-x: hidden; }
+    a { color: #0d9488; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    
+    /* ── App Header ── */
+    .ev2-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: #1e293b; border-bottom: 1px solid #334155; position: sticky; top: 0; z-index: 100; }
+    .ev2-header__brand { font-size: 18px; font-weight: 800; color: #0d9488; letter-spacing: 1px; text-decoration: none; }
+    .ev2-header__right { display: flex; align-items: center; gap: 14px; }
+    .ev2-header__user { font-size: 12px; color: #94a3b8; }
+    .ev2-header__user strong { color: #e2e8f0; }
+    .ev2-btn-sm { background: none; border: 1px solid #475569; color: #94a3b8; padding: 5px 12px; border-radius: 6px; font-size: 11px; cursor: pointer; transition: all 0.2s; font-family: inherit; }
+    .ev2-btn-sm:hover { border-color: #0d9488; color: #0d9488; }
+    .ev2-btn-sm--danger:hover { border-color: #ef4444; color: #ef4444; }
+    
+    /* ── Score Banner ── */
+    .ev2-score { background: linear-gradient(135deg, #1e3a5f 0%, #134e4a 100%); border-radius: 14px; padding: 28px 32px; margin: 16px 20px; text-align: center; position: relative; overflow: hidden; }
+    .ev2-score::before { content: ''; position: absolute; inset: 0; background: radial-gradient(circle at 30% 50%, rgba(13,148,136,0.15) 0%, transparent 60%); }
+    .ev2-score * { position: relative; }
+    .ev2-score__title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 3px; color: #94a3b8; margin-bottom: 12px; }
+    .ev2-score__value { font-size: 52px; font-weight: 800; line-height: 1; margin-bottom: 6px; }
+    .ev2-score__bar { width: 100%; max-width: 380px; height: 7px; background: #1e293b; border-radius: 99px; margin: 10px auto; overflow: hidden; }
+    .ev2-score__bar-fill { height: 100%; border-radius: 99px; transition: width 1s ease-out; }
+    .ev2-score__meta { font-size: 12px; color: #64748b; margin-top: 6px; }
+    .ev2-score__meta span { margin: 0 6px; }
+    .ev2-score__placeholder { font-size: 44px; font-weight: 800; color: #475569; }
+    .ev2-score__placeholder-text { font-size: 13px; color: #64748b; margin-top: 6px; }
+    
+    /* ── Upload Section (collapsible when generated) ── */
+    .ev2-upload-section { padding: 0 20px 16px; }
+    .ev2-upload-toggle { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: #1e293b; border-radius: 10px; cursor: pointer; margin-bottom: 12px; border: 1px solid #334155; transition: all 0.2s; }
+    .ev2-upload-toggle:hover { border-color: #475569; }
+    .ev2-upload-toggle__left { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; color: #e2e8f0; }
+    .ev2-upload-toggle__badge { background: #10b981; color: white; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+    .ev2-upload-toggle__chevron { color: #64748b; transition: transform 0.3s; font-size: 12px; }
+    .ev2-upload-toggle--open .ev2-upload-toggle__chevron { transform: rotate(180deg); }
+    .ev2-upload-body { overflow: hidden; transition: max-height 0.4s ease; }
+    .ev2-upload-body--collapsed { max-height: 0; }
+    .ev2-upload-body--open { max-height: 800px; }
+    
+    .ev2-upload-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
+    .ev2-upload-card { background: #1e293b; border: 2px dashed #475569; border-radius: 10px; padding: 20px; text-align: center; cursor: pointer; transition: all 0.25s; position: relative; min-height: 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    .ev2-upload-card:hover { border-color: #0d9488; background: #1a2a3a; }
+    .ev2-upload-card--done { border: 2px solid #10b981; background: #10b98108; }
+    .ev2-upload-card__icon { font-size: 24px; margin-bottom: 10px; color: #64748b; }
+    .ev2-upload-card--done .ev2-upload-card__icon { color: #10b981; }
+    .ev2-upload-card__title { font-size: 14px; font-weight: 600; color: #e2e8f0; margin-bottom: 3px; }
+    .ev2-upload-card__sub { font-size: 11px; color: #64748b; margin-bottom: 10px; }
+    .ev2-upload-card__drop { font-size: 11px; color: #475569; }
+    .ev2-upload-card__status { font-size: 11px; margin-top: 8px; display: flex; align-items: center; gap: 5px; }
+    .ev2-upload-card__status--ok { color: #10b981; font-weight: 500; }
+    .ev2-upload-card__status--wait { color: #64748b; }
+    .ev2-upload-card__rm { position: absolute; top: 6px; right: 6px; background: #ef444420; color: #ef4444; border: none; width: 22px; height: 22px; border-radius: 50%; cursor: pointer; font-size: 10px; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s; }
+    .ev2-upload-card:hover .ev2-upload-card__rm { opacity: 1; }
+    .ev2-upload-card input[type="file"] { display: none; }
+    
+    .ev2-supplementary { background: #1e293b; border: 1px dashed #334155; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    .ev2-supplementary__head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .ev2-supplementary__title { font-size: 13px; font-weight: 600; color: #94a3b8; }
+    .ev2-supplementary__badge { font-size: 10px; background: #33415520; color: #64748b; padding: 2px 8px; border-radius: 99px; }
+    .ev2-supplementary__zone { border: 1px dashed #475569; border-radius: 8px; padding: 14px; text-align: center; cursor: pointer; transition: border-color 0.2s; }
+    .ev2-supplementary__zone:hover { border-color: #0d9488; }
+    .ev2-supplementary__zone p { font-size: 11px; color: #475569; }
+    .ev2-supplementary__list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .ev2-supplementary__file { display: flex; align-items: center; gap: 5px; background: #0f172a; padding: 5px 8px; border-radius: 5px; font-size: 11px; color: #94a3b8; }
+    .ev2-supplementary__file button { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 10px; }
+    
+    /* ── Generate Button ── */
+    .ev2-gen { text-align: center; padding: 4px 20px 24px; }
+    .ev2-gen__btn { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; padding: 14px 44px; border: none; border-radius: 10px; font-family: inherit; cursor: pointer; transition: all 0.3s; font-size: 15px; font-weight: 700; letter-spacing: 0.5px; }
+    .ev2-gen__btn:disabled { cursor: not-allowed; }
+    .ev2-gen__sub { font-size: 11px; font-weight: 400; opacity: 0.8; }
+    .ev2-btn--disabled { background: #334155; color: #64748b; }
+    .ev2-btn--orange { background: linear-gradient(135deg, #f97316, #ea580c); color: white; box-shadow: 0 4px 20px #f9731640; }
+    .ev2-btn--orange:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 25px #f9731660; }
+    .ev2-btn--yellow { background: linear-gradient(135deg, #eab308, #ca8a04); color: #1e293b; box-shadow: 0 4px 20px #eab30840; }
+    .ev2-btn--yellow:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 25px #eab30860; }
+    .ev2-btn--green { background: linear-gradient(135deg, #10b981, #059669); color: white; box-shadow: 0 4px 20px #10b98140; }
+    .ev2-btn--green:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 25px #10b98160; }
+    
+    /* ── Loading ── */
+    .ev2-loading { display: none; text-align: center; padding: 36px 20px; }
+    .ev2-loading--active { display: block; }
+    .ev2-loading__spinner { width: 44px; height: 44px; border: 4px solid #1e293b; border-top-color: #0d9488; border-radius: 50%; animation: ev2spin 0.8s linear infinite; margin: 0 auto 16px; }
+    .ev2-loading__step { font-size: 13px; color: #94a3b8; margin-bottom: 3px; }
+    .ev2-loading__step--active { color: #0d9488; font-weight: 600; }
+    .ev2-loading__step--done { color: #10b981; }
+    @keyframes ev2spin { to { transform: rotate(360deg); } }
+    
+    /* ═══ 3-COLUMN LAYOUT ═══ */
+    .ev2-layout { display: none; height: calc(100vh - 52px - 130px); }
+    .ev2-layout--active { display: flex; }
+    
+    /* ── Left: Chat & Iterations ── */
+    .ev2-left { width: 25%; min-width: 280px; background: #111827; border-right: 1px solid #334155; display: flex; flex-direction: column; }
+    .ev2-left__section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #64748b; padding: 14px 16px 8px; }
+    
+    /* Iterations list */
+    .ev2-iterations { overflow-y: auto; max-height: 180px; padding: 0 12px 8px; }
+    .ev2-iteration { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: 8px; margin-bottom: 4px; cursor: pointer; transition: background 0.2s; font-size: 12px; }
+    .ev2-iteration:hover { background: #1e293b; }
+    .ev2-iteration--active { background: #0d948820; border: 1px solid #0d9488; }
+    .ev2-iteration__ver { font-weight: 700; color: #e2e8f0; }
+    .ev2-iteration__score { color: #0d9488; font-weight: 600; }
+    .ev2-iteration__time { color: #64748b; font-size: 11px; }
+    .ev2-iteration__badge { background: #0d9488; color: white; font-size: 9px; padding: 1px 6px; border-radius: 99px; font-weight: 600; }
+    
+    /* Chat area */
+    .ev2-chat { flex: 1; display: flex; flex-direction: column; border-top: 1px solid #334155; }
+    .ev2-chat__messages { flex: 1; overflow-y: auto; padding: 12px; }
+    .ev2-chat__bubble { max-width: 85%; margin-bottom: 10px; padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .ev2-chat__bubble--user { background: #0d9488; color: white; margin-left: auto; border-bottom-right-radius: 4px; }
+    .ev2-chat__bubble--ai { background: #1e293b; color: #e2e8f0; margin-right: auto; border-bottom-left-radius: 4px; }
+    .ev2-chat__input-area { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid #334155; background: #0f172a; }
+    .ev2-chat__input { flex: 1; background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 10px 14px; color: #e2e8f0; font-size: 13px; font-family: inherit; resize: none; outline: none; min-height: 40px; max-height: 100px; }
+    .ev2-chat__input:focus { border-color: #0d9488; }
+    .ev2-chat__send { background: #0d9488; border: none; color: white; padding: 0 16px; border-radius: 8px; cursor: pointer; font-size: 14px; transition: background 0.2s; }
+    .ev2-chat__send:hover { background: #0f766e; }
+    .ev2-chat__send:disabled { background: #334155; cursor: not-allowed; }
+    
+    /* ── Center: Visualization ── */
+    .ev2-center { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .ev2-center__header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; background: #1e293b; border-bottom: 1px solid #334155; }
+    .ev2-center__title { font-size: 15px; font-weight: 700; color: #e2e8f0; display: flex; align-items: center; gap: 8px; }
+    .ev2-center__actions { display: flex; gap: 8px; }
+    .ev2-center__content { flex: 1; overflow-y: auto; padding: 20px; }
+    
+    /* Diagnostic view */
+    .ev2-diag { }
+    .ev2-diag__dims { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .ev2-diag__dim { background: #1e293b; border-radius: 10px; padding: 16px; }
+    .ev2-diag__dim-name { font-size: 12px; font-weight: 600; color: #94a3b8; margin-bottom: 8px; }
+    .ev2-diag__dim-score { font-size: 28px; font-weight: 800; margin-bottom: 6px; }
+    .ev2-diag__dim-bar { height: 5px; background: #0f172a; border-radius: 99px; overflow: hidden; }
+    .ev2-diag__dim-bar-fill { height: 100%; border-radius: 99px; }
+    .ev2-diag__dim-text { font-size: 11px; color: #64748b; margin-top: 6px; }
+    .ev2-diag__section { margin-bottom: 20px; }
+    .ev2-diag__section-title { font-size: 14px; font-weight: 700; color: #e2e8f0; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+    .ev2-diag__list { list-style: none; }
+    .ev2-diag__list li { padding: 8px 12px; background: #1e293b; border-radius: 6px; margin-bottom: 4px; font-size: 13px; display: flex; align-items: flex-start; gap: 8px; }
+    .ev2-diag__list li i { margin-top: 3px; font-size: 11px; }
+    
+    /* Generic deliverable view */
+    .ev2-deliv-view { }
+    .ev2-deliv-view__score { text-align: center; margin-bottom: 20px; }
+    .ev2-deliv-view__score-num { font-size: 40px; font-weight: 800; }
+    .ev2-deliv-view__section { background: #1e293b; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+    .ev2-deliv-view__section h3 { font-size: 14px; font-weight: 700; margin-bottom: 8px; color: #e2e8f0; }
+    .ev2-deliv-view__section p { font-size: 13px; color: #94a3b8; line-height: 1.6; }
+    .ev2-deliv-view__block { background: #0f172a; border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+    .ev2-deliv-view__block h4 { font-size: 13px; font-weight: 600; color: #e2e8f0; margin-bottom: 4px; }
+    .ev2-deliv-view__block p { font-size: 12px; color: #94a3b8; }
+    .ev2-deliv-view__tag { display: inline-block; background: #0d948820; color: #0d9488; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin: 2px 2px 2px 0; }
+    
+    /* ── Right: Navigation ── */
+    .ev2-right { width: 25%; min-width: 240px; background: #111827; border-left: 1px solid #334155; display: flex; flex-direction: column; }
+    .ev2-right__title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #64748b; padding: 14px 16px 8px; }
+    .ev2-right__list { flex: 1; overflow-y: auto; padding: 0 12px; }
+    .ev2-nav-item { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 10px; margin-bottom: 6px; cursor: pointer; transition: all 0.2s; border: 1px solid transparent; }
+    .ev2-nav-item:hover { background: #1e293b; }
+    .ev2-nav-item--active { background: #0d948815; border-color: #0d9488; }
+    .ev2-nav-item__icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; }
+    .ev2-nav-item__icon--available { background: #10b98120; color: #10b981; }
+    .ev2-nav-item__icon--pending { background: #eab30820; color: #eab308; }
+    .ev2-nav-item__icon--none { background: #47556920; color: #475569; }
+    .ev2-nav-item__info { flex: 1; min-width: 0; }
+    .ev2-nav-item__name { font-size: 13px; font-weight: 600; color: #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ev2-nav-item__status { font-size: 11px; color: #64748b; }
+    .ev2-nav-item__score { font-size: 14px; font-weight: 700; }
+    .ev2-right__actions { padding: 12px; border-top: 1px solid #334155; }
+    .ev2-download-all { width: 100%; padding: 10px; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #e2e8f0; font-size: 12px; font-weight: 600; font-family: inherit; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .ev2-download-all:hover { border-color: #0d9488; color: #0d9488; }
+    
+    /* ── Mobile Chat Drawer ── */
+    .ev2-chat-fab { display: none; position: fixed; bottom: 20px; right: 20px; width: 52px; height: 52px; background: #0d9488; border: none; border-radius: 50%; color: white; font-size: 20px; cursor: pointer; box-shadow: 0 4px 20px #0d948860; z-index: 90; }
+    .ev2-drawer { display: none; }
+    
+    /* ── Empty state ── */
+    .ev2-empty { text-align: center; padding: 60px 20px; }
+    .ev2-empty__icon { font-size: 48px; color: #334155; margin-bottom: 16px; }
+    .ev2-empty__text { font-size: 15px; color: #64748b; margin-bottom: 8px; }
+    .ev2-empty__sub { font-size: 13px; color: #475569; }
+    
+    /* ── Module cards (Prompt 3) ── */
+    .ev2-modules { padding: 0 20px 24px; }
+    .ev2-modules__title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #64748b; margin-bottom: 12px; }
+    .ev2-modules__grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .ev2-mod-card { background: #1e293b; border-radius: 10px; padding: 18px; text-align: center; transition: all 0.25s; cursor: pointer; border: 1px solid #334155; text-decoration: none; }
+    .ev2-mod-card:hover { border-color: #0d9488; transform: translateY(-2px); text-decoration: none; }
+    .ev2-mod-card__icon { font-size: 24px; color: #0d9488; margin-bottom: 8px; }
+    .ev2-mod-card__name { font-size: 13px; font-weight: 600; color: #e2e8f0; margin-bottom: 4px; }
+    .ev2-mod-card__desc { font-size: 11px; color: #64748b; }
+    
+    /* ── Responsive ── */
+    @media (max-width: 768px) {
+      .ev2-upload-grid { grid-template-columns: 1fr; }
+      .ev2-layout--active { flex-direction: column; height: auto; }
+      .ev2-left { display: none; }
+      .ev2-right { width: 100%; min-width: unset; border-left: none; border-top: 1px solid #334155; }
+      .ev2-right__list { display: flex; overflow-x: auto; padding: 8px 12px; gap: 8px; }
+      .ev2-nav-item { min-width: 140px; flex-direction: column; text-align: center; gap: 6px; }
+      .ev2-center { min-height: 60vh; }
+      .ev2-chat-fab { display: flex; align-items: center; justify-content: center; }
+      .ev2-drawer { position: fixed; bottom: 0; left: 0; right: 0; height: 60vh; background: #111827; border-top: 2px solid #0d9488; z-index: 95; flex-direction: column; border-radius: 16px 16px 0 0; }
+      .ev2-drawer--open { display: flex; }
+      .ev2-drawer__handle { text-align: center; padding: 8px; cursor: pointer; }
+      .ev2-drawer__handle span { display: inline-block; width: 40px; height: 4px; background: #475569; border-radius: 99px; }
+      .ev2-modules__grid { grid-template-columns: repeat(2, 1fr); }
+      .ev2-score { margin: 12px 16px; padding: 20px; }
+      .ev2-score__value { font-size: 36px; }
+    }
+    @media (min-width: 769px) and (max-width: 1200px) {
+      .ev2-left { position: fixed; left: -300px; top: 52px; bottom: 0; width: 300px; z-index: 80; transition: left 0.3s; }
+      .ev2-left--open { left: 0; box-shadow: 4px 0 20px rgba(0,0,0,0.5); }
+      .ev2-chat-fab { display: flex; align-items: center; justify-content: center; }
+      .ev2-layout--active { }
+      .ev2-modules__grid { grid-template-columns: repeat(3, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <!-- ═══ HEADER ═══ -->
+  <header class="ev2-header">
+    <a href="/entrepreneur" class="ev2-header__brand">ESONO</a>
+    <div class="ev2-header__right">
+      <span class="ev2-header__user"><strong>${user.name}</strong> · ${user.email}</span>
+      <a href="/dashboard?classic=1" class="ev2-btn-sm" title="Vue classique modules"><i class="fas fa-table-columns"></i> Modules</a>
+      <button class="ev2-btn-sm ev2-btn-sm--danger" onclick="fetch('/api/logout',{method:'POST',credentials:'include'}).then(()=>location.href='/login')">
+        <i class="fas fa-right-from-bracket"></i> Déconnexion
+      </button>
+    </div>
+  </header>
+
+  <!-- ═══ SCORE BANNER ═══ -->
+  <section class="ev2-score">
+    <div class="ev2-score__title">Investment Readiness</div>
+    ${score >= 0 ? `
+      <div class="ev2-score__value" style="color:${scoreColor}">Score : ${score}/100</div>
+      <div class="ev2-score__bar"><div class="ev2-score__bar-fill" style="width:${score}%;background:${scoreColor};"></div></div>
+      <div class="ev2-score__meta">
+        <span><i class="fas fa-clock"></i> ${updatedAt}</span>
+        <span><i class="fas fa-code-branch"></i> v${version}</span>
+        <span><i class="fas fa-robot"></i> ${getScoreLabel(score)}</span>
+      </div>
+    ` : `
+      <div class="ev2-score__placeholder">— /100</div>
+      <div class="ev2-score__bar"><div class="ev2-score__bar-fill" style="width:0%;background:#475569;"></div></div>
+      <div class="ev2-score__placeholder-text">Uploadez vos documents pour commencer</div>
+    `}
+  </section>
+
+  <!-- ═══ UPLOAD SECTION (collapsible after generation) ═══ -->
+  <section class="ev2-upload-section">
+    ${hasGenerated ? `
+      <div class="ev2-upload-toggle ${hasGenerated ? '' : 'ev2-upload-toggle--open'}" id="upload-toggle" onclick="toggleUpload()">
+        <div class="ev2-upload-toggle__left">
+          <i class="fas fa-cloud-arrow-up"></i>
+          <span>Fichiers uploadés</span>
+          <span class="ev2-upload-toggle__badge">${uploadCount}/3</span>
+        </div>
+        <span class="ev2-upload-toggle__chevron"><i class="fas fa-chevron-down"></i></span>
+      </div>
+    ` : ''}
+    <div class="ev2-upload-body ${hasGenerated ? 'ev2-upload-body--collapsed' : 'ev2-upload-body--open'}" id="upload-body">
+      <div class="ev2-upload-grid">
+        ${renderUploadCard('bmc', 'Business Model Canvas', 'fa-map', 'Word, PDF', '.doc,.docx,.pdf', uploadsByCategory.bmc)}
+        ${renderUploadCard('sic', "Stratégie d'Impact & Croissance", 'fa-seedling', 'Word, Excel, PDF', '.doc,.docx,.xls,.xlsx,.pdf', uploadsByCategory.sic)}
+        ${renderUploadCard('inputs', 'Inputs Financiers', 'fa-chart-line', 'Excel (recommandé)', '.xls,.xlsx,.csv,.pdf', uploadsByCategory.inputs)}
+      </div>
+      <div class="ev2-supplementary">
+        <div class="ev2-supplementary__head">
+          <i class="fas fa-folder-plus" style="color:#64748b;"></i>
+          <span class="ev2-supplementary__title">Documents supplémentaires</span>
+          <span class="ev2-supplementary__badge">Optionnel</span>
+        </div>
+        <div class="ev2-supplementary__zone" onclick="document.getElementById('file-supplementary').click()">
+          <p><i class="fas fa-cloud-arrow-up"></i> Glisser ou cliquer pour ajouter</p>
+          <input type="file" id="file-supplementary" multiple accept=".doc,.docx,.xls,.xlsx,.pdf,.csv,.txt,.png,.jpg,.jpeg" onchange="handleSuppUpload(this)" style="display:none;">
+        </div>
+        <div class="ev2-supplementary__list" id="supp-list">
+          ${supplementaryFiles.map((f: any) => `<div class="ev2-supplementary__file" id="supp-${f.id}"><i class="fas fa-file"></i> ${f.filename} <button onclick="rmUpload('${f.id}')"><i class="fas fa-times"></i></button></div>`).join('')}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ GENERATE BUTTON ═══ -->
+  <section class="ev2-gen" id="gen-section">
+    <button class="ev2-gen__btn ${btnClass}" id="btn-gen" ${btnDisabled ? 'disabled' : ''} onclick="generateAll()">
+      <span><i class="fas fa-wand-magic-sparkles"></i> ${btnLabel}</span>
+      <span class="ev2-gen__sub">${btnSub}</span>
+    </button>
+  </section>
+
+  <!-- ═══ LOADING ═══ -->
+  <section class="ev2-loading" id="loading-section">
+    <div class="ev2-loading__spinner"></div>
+    <div class="ev2-loading__step" id="step-extract"><i class="fas fa-file-lines"></i> Extraction des documents...</div>
+    <div class="ev2-loading__step" id="step-analyze"><i class="fas fa-brain"></i> Analyse par l'IA...</div>
+    <div class="ev2-loading__step" id="step-gen"><i class="fas fa-file-export"></i> Génération des livrables...</div>
+    <div class="ev2-loading__step" id="step-done"><i class="fas fa-check-circle"></i> Terminé !</div>
+  </section>
+
+  <!-- ═══ 3-COLUMN LAYOUT (visible after generation) ═══ -->
+  <section class="ev2-layout ${hasGenerated ? 'ev2-layout--active' : ''}" id="three-col">
+    <!-- LEFT: Chat & Iterations -->
+    <div class="ev2-left" id="left-panel">
+      <div class="ev2-left__section-title">Itérations</div>
+      <div class="ev2-iterations" id="iterations-list">
+        ${((allIterations.results || []) as any[]).map((it: any) => {
+          const isActive = it.version === version
+          const itTime = it.created_at ? new Date(it.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : ''
+          return `<div class="ev2-iteration ${isActive ? 'ev2-iteration--active' : ''}" data-version="${it.version}">
+            <div>
+              <span class="ev2-iteration__ver">v${it.version}</span>
+              <span class="ev2-iteration__time"> — ${itTime}</span>
+            </div>
+            <div>
+              <span class="ev2-iteration__score">${it.score_global}/100</span>
+              ${isActive ? '<span class="ev2-iteration__badge">actuelle</span>' : ''}
+            </div>
+          </div>`
+        }).join('')}
+      </div>
+      
+      <div class="ev2-chat">
+        <div class="ev2-left__section-title">Chat IA</div>
+        <div class="ev2-chat__messages" id="chat-messages">
+          ${((chatMessages.results || []) as any[]).map((msg: any) => 
+            `<div class="ev2-chat__bubble ev2-chat__bubble--${msg.role === 'user' ? 'user' : 'ai'}">${escapeHtml(msg.content)}</div>`
+          ).join('') || '<div style="text-align:center;padding:20px;color:#475569;font-size:12px;"><i class="fas fa-robot" style="font-size:20px;margin-bottom:8px;display:block;"></i>Posez une question sur vos livrables</div>'}
+        </div>
+        <div class="ev2-chat__input-area">
+          <textarea class="ev2-chat__input" id="chat-input" placeholder="Posez une question..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
+          <button class="ev2-chat__send" id="chat-send" onclick="sendChat()"><i class="fas fa-paper-plane"></i></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTER: Visualization -->
+    <div class="ev2-center">
+      <div class="ev2-center__header">
+        <div class="ev2-center__title" id="center-title"><i class="fas fa-stethoscope"></i> Diagnostic Expert</div>
+        <div class="ev2-center__actions">
+          <button class="ev2-btn-sm" onclick="alert('Téléchargement PDF à venir')"><i class="fas fa-file-pdf"></i> PDF</button>
+          <button class="ev2-btn-sm" onclick="alert('Téléchargement HTML à venir')"><i class="fas fa-code"></i> HTML</button>
+        </div>
+      </div>
+      <div class="ev2-center__content" id="center-content">
+        ${hasGenerated ? renderDiagnosticView(delivMap.diagnostic, scoresDim) : renderEmptyState()}
+      </div>
+    </div>
+
+    <!-- RIGHT: Navigation -->
+    <div class="ev2-right">
+      <div class="ev2-right__title">Livrables</div>
+      <div class="ev2-right__list" id="nav-list">
+        ${DELIVERABLE_TYPES.map((dt, idx) => {
+          const d = delivMap[dt.type]
+          const available = !!d
+          const dScore = d?.score ?? 0
+          return `<div class="ev2-nav-item ${idx === 0 ? 'ev2-nav-item--active' : ''}" data-type="${dt.type}" onclick="selectDeliverable('${dt.type}')">
+            <div class="ev2-nav-item__icon ev2-nav-item__icon--${available ? 'available' : 'none'}">
+              <i class="fas ${dt.icon}"></i>
+            </div>
+            <div class="ev2-nav-item__info">
+              <div class="ev2-nav-item__name">${dt.label}</div>
+              <div class="ev2-nav-item__status">${available ? `${dt.format} · Disponible` : 'Non généré'}</div>
+            </div>
+            ${available ? `<div class="ev2-nav-item__score" style="color:${getScoreColor(dScore)}">${dScore}</div>` : ''}
+          </div>`
+        }).join('')}
+      </div>
+      <div class="ev2-right__actions">
+        <button class="ev2-download-all" onclick="alert('Téléchargement ZIP à venir')">
+          <i class="fas fa-download"></i> Télécharger TOUT (.zip)
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ MODULE CARDS (Prompt 3) ═══ -->
+  <section class="ev2-modules">
+    <div class="ev2-modules__title">Modules détaillés</div>
+    <div class="ev2-modules__grid">
+      <a href="/module/mod1_bmc/questions" class="ev2-mod-card"><div class="ev2-mod-card__icon"><i class="fas fa-map"></i></div><div class="ev2-mod-card__name">BMC</div><div class="ev2-mod-card__desc">Business Model Canvas</div></a>
+      <a href="/module/mod2_sic/questions" class="ev2-mod-card"><div class="ev2-mod-card__icon"><i class="fas fa-seedling"></i></div><div class="ev2-mod-card__name">SIC</div><div class="ev2-mod-card__desc">Stratégie d'Impact</div></a>
+      <a href="/module/mod3_inputs/inputs" class="ev2-mod-card"><div class="ev2-mod-card__icon"><i class="fas fa-chart-line"></i></div><div class="ev2-mod-card__name">Inputs</div><div class="ev2-mod-card__desc">Données Financières</div></a>
+      <a href="/module/mod4_framework/questions" class="ev2-mod-card"><div class="ev2-mod-card__icon"><i class="fas fa-table-cells"></i></div><div class="ev2-mod-card__name">Framework</div><div class="ev2-mod-card__desc">Analyse PME</div></a>
+      <a href="/module/mod1_bmc/analysis" class="ev2-mod-card"><div class="ev2-mod-card__icon"><i class="fas fa-magnifying-glass-chart"></i></div><div class="ev2-mod-card__name">Diagnostic</div><div class="ev2-mod-card__desc">Évaluation globale</div></a>
+      <a href="/module/mod3_inputs/inputs" class="ev2-mod-card"><div class="ev2-mod-card__icon"><i class="fas fa-coins"></i></div><div class="ev2-mod-card__name">Plan OVO</div><div class="ev2-mod-card__desc">Projections financières</div></a>
+      <a href="/module/mod1_bmc/deliverable" class="ev2-mod-card"><div class="ev2-mod-card__icon"><i class="fas fa-file-contract"></i></div><div class="ev2-mod-card__name">Business Plan</div><div class="ev2-mod-card__desc">Document synthèse</div></a>
+      <a href="/module/mod2_sic/deliverable" class="ev2-mod-card"><div class="ev2-mod-card__icon"><i class="fas fa-shield-halved"></i></div><div class="ev2-mod-card__name">ODD</div><div class="ev2-mod-card__desc">Due Diligence</div></a>
+    </div>
+  </section>
+
+  <!-- ═══ Mobile Chat FAB ═══ -->
+  <button class="ev2-chat-fab" id="chat-fab" onclick="toggleChatDrawer()"><i class="fas fa-comments"></i></button>
+  <div class="ev2-drawer" id="chat-drawer">
+    <div class="ev2-drawer__handle" onclick="toggleChatDrawer()"><span></span></div>
+    <div class="ev2-chat__messages" id="chat-messages-mobile" style="flex:1;overflow-y:auto;padding:12px;"></div>
+    <div class="ev2-chat__input-area">
+      <textarea class="ev2-chat__input" id="chat-input-mobile" placeholder="Posez une question..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat('mobile')}"></textarea>
+      <button class="ev2-chat__send" onclick="sendChat('mobile')"><i class="fas fa-paper-plane"></i></button>
+    </div>
+  </div>
+
+  <script>
+    // ── State ──
+    let currentDelivType = 'diagnostic';
+    const deliverables = ${JSON.stringify(delivMap)};
+    const scoresDim = ${JSON.stringify(scoresDim)};
+
+    // ── Upload toggle ──
+    function toggleUpload() {
+      const toggle = document.getElementById('upload-toggle');
+      const body = document.getElementById('upload-body');
+      if (!toggle || !body) return;
+      const isOpen = body.classList.contains('ev2-upload-body--open');
+      body.classList.toggle('ev2-upload-body--open', !isOpen);
+      body.classList.toggle('ev2-upload-body--collapsed', isOpen);
+      toggle.classList.toggle('ev2-upload-toggle--open', !isOpen);
+    }
+
+    // ── File upload ──
+    async function handleUpload(input, cat) {
+      const file = input.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('category', cat);
+      try {
+        const res = await fetch('/api/upload', { method: 'POST', body: fd, credentials: 'include' });
+        const d = await res.json();
+        if (d.success) location.reload();
+        else alert(d.error || 'Erreur');
+      } catch (e) { alert('Erreur réseau: ' + e.message); }
+    }
+
+    async function handleSuppUpload(input) {
+      for (const file of input.files) {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('category', 'supplementary');
+        try { await fetch('/api/upload', { method: 'POST', body: fd, credentials: 'include' }); } catch {}
+      }
+      location.reload();
+    }
+
+    async function rmUpload(id) {
+      try { await fetch('/api/upload/' + id, { method: 'DELETE', credentials: 'include' }); location.reload(); } catch (e) { alert('Erreur: ' + e.message); }
+    }
+
+    // ── Generate ──
+    async function generateAll() {
+      const btn = document.getElementById('btn-gen');
+      const load = document.getElementById('loading-section');
+      const gen = document.getElementById('gen-section');
+      btn.disabled = true;
+      gen.style.display = 'none';
+      load.classList.add('ev2-loading--active');
+      
+      const steps = ['step-extract', 'step-analyze', 'step-gen', 'step-done'];
+      function setStep(idx) {
+        steps.forEach((s, i) => {
+          const el = document.getElementById(s);
+          el.className = 'ev2-loading__step' + (i < idx ? ' ev2-loading__step--done' : i === idx ? ' ev2-loading__step--active' : '');
+        });
+      }
+      setStep(0);
+      const t1 = setTimeout(() => setStep(1), 2000);
+      const t2 = setTimeout(() => setStep(2), 12000);
+      
+      try {
+        const res = await fetch('/api/ai/generate-all', { method: 'POST', credentials: 'include' });
+        const data = await res.json();
+        clearTimeout(t1); clearTimeout(t2);
+        if (data.success) { setStep(3); setTimeout(() => location.reload(), 1200); }
+        else { alert(data.error || 'Erreur'); gen.style.display = ''; load.classList.remove('ev2-loading--active'); btn.disabled = false; }
+      } catch (e) { clearTimeout(t1); clearTimeout(t2); alert('Erreur: ' + e.message); gen.style.display = ''; load.classList.remove('ev2-loading--active'); btn.disabled = false; }
+    }
+
+    // ── Select deliverable ──
+    function selectDeliverable(type) {
+      currentDelivType = type;
+      // Update nav active
+      document.querySelectorAll('.ev2-nav-item').forEach(el => {
+        el.classList.toggle('ev2-nav-item--active', el.dataset.type === type);
+      });
+      // Update title
+      const types = ${JSON.stringify(DELIVERABLE_TYPES)};
+      const dt = types.find(t => t.type === type);
+      document.getElementById('center-title').innerHTML = '<i class="fas ' + (dt?.icon || 'fa-file') + '"></i> ' + (dt?.label || type);
+      // Render content
+      renderDeliverableContent(type);
+    }
+
+    function renderDeliverableContent(type) {
+      const el = document.getElementById('center-content');
+      const data = deliverables[type];
+      if (!data) {
+        el.innerHTML = '<div class="ev2-empty"><div class="ev2-empty__icon"><i class="fas fa-file-circle-question"></i></div><div class="ev2-empty__text">Livrable non encore généré</div><div class="ev2-empty__sub">Cliquez sur "Générer" pour créer ce livrable</div></div>';
+        return;
+      }
+      
+      let content;
+      try { content = typeof data.content === 'string' ? JSON.parse(data.content) : data.content; } catch { content = {}; }
+      const score = data.score || content.score || 0;
+      const sColor = getScoreColor(score);
+      
+      if (type === 'diagnostic') {
+        el.innerHTML = renderDiagHTML(content, scoresDim, score, sColor);
+      } else if (type === 'bmc_analysis') {
+        el.innerHTML = renderBMCHTML(content, score, sColor);
+      } else if (type === 'sic_analysis') {
+        el.innerHTML = renderSICHTML(content, score, sColor);
+      } else if (type === 'plan_ovo') {
+        el.innerHTML = renderOVOHTML(content, score, sColor);
+      } else {
+        el.innerHTML = renderGenericHTML(content, score, sColor, type);
+      }
+    }
+
+    function getScoreColor(s) { return s >= 86 ? '#22c55e' : s >= 71 ? '#84cc16' : s >= 51 ? '#eab308' : s >= 31 ? '#f97316' : '#ef4444'; }
+    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+    function renderDiagHTML(c, dims, score, col) {
+      const d = c.dimensions || [];
+      let html = '<div class="ev2-diag">';
+      html += '<div class="ev2-diag__dims">';
+      for (const dim of d) {
+        const dc = getScoreColor(dim.score || 0);
+        html += '<div class="ev2-diag__dim"><div class="ev2-diag__dim-name">' + esc(dim.name) + '</div><div class="ev2-diag__dim-score" style="color:' + dc + '">' + (dim.score||0) + '/100</div><div class="ev2-diag__dim-bar"><div class="ev2-diag__dim-bar-fill" style="width:' + (dim.score||0) + '%;background:' + dc + '"></div></div><div class="ev2-diag__dim-text">' + esc(dim.analysis||'') + '</div></div>';
+      }
+      html += '</div>';
+      // Strengths
+      if (c.strengths?.length) {
+        html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-check-circle" style="color:#10b981"></i> Forces</div><ul class="ev2-diag__list">';
+        for (const s of c.strengths) html += '<li><i class="fas fa-check" style="color:#10b981"></i>' + esc(s) + '</li>';
+        html += '</ul></div>';
+      }
+      // Weaknesses
+      if (c.weaknesses?.length) {
+        html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-exclamation-triangle" style="color:#f97316"></i> Faiblesses</div><ul class="ev2-diag__list">';
+        for (const w of c.weaknesses) html += '<li><i class="fas fa-times" style="color:#f97316"></i>' + esc(w) + '</li>';
+        html += '</ul></div>';
+      }
+      // Recommendations
+      if (c.recommendations?.length) {
+        html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-lightbulb" style="color:#eab308"></i> Recommandations</div><ul class="ev2-diag__list">';
+        for (const r of c.recommendations) html += '<li><i class="fas fa-arrow-right" style="color:#eab308"></i>' + esc(r) + '</li>';
+        html += '</ul></div>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    function renderBMCHTML(c, score, col) {
+      let html = '<div class="ev2-deliv-view"><div class="ev2-deliv-view__score"><div class="ev2-deliv-view__score-num" style="color:' + col + '">' + score + '/100</div></div>';
+      for (const b of (c.blocks || [])) {
+        html += '<div class="ev2-deliv-view__section"><h3>' + esc(b.name) + ' <span style="color:' + getScoreColor(b.score||0) + ';font-size:13px">' + (b.score||0) + '/100</span></h3><p>' + esc(b.analysis||'') + '</p>';
+        if (b.recommendations?.length) {
+          html += '<div style="margin-top:8px">';
+          for (const r of b.recommendations) html += '<span class="ev2-deliv-view__tag">' + esc(r) + '</span>';
+          html += '</div>';
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    function renderSICHTML(c, score, col) {
+      let html = '<div class="ev2-deliv-view"><div class="ev2-deliv-view__score"><div class="ev2-deliv-view__score-num" style="color:' + col + '">' + score + '/100</div></div>';
+      for (const p of (c.pillars || [])) {
+        html += '<div class="ev2-deliv-view__section"><h3>' + esc(p.name) + ' <span style="color:' + getScoreColor(p.score||0) + ';font-size:13px">' + (p.score||0) + '/100</span></h3><p>' + esc(p.analysis||'') + '</p>';
+        if (p.recommendations?.length) {
+          html += '<div style="margin-top:8px">';
+          for (const r of p.recommendations) html += '<span class="ev2-deliv-view__tag">' + esc(r) + '</span>';
+          html += '</div>';
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    function renderOVOHTML(c, score, col) {
+      let html = '<div class="ev2-deliv-view"><div class="ev2-deliv-view__score"><div class="ev2-deliv-view__score-num" style="color:' + col + '">' + score + '/100</div></div>';
+      html += '<div class="ev2-deliv-view__section"><h3>Analyse</h3><p>' + esc(c.analysis||'Projections à générer') + '</p></div>';
+      const proj = c.projections || {};
+      for (const [key, val] of Object.entries(proj)) {
+        html += '<div class="ev2-deliv-view__block"><h4>' + esc(key) + '</h4><p>' + esc(JSON.stringify(val)) + '</p></div>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    function renderGenericHTML(c, score, col, type) {
+      let html = '<div class="ev2-deliv-view"><div class="ev2-deliv-view__score"><div class="ev2-deliv-view__score-num" style="color:' + col + '">' + score + '/100</div></div>';
+      if (c.sections) {
+        for (const s of c.sections) {
+          html += '<div class="ev2-deliv-view__section"><h3>' + esc(s.title||'') + (s.score ? ' <span style="color:' + getScoreColor(s.score) + ';font-size:13px">' + s.score + '/100</span>' : '') + '</h3><p>' + esc(s.content||'') + '</p></div>';
+        }
+      }
+      if (c.criteria) {
+        for (const cr of c.criteria) {
+          const statusColor = cr.status === 'Complet' ? '#10b981' : cr.status === 'Partiel' ? '#eab308' : '#ef4444';
+          html += '<div class="ev2-deliv-view__block"><h4>' + esc(cr.name||'') + ' <span style="color:' + statusColor + '">' + esc(cr.status||'') + '</span></h4><p>' + esc(cr.comment||'') + '</p></div>';
+        }
+      }
+      html += '</div>';
+      return html;
+    }
+
+    // ── Chat ──
+    async function sendChat(mode) {
+      const inputEl = mode === 'mobile' ? document.getElementById('chat-input-mobile') : document.getElementById('chat-input');
+      const msg = inputEl.value.trim();
+      if (!msg) return;
+
+      // Add user bubble
+      addChatBubble(msg, 'user', mode);
+      inputEl.value = '';
+
+      // Disable send
+      const sendBtn = mode === 'mobile' ? inputEl.nextElementSibling : document.getElementById('chat-send');
+      if (sendBtn) sendBtn.disabled = true;
+
+      try {
+        const res = await fetch('/api/chat/message', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg, context: currentDelivType }),
+          credentials: 'include'
+        });
+        const data = await res.json();
+        if (data.success && data.response) {
+          addChatBubble(data.response.content, 'ai', mode);
+        } else {
+          addChatBubble(data.error || 'Erreur du serveur', 'ai', mode);
+        }
+      } catch (e) {
+        addChatBubble('Erreur réseau: ' + e.message, 'ai', mode);
+      }
+
+      if (sendBtn) sendBtn.disabled = false;
+    }
+
+    function addChatBubble(text, role, mode) {
+      const containers = mode === 'mobile' 
+        ? [document.getElementById('chat-messages-mobile')]
+        : [document.getElementById('chat-messages')];
+      // Also sync to other view
+      if (mode !== 'mobile') containers.push(document.getElementById('chat-messages-mobile'));
+      else containers.push(document.getElementById('chat-messages'));
+      
+      for (const container of containers) {
+        if (!container) continue;
+        const bubble = document.createElement('div');
+        bubble.className = 'ev2-chat__bubble ev2-chat__bubble--' + (role === 'user' ? 'user' : 'ai');
+        bubble.textContent = text;
+        container.appendChild(bubble);
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+
+    // ── Mobile drawer ──
+    function toggleChatDrawer() {
+      const drawer = document.getElementById('chat-drawer');
+      drawer.classList.toggle('ev2-drawer--open');
+    }
+
+    // ── Tablet: toggle left panel ──
+    function toggleLeftPanel() {
+      document.getElementById('left-panel').classList.toggle('ev2-left--open');
+    }
+
+    // ── Drag & drop ──
+    document.querySelectorAll('.ev2-upload-card').forEach(card => {
+      card.addEventListener('dragover', e => { e.preventDefault(); card.style.borderColor = '#0d9488'; });
+      card.addEventListener('dragleave', () => { card.style.borderColor = ''; });
+      card.addEventListener('drop', e => {
+        e.preventDefault();
+        card.style.borderColor = '';
+        const input = card.querySelector('input[type="file"]');
+        if (input && e.dataTransfer.files.length) { input.files = e.dataTransfer.files; input.dispatchEvent(new Event('change')); }
+      });
+    });
+
+    // ── Auto-scroll chat ──
+    const chatEl = document.getElementById('chat-messages');
+    if (chatEl) chatEl.scrollTop = chatEl.scrollHeight;
+  </script>
+</body>
+</html>`
+
+    return c.html(html)
+  } catch (error) {
+    console.error('Entrepreneur page error:', error)
+    return c.redirect('/login')
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════════
+// Helper functions for server-side rendering
+// ═══════════════════════════════════════════════════════════════════
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+function renderUploadCard(category: string, title: string, icon: string, subtitle: string, accept: string, existing: any): string {
+  const isDone = !!existing
+  return `<div class="ev2-upload-card ${isDone ? 'ev2-upload-card--done' : ''}" onclick="document.getElementById('file-${category}').click()">
+    ${isDone ? `<button class="ev2-upload-card__rm" onclick="event.stopPropagation();rmUpload('${existing.id}')" title="Retirer"><i class="fas fa-times"></i></button>` : ''}
+    <div class="ev2-upload-card__icon"><i class="fas ${icon}"></i></div>
+    <div class="ev2-upload-card__title">${title}</div>
+    <div class="ev2-upload-card__sub">${subtitle}</div>
+    ${isDone
+      ? `<div class="ev2-upload-card__status ev2-upload-card__status--ok"><i class="fas fa-check-circle"></i> ${existing.filename}</div>`
+      : `<div class="ev2-upload-card__drop">Glisser ou cliquer</div><div class="ev2-upload-card__status ev2-upload-card__status--wait"><i class="far fa-clock"></i> En attente</div>`
+    }
+    <input type="file" id="file-${category}" accept="${accept}" onchange="handleUpload(this,'${category}')">
+  </div>`
+}
+
+function renderDiagnosticView(deliverable: any, scoresDim: any): string {
+  if (!deliverable) return renderEmptyState()
+  
+  let content: any
+  try {
+    content = typeof deliverable.content === 'string' ? JSON.parse(deliverable.content) : deliverable.content
+  } catch {
+    content = {}
+  }
+
+  const score = deliverable.score || content.score || 0
+  const dimensions = content.dimensions || []
+  const strengths = content.strengths || []
+  const weaknesses = content.weaknesses || []
+  const recommendations = content.recommendations || []
+
+  let html = '<div class="ev2-diag">'
+  
+  // Dimensions
+  html += '<div class="ev2-diag__dims">'
+  for (const dim of dimensions) {
+    const dc = getScoreColor(dim.score || 0)
+    html += `<div class="ev2-diag__dim">
+      <div class="ev2-diag__dim-name">${escapeHtml(dim.name)}</div>
+      <div class="ev2-diag__dim-score" style="color:${dc}">${dim.score || 0}/100</div>
+      <div class="ev2-diag__dim-bar"><div class="ev2-diag__dim-bar-fill" style="width:${dim.score || 0}%;background:${dc}"></div></div>
+      <div class="ev2-diag__dim-text">${escapeHtml(dim.analysis || '')}</div>
+    </div>`
+  }
+  html += '</div>'
+
+  // Strengths
+  if (strengths.length) {
+    html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-check-circle" style="color:#10b981"></i> Forces</div><ul class="ev2-diag__list">'
+    for (const s of strengths) html += `<li><i class="fas fa-check" style="color:#10b981"></i>${escapeHtml(s)}</li>`
+    html += '</ul></div>'
+  }
+
+  // Weaknesses
+  if (weaknesses.length) {
+    html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-exclamation-triangle" style="color:#f97316"></i> Faiblesses</div><ul class="ev2-diag__list">'
+    for (const w of weaknesses) html += `<li><i class="fas fa-times" style="color:#f97316"></i>${escapeHtml(w)}</li>`
+    html += '</ul></div>'
+  }
+
+  // Recommendations
+  if (recommendations.length) {
+    html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-lightbulb" style="color:#eab308"></i> Recommandations</div><ul class="ev2-diag__list">'
+    for (const r of recommendations) html += `<li><i class="fas fa-arrow-right" style="color:#eab308"></i>${escapeHtml(r)}</li>`
+    html += '</ul></div>'
+  }
+
+  html += '</div>'
+  return html
+}
+
+function renderEmptyState(): string {
+  return `<div class="ev2-empty">
+    <div class="ev2-empty__icon"><i class="fas fa-rocket"></i></div>
+    <div class="ev2-empty__text">Aucun livrable généré</div>
+    <div class="ev2-empty__sub">Uploadez vos documents et cliquez sur "Générer" pour commencer l'analyse</div>
+  </div>`
+}

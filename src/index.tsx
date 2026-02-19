@@ -6,6 +6,7 @@ import { getCookie, setCookie } from 'hono/cookie'
 import { getUserWithProgress } from './dashboard'
 import { getCookieOptions } from './cookies'
 import { moduleRoutes, renderEsanoLayout } from './module-routes'
+import { entrepreneurRoutes } from './entrepreneur-page'
 import {
   getGuidedQuestionsForModule,
   getLearningStageKeysForModule,
@@ -888,6 +889,9 @@ app.use('/api/*', cors())
 // Mount module routes
 app.route('/', moduleRoutes)
 
+// Mount entrepreneur V2 routes
+app.route('/', entrepreneurRoutes)
+
 // Landing Page - A1
 app.get('/', (c) => {
   return c.render(
@@ -1507,6 +1511,12 @@ app.get('/dashboard', async (c) => {
 
     const payload = await verifyToken(token)
     if (!payload) return c.redirect('/login')
+
+    // Redirect entrepreneurs to new V2 single-page (unless ?classic=1)
+    const classic = c.req.query('classic')
+    if (!classic && payload.userType === 'entrepreneur') {
+      return c.redirect('/entrepreneur')
+    }
 
     const data = await getUserWithProgress(c.env.DB, payload.userId)
     if (!data) return c.redirect('/login')
