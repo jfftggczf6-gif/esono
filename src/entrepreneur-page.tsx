@@ -569,6 +569,329 @@ entrepreneurRoutes.get('/api/deliverable/:type', async (c) => {
 })
 
 
+
+// ═══════════════════════════════════════════════════════════════════
+// DELIVERABLE PAGES: /deliverable/:type
+// (diagnostic, plan_ovo, business_plan, odd)
+// ═══════════════════════════════════════════════════════════════════
+
+const DELIV_PAGE_META: Record<string, { title: string, icon: string, desc: string, color: string, format: string }> = {
+  diagnostic: {
+    title: 'Diagnostic Expert',
+    icon: 'fa-stethoscope',
+    desc: 'Score Investment Readiness et recommandations détaillées par dimension.',
+    color: '#059669',
+    format: 'HTML / PDF'
+  },
+  plan_ovo: {
+    title: 'Plan Financier OVO',
+    icon: 'fa-coins',
+    desc: 'Projections financières sur 5 ans au format OVO.',
+    color: '#0284c7',
+    format: 'XLSM / PDF'
+  },
+  business_plan: {
+    title: 'Business Plan',
+    icon: 'fa-file-contract',
+    desc: 'Document de synthèse complet prêt pour les investisseurs.',
+    color: '#7c3aed',
+    format: 'Word / PDF'
+  },
+  odd: {
+    title: 'Due Diligence Opérationnelle',
+    icon: 'fa-shield-halved',
+    desc: 'Checklist ODD complète pour les bailleurs de fonds.',
+    color: '#d97706',
+    format: 'Excel / PDF'
+  }
+}
+
+entrepreneurRoutes.get('/deliverable/:type', async (c) => {
+  try {
+    const token = getCookie(c, 'auth_token')
+    if (!token) return c.redirect('/login')
+    const payload = await verifyToken(token)
+    if (!payload) return c.redirect('/login')
+
+    const dtype = c.req.param('type')
+    const meta = DELIV_PAGE_META[dtype]
+    if (!meta) return c.redirect('/entrepreneur')
+
+    const user = await c.env.DB.prepare('SELECT name, email FROM users WHERE id = ?')
+      .bind(payload.userId).first()
+
+    // Get latest deliverable of this type
+    const deliverable = await c.env.DB.prepare(`
+      SELECT * FROM entrepreneur_deliverables WHERE user_id = ? AND type = ? ORDER BY version DESC LIMIT 1
+    `).bind(payload.userId, dtype).first() as any
+
+    // Get latest iteration for global score
+    const latestIter = await c.env.DB.prepare(
+      'SELECT score_global, scores_dimensions, version, created_at FROM iterations WHERE user_id = ? ORDER BY version DESC LIMIT 1'
+    ).bind(payload.userId).first() as any
+
+    const globalScore = latestIter?.score_global ?? 0
+    const version = latestIter?.version ?? 0
+
+    let content: any = {}
+    if (deliverable?.content) {
+      try { content = JSON.parse(deliverable.content) } catch { content = {} }
+    }
+    const dScore = deliverable?.score ?? 0
+    const scoreColor = getScoreColor(dScore)
+    const scoreLabel = getScoreLabel(dScore)
+    const isAvailable = !!deliverable
+    const createdAt = deliverable?.created_at
+      ? new Date(deliverable.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : null
+
+    // Build sections HTML depending on type
+    let blocksHtml = ''
+
+    if (dtype === 'diagnostic') {
+      const dims = content.dimensions || []
+      blocksHtml = `
+        <div class="dlv-section">
+          <h2 class="dlv-section__title"><i class="fas fa-chart-bar"></i> Dimensions évaluées</h2>
+          <div class="dlv-blocks">
+            ${dims.map((d: any) => `
+              <div class="dlv-block">
+                <div class="dlv-block__header">
+                  <span class="dlv-block__name">${escapeHtml(d.name || '')}</span>
+                  <span class="dlv-block__score" style="color:${getScoreColor(d.score || 0)}">${d.score || 0}/100</span>
+                </div>
+                <div class="dlv-block__bar"><div class="dlv-block__bar-fill" style="width:${d.score || 0}%;background:${getScoreColor(d.score || 0)}"></div></div>
+                <p class="dlv-block__text">${escapeHtml(d.analysis || '')}</p>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        ${content.strengths?.length ? `
+          <div class="dlv-section">
+            <h2 class="dlv-section__title"><i class="fas fa-check-circle" style="color:#059669"></i> Forces</h2>
+            <ul class="dlv-list dlv-list--green">${content.strengths.map((s: string) => `<li><i class="fas fa-check"></i> ${escapeHtml(s)}</li>`).join('')}</ul>
+          </div>` : ''}
+        ${content.weaknesses?.length ? `
+          <div class="dlv-section">
+            <h2 class="dlv-section__title"><i class="fas fa-exclamation-triangle" style="color:#dc2626"></i> Faiblesses</h2>
+            <ul class="dlv-list dlv-list--red">${content.weaknesses.map((w: string) => `<li><i class="fas fa-times"></i> ${escapeHtml(w)}</li>`).join('')}</ul>
+          </div>` : ''}
+        ${content.recommendations?.length ? `
+          <div class="dlv-section">
+            <h2 class="dlv-section__title"><i class="fas fa-lightbulb" style="color:#d97706"></i> Recommandations</h2>
+            <ul class="dlv-list dlv-list--amber">${content.recommendations.map((r: string) => `<li><i class="fas fa-arrow-right"></i> ${escapeHtml(r)}</li>`).join('')}</ul>
+          </div>` : ''}
+      `
+    } else if (dtype === 'plan_ovo') {
+      const proj = content.projections || {}
+      blocksHtml = `
+        <div class="dlv-section">
+          <h2 class="dlv-section__title"><i class="fas fa-chart-line"></i> Projections</h2>
+          ${content.analysis ? `<p class="dlv-analysis">${escapeHtml(content.analysis)}</p>` : ''}
+          <div class="dlv-blocks">
+            ${Object.entries(proj).map(([key, val]: [string, any]) => `
+              <div class="dlv-block">
+                <div class="dlv-block__header"><span class="dlv-block__name">${escapeHtml(key)}</span></div>
+                <p class="dlv-block__text">${escapeHtml(typeof val === 'object' ? JSON.stringify(val) : String(val))}</p>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `
+    } else if (dtype === 'business_plan') {
+      const sections = content.sections || []
+      blocksHtml = `
+        <div class="dlv-section">
+          <h2 class="dlv-section__title"><i class="fas fa-list-ol"></i> Sections du Business Plan</h2>
+          <div class="dlv-blocks">
+            ${sections.map((s: any) => `
+              <div class="dlv-block">
+                <div class="dlv-block__header"><span class="dlv-block__name">${escapeHtml(s.title || '')}</span></div>
+                <p class="dlv-block__text">${escapeHtml(s.content || '')}</p>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `
+    } else if (dtype === 'odd') {
+      const criteria = content.criteria || []
+      blocksHtml = `
+        <div class="dlv-section">
+          <h2 class="dlv-section__title"><i class="fas fa-clipboard-list"></i> Critères ODD</h2>
+          <div class="dlv-blocks">
+            ${criteria.map((cr: any) => {
+              const stColor = cr.status === 'Complet' ? '#059669' : cr.status === 'Partiel' ? '#d97706' : '#dc2626'
+              return `
+                <div class="dlv-block">
+                  <div class="dlv-block__header">
+                    <span class="dlv-block__name">${escapeHtml(cr.name || '')}</span>
+                    <span class="dlv-block__score" style="color:${stColor}">${escapeHtml(cr.status || '')}</span>
+                  </div>
+                  <p class="dlv-block__text">${escapeHtml(cr.comment || '')}</p>
+                </div>`
+            }).join('')}
+          </div>
+        </div>
+      `
+    }
+
+    const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Livrable ${meta.title} - ESONO</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .dlv-section { background: white; border-radius: 16px; border: 1px solid #e5e7eb; padding: 24px; margin-bottom: 20px; box-shadow: 0 1px 3px rgb(0 0 0 / 0.06); }
+    .dlv-section__title { font-size: 16px; font-weight: 700; color: #1f2937; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+    .dlv-blocks { display: flex; flex-direction: column; gap: 12px; }
+    .dlv-block { background: #f9fafb; border: 1px solid #f3f4f6; border-radius: 12px; padding: 16px; }
+    .dlv-block__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+    .dlv-block__name { font-size: 14px; font-weight: 600; color: #1f2937; display: flex; align-items: center; gap: 8px; }
+    .dlv-block__score { font-size: 14px; font-weight: 700; }
+    .dlv-block__bar { height: 5px; background: #e5e7eb; border-radius: 99px; overflow: hidden; margin-bottom: 8px; }
+    .dlv-block__bar-fill { height: 100%; border-radius: 99px; transition: width 0.6s ease; }
+    .dlv-block__text { font-size: 13px; color: #6b7280; line-height: 1.6; }
+    .dlv-analysis { font-size: 14px; color: #4b5563; line-height: 1.7; margin-bottom: 16px; padding: 12px; background: #f0fdf4; border-radius: 8px; border-left: 3px solid #059669; }
+    .dlv-list { list-style: none; padding: 0; }
+    .dlv-list li { padding: 10px 14px; background: #f9fafb; border-radius: 8px; margin-bottom: 6px; font-size: 13px; display: flex; align-items: flex-start; gap: 10px; border: 1px solid #f3f4f6; }
+    .dlv-list li i { margin-top: 3px; font-size: 11px; flex-shrink: 0; }
+    .dlv-list--green li i { color: #059669; }
+    .dlv-list--red li i { color: #dc2626; }
+    .dlv-list--amber li i { color: #d97706; }
+    .dlv-download-card { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: 12px; border: 1px solid; transition: all 0.2s; cursor: pointer; text-decoration: none; }
+    .dlv-download-card:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgb(0 0 0 / 0.08); }
+    .dlv-download-card__icon { width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px; flex-shrink: 0; }
+    .dlv-download-card__info { flex: 1; }
+    .dlv-download-card__name { font-size: 14px; font-weight: 600; }
+    .dlv-download-card__desc { font-size: 12px; opacity: 0.8; }
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+  <!-- Nav -->
+  <nav class="bg-white shadow-sm border-b border-slate-200">
+    <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+      <a href="/entrepreneur" class="text-indigo-600 hover:text-indigo-700 flex items-center gap-2 font-medium text-sm">
+        <i class="fas fa-arrow-left"></i>
+        <span>Retour à la page principale</span>
+      </a>
+      <span class="text-xs text-slate-500 flex items-center gap-2">
+        <i class="fas ${meta.icon}"></i>
+        ${escapeHtml(meta.title)}
+      </span>
+    </div>
+  </nav>
+
+  <main class="max-w-6xl mx-auto px-4 py-8 space-y-8">
+    ${!isAvailable ? `
+      <section class="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 text-amber-800">
+        <div class="flex items-start gap-3">
+          <span class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-amber-100 text-amber-600">
+            <i class="fas fa-triangle-exclamation"></i>
+          </span>
+          <div>
+            <h2 class="text-sm font-semibold">Livrable non encore généré</h2>
+            <p class="text-sm">Retournez à la page principale et cliquez sur "Générer les livrables".</p>
+          </div>
+        </div>
+        <a href="/entrepreneur" class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold">
+          <i class="fas fa-wand-magic-sparkles"></i>
+          Générer les livrables
+        </a>
+      </section>
+    ` : ''}
+
+    <!-- Header -->
+    <header class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div>
+        <p class="text-xs uppercase tracking-wider text-slate-500">${isAvailable ? 'Livrable généré · v' + (deliverable?.version || version) : 'En attente'}</p>
+        <h1 class="text-3xl font-bold text-slate-900">${escapeHtml(meta.title)}</h1>
+        <p class="mt-2 text-slate-600">${escapeHtml(meta.desc)}</p>
+      </div>
+      <div class="flex items-center gap-3 flex-wrap">
+        ${isAvailable ? `
+          <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold" style="background:${scoreColor}20;color:${scoreColor}">
+            <i class="fas fa-chart-line"></i>
+            ${dScore}/100 — ${escapeHtml(scoreLabel)}
+          </span>
+          ${createdAt ? `<span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm bg-slate-100 text-slate-600"><i class="fas fa-clock"></i> ${createdAt}</span>` : ''}
+        ` : `
+          <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold bg-slate-100 text-slate-500">
+            <i class="fas fa-hourglass-half"></i>
+            Non généré
+          </span>
+        `}
+      </div>
+    </header>
+
+    <!-- Main content -->
+    <div class="grid gap-6 md:grid-cols-5">
+      <!-- Left: Downloads -->
+      <div class="md:col-span-2 space-y-4">
+        <div class="dlv-section">
+          <h2 class="dlv-section__title"><i class="fas fa-download" style="color:${meta.color}"></i> Livrables disponibles</h2>
+          <div class="space-y-3">
+            ${isAvailable ? `
+              <a href="/api/deliverable/${dtype}" target="_blank" class="dlv-download-card" style="border-color:${meta.color}40;background:${meta.color}08">
+                <div class="dlv-download-card__icon" style="background:${meta.color}">
+                  <i class="fas fa-file-lines"></i>
+                </div>
+                <div class="dlv-download-card__info">
+                  <p class="dlv-download-card__name" style="color:${meta.color}">${escapeHtml(meta.title)} Complet</p>
+                  <p class="dlv-download-card__desc" style="color:${meta.color}">${escapeHtml(meta.format)}</p>
+                  <span class="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full text-[10px] font-bold" style="background:${meta.color}15;color:${meta.color}">
+                    <i class="fas fa-star text-[8px]"></i> RECOMMANDÉ
+                  </span>
+                </div>
+              </a>
+              <div class="dlv-download-card" style="border-color:#e5e7eb;background:#f9fafb;cursor:default;">
+                <div class="dlv-download-card__icon" style="background:#d1d5db">
+                  <i class="fas fa-file-pdf"></i>
+                </div>
+                <div class="dlv-download-card__info">
+                  <p class="dlv-download-card__name text-slate-500">Export PDF</p>
+                  <p class="dlv-download-card__desc text-slate-400">Prochainement disponible</p>
+                </div>
+              </div>
+            ` : `
+              <div class="text-center py-8 text-slate-400">
+                <i class="fas fa-file-circle-question text-3xl mb-3 block"></i>
+                <p class="text-sm">Aucun livrable disponible</p>
+                <p class="text-xs mt-1">Générez les livrables depuis la page principale</p>
+              </div>
+            `}
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Content -->
+      <div class="md:col-span-3 space-y-0">
+        ${isAvailable ? blocksHtml : `
+          <div class="dlv-section text-center py-16">
+            <i class="fas fa-rocket text-4xl text-slate-300 mb-4 block"></i>
+            <p class="text-slate-500 font-medium">Contenu en attente de génération</p>
+            <p class="text-slate-400 text-sm mt-2">Uploadez vos documents et lancez la génération depuis la page principale.</p>
+          </div>
+        `}
+      </div>
+    </div>
+  </main>
+</body>
+</html>`
+
+    return c.html(html)
+  } catch (error) {
+    console.error('Deliverable page error:', error)
+    return c.redirect('/entrepreneur')
+  }
+})
+
+
 // ═══════════════════════════════════════════════════════════════════
 // MAIN PAGE: /entrepreneur
 // ═══════════════════════════════════════════════════════════════════
@@ -1062,78 +1385,78 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
 
   <!-- ═══ MODULE CARDS (Prompt 3) — Détails par module ═══ -->
   <section class="ev2-modules">
-    <div class="ev2-modules__title"><i class="fas fa-th-large" style="margin-right:8px;opacity:0.6"></i> Détails par module</div>
+    <div class="ev2-modules__title">📚 Détails par module</div>
     <div class="ev2-modules__grid">
       ${renderModuleCard({
-        icon: 'fa-map', emoji: '📝',
+        icon: 'fa-file-lines', emoji: '📄',
         name: 'Business Model Canvas',
-        desc: 'Cartographie complète de votre modèle économique : segments clients, proposition de valeur, canaux, revenus.',
+        desc: "Canvas détaillé avec l'analyse IA des 9 blocs",
         href: '/module/mod1_bmc/download',
         delivKey: 'bmc_analysis',
-        altHref: '/module/mod1_bmc/questions',
+        altHref: '/module/mod1_bmc/download',
         delivMap, progressMap
       })}
       ${renderModuleCard({
-        icon: 'fa-seedling', emoji: '🚀',
+        icon: 'fa-chart-pie', emoji: '📊',
         name: "Stratégie d'Impact & Croissance",
-        desc: "Analyse de votre stratégie d'impact social et de votre plan de croissance durable.",
+        desc: "Analyse de la stratégie avec matrice d'impact",
         href: '/module/mod2_sic/download',
         delivKey: 'sic_analysis',
-        altHref: '/module/mod2_sic/questions',
-        delivMap, progressMap
-      })}
-      ${renderModuleCard({
-        icon: 'fa-chart-bar', emoji: '📊',
-        name: 'Inputs Financiers',
-        desc: 'Données financières clés : revenus, charges, investissements et hypothèses de base.',
-        href: '/module/mod3_inputs/download',
-        delivKey: 'plan_ovo',
-        altHref: '/module/mod3_inputs/inputs',
-        delivMap, progressMap
-      })}
-      ${renderModuleCard({
-        icon: 'fa-table-cells', emoji: '📈',
-        name: "Framework d'Analyse",
-        desc: "Cadre d'analyse structuré pour l'évaluation de la maturité et de la performance PME.",
-        href: '/module/mod4_framework/download',
-        delivKey: 'framework',
-        altHref: '/module/mod4_framework/questions',
-        delivMap, progressMap
-      })}
-      ${renderModuleCard({
-        icon: 'fa-stethoscope', emoji: '🏆',
-        name: 'Diagnostic Expert',
-        desc: "Évaluation globale multi-dimensionnelle : forces, faiblesses et recommandations par un expert IA.",
-        href: '/module/mod1_bmc/download',
-        delivKey: 'diagnostic',
-        altHref: '/module/mod1_bmc/analysis',
+        altHref: '/module/mod2_sic/download',
         delivMap, progressMap
       })}
       ${renderModuleCard({
         icon: 'fa-coins', emoji: '💰',
-        name: 'Plan Financier OVO',
-        desc: 'Projections financières sur 5 ans : chiffre d\'affaires, rentabilité, trésorerie et valorisation.',
+        name: 'Inputs Financiers',
+        desc: "Données financières validées avec alertes de cohérence",
         href: '/module/mod3_inputs/download',
         delivKey: 'plan_ovo',
-        altHref: '/module/mod3_inputs/inputs',
+        altHref: '/module/mod3_inputs/download',
         delivMap, progressMap
       })}
       ${renderModuleCard({
-        icon: 'fa-file-contract', emoji: '📄',
+        icon: 'fa-chart-line', emoji: '📈',
+        name: "Framework d'Analyse",
+        desc: "Analyse financière complète : ratios, benchmarks, scénarios",
+        href: '/module/mod4_framework/download',
+        delivKey: 'framework',
+        altHref: '/module/mod4_framework/download',
+        delivMap, progressMap
+      })}
+      ${renderModuleCard({
+        icon: 'fa-magnifying-glass-chart', emoji: '🔍',
+        name: 'Diagnostic Expert',
+        desc: "Score Investment Readiness et recommandations détaillées",
+        href: '/deliverable/diagnostic',
+        delivKey: 'diagnostic',
+        altHref: '/deliverable/diagnostic',
+        delivMap, progressMap
+      })}
+      ${renderModuleCard({
+        icon: 'fa-ruler-combined', emoji: '📐',
+        name: 'Plan Financier OVO',
+        desc: "Projections financières 5 ans au format OVO",
+        href: '/deliverable/plan_ovo',
+        delivKey: 'plan_ovo',
+        altHref: '/deliverable/plan_ovo',
+        delivMap, progressMap
+      })}
+      ${renderModuleCard({
+        icon: 'fa-file-contract', emoji: '📑',
         name: 'Business Plan',
-        desc: 'Document de synthèse complet pour les investisseurs : executive summary, stratégie, financier.',
-        href: '/module/mod1_bmc/download',
+        desc: "Business plan structuré prêt pour les investisseurs",
+        href: '/deliverable/business_plan',
         delivKey: 'business_plan',
-        altHref: '/module/mod1_bmc/questions',
+        altHref: '/deliverable/business_plan',
         delivMap, progressMap
       })}
       ${renderModuleCard({
-        icon: 'fa-shield-halved', emoji: '🔍',
+        icon: 'fa-clipboard-check', emoji: '📋',
         name: 'Due Diligence Opérationnelle',
-        desc: "Audit ODD complet : conformité, risques opérationnels, gouvernance et critères d'investissement.",
-        href: '/module/mod2_sic/download',
+        desc: "Checklist ODD pour les bailleurs de fonds",
+        href: '/deliverable/odd',
         delivKey: 'odd',
-        altHref: '/module/mod2_sic/questions',
+        altHref: '/deliverable/odd',
         delivMap, progressMap
       })}
     </div>
@@ -1553,7 +1876,7 @@ function renderModuleCard(opts: {
       ? `<div class="ev2-mod-card__status ev2-mod-card__status--ok"><i class="fas fa-circle-check"></i> Livrable disponible · ${dScore}/100</div>`
       : `<div class="ev2-mod-card__status ev2-mod-card__status--wait"><i class="fas fa-clock"></i> En attente d'inputs</div>`
     }
-    <div class="ev2-mod-card__btn">Voir le détail <i class="fas fa-arrow-right"></i></div>
+    <div class="ev2-mod-card__btn">Voir les livrables <i class="fas fa-arrow-right"></i></div>
   </a>`
 }
 
