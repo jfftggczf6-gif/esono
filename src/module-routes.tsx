@@ -5035,13 +5035,25 @@ moduleRoutes.get('/module/:code/download', async (c) => {
 
     if (!module) return c.redirect('/dashboard')
 
-    const progress = await c.env.DB.prepare(`
+    let progress = await c.env.DB.prepare(`
       SELECT id, status, ai_score, ai_last_analysis, validated_at, project_id
       FROM progress
       WHERE user_id = ? AND module_id = ?
     `).bind(payload.userId, module.id).first()
 
-    if (!progress) return c.redirect('/dashboard')
+    // Auto-create progress if user has none for this module (allows access from entrepreneur cards)
+    if (!progress) {
+      await c.env.DB.prepare(`
+        INSERT INTO progress (user_id, module_id, status, created_at, updated_at)
+        VALUES (?, ?, 'in_progress', datetime('now'), datetime('now'))
+      `).bind(payload.userId, module.id).run()
+      progress = await c.env.DB.prepare(`
+        SELECT id, status, ai_score, ai_last_analysis, validated_at, project_id
+        FROM progress
+        WHERE user_id = ? AND module_id = ?
+      `).bind(payload.userId, module.id).first()
+      if (!progress) return c.redirect('/dashboard')
+    }
 
     const isValidated = (progress.status as string) === 'validated'
 

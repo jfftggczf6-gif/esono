@@ -1397,9 +1397,9 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         delivMap, progressMap
       })}
       ${renderModuleCard({
-        icon: 'fa-chart-pie', emoji: '📊',
-        name: "Stratégie d'Impact & Croissance",
-        desc: "Analyse de la stratégie avec matrice d'impact",
+        icon: 'fa-seedling', emoji: '📊',
+        name: "Social Impact Canvas (SIC)",
+        desc: "Diagnostic d'impact social avec scoring, alignement ODD et matrice d'impact",
         href: '/module/mod2_sic/download',
         delivKey: 'sic_analysis',
         altHref: '/module/mod2_sic/download',
