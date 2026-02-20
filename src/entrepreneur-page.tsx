@@ -3192,7 +3192,17 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
       if (type === 'diagnostic') {
         el.innerHTML = renderDiagHTML(content, scoresDim, score, sColor);
       } else if (type === 'bmc_analysis') {
-        el.innerHTML = renderBMCHTML(content, score, sColor);
+        // Load the FULL Claude AI deliverable directly via iframe
+        el.innerHTML = '<div style="display:flex;flex-direction:column;height:100%;min-height:70vh">'
+          + '<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:linear-gradient(135deg,#0f172a,#1e293b);border-radius:12px 12px 0 0;color:#fff">'
+          + '<div style="width:48px;height:48px;border-radius:50%;background:' + sColor + ';display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800">' + score + '</div>'
+          + '<div><div style="font-weight:700;font-size:15px">BMC Analysé — Génération Claude AI</div>'
+          + '<div style="font-size:12px;color:#94a3b8">Livrable complet pixel-perfect • Score ' + score + '/100</div></div>'
+          + '<a href="/deliverable/bmc_analysis" target="_blank" style="margin-left:auto;background:#3b82f6;color:#fff;padding:6px 14px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:600"><i class="fas fa-external-link-alt"></i> Ouvrir</a>'
+          + '</div>'
+          + '<iframe src="/deliverable/bmc_analysis" style="flex:1;border:none;border-radius:0 0 12px 12px;min-height:65vh;width:100%" loading="lazy"></iframe>'
+          + '</div>';
+        return;
       } else if (type === 'sic_analysis') {
         el.innerHTML = renderSICHTML(content, score, sColor);
       } else if (type === 'plan_ovo') {
