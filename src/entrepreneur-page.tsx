@@ -2771,6 +2771,19 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
   </style>
 </head>
 ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
+  <script>
+    // Store token from URL in localStorage for auth persistence
+    (function(){
+      var p = new URLSearchParams(window.location.search);
+      var t = p.get('token');
+      if (t) { localStorage.setItem('auth_token', t); }
+      // Clean URL
+      if (t && window.history.replaceState) {
+        var clean = window.location.pathname;
+        window.history.replaceState({}, '', clean);
+      }
+    })();
+  </script>
   <!-- ═══ HEADER ═══ -->
   <header class="ev2-header">
     <a href="/entrepreneur" class="ev2-header__brand">ESONO</a>
@@ -3203,8 +3216,12 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
         el.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:300px;gap:16px"><div class="ev2-spinner" style="width:40px;height:40px;border:4px solid #e2e8f0;border-top-color:#3b82f6;border-radius:50%;animation:spin 0.8s linear infinite"></div><div style="color:#64748b;font-size:14px">Chargement du livrable BMC Claude AI...</div><style>@keyframes spin{to{transform:rotate(360deg)}}</style></div>';
         var bmcUrl = '/deliverable/bmc_analysis';
         var tkn = localStorage.getItem('auth_token');
-        if (tkn) bmcUrl += '?token=' + encodeURIComponent(tkn);
-        fetch(bmcUrl, { credentials: 'include' })
+        var fetchOpts = { credentials: 'include' };
+        if (tkn) {
+          bmcUrl += '?token=' + encodeURIComponent(tkn);
+          fetchOpts.headers = { 'Authorization': 'Bearer ' + tkn };
+        }
+        fetch(bmcUrl, fetchOpts)
           .then(r => { if (!r.ok) throw new Error(r.status); return r.text(); })
           .then(html => {
             el.innerHTML = '<div style="background:#fff;border-radius:12px;overflow:auto;max-height:80vh;padding:0">' + html + '</div>';
