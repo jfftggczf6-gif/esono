@@ -3157,6 +3157,9 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
       document.getElementById('center-title').innerHTML = '<i class="fas ' + (dt?.icon || 'fa-file') + '"></i> ' + (dt?.label || type);
       // Render content
       renderDeliverableContent(type);
+      // Scroll to center panel
+      const center = document.querySelector('.ev2-center');
+      if (center) center.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function renderDeliverableContent(type) {
@@ -3192,17 +3195,8 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
       if (type === 'diagnostic') {
         el.innerHTML = renderDiagHTML(content, scoresDim, score, sColor);
       } else if (type === 'bmc_analysis') {
-        // Load the FULL Claude AI deliverable directly via iframe
-        el.innerHTML = '<div style="display:flex;flex-direction:column;height:100%;min-height:70vh">'
-          + '<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:linear-gradient(135deg,#0f172a,#1e293b);border-radius:12px 12px 0 0;color:#fff">'
-          + '<div style="width:48px;height:48px;border-radius:50%;background:' + sColor + ';display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800">' + score + '</div>'
-          + '<div><div style="font-weight:700;font-size:15px">BMC Analysé — Génération Claude AI</div>'
-          + '<div style="font-size:12px;color:#94a3b8">Livrable complet pixel-perfect • Score ' + score + '/100</div></div>'
-          + '<a href="/deliverable/bmc_analysis" target="_blank" style="margin-left:auto;background:#3b82f6;color:#fff;padding:6px 14px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:600"><i class="fas fa-external-link-alt"></i> Ouvrir</a>'
-          + '</div>'
-          + '<iframe src="/deliverable/bmc_analysis" style="flex:1;border:none;border-radius:0 0 12px 12px;min-height:65vh;width:100%" loading="lazy"></iframe>'
-          + '</div>';
-        return;
+        // Show enriched BMC summary + prominent link to full Claude AI deliverable
+        el.innerHTML = renderBMCHTML(content, score, sColor);
       } else if (type === 'sic_analysis') {
         el.innerHTML = renderSICHTML(content, score, sColor);
       } else if (type === 'plan_ovo') {
@@ -3593,7 +3587,7 @@ function renderModuleCard(opts: {
   const link = available ? opts.href : opts.altHref
   const scoreColor = available ? getScoreColor(dScore) : ''
 
-  return `<a href="${link}" class="ev2-mod-card ${available ? '' : 'ev2-mod-card--inactive'}">
+  return `<div class="ev2-mod-card ${available ? '' : 'ev2-mod-card--inactive'}" onclick="selectDeliverable('${opts.delivKey}')" style="cursor:pointer">
     <div class="ev2-mod-card__badge ${available ? 'ev2-mod-card__badge--ok' : 'ev2-mod-card__badge--wait'}">
       <i class="fas ${available ? 'fa-check' : 'fa-hourglass-half'}"></i>
     </div>
@@ -3605,7 +3599,7 @@ function renderModuleCard(opts: {
       : `<div class="ev2-mod-card__status ev2-mod-card__status--wait"><i class="fas fa-clock"></i> En attente d'inputs</div>`
     }
     <div class="ev2-mod-card__btn">Voir les livrables <i class="fas fa-arrow-right"></i></div>
-  </a>`
+  </div>`
 }
 
 function renderEmptyState(): string {
