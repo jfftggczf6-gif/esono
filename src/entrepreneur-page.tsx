@@ -3495,6 +3495,29 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
   </section>
   `}
 
+  <!-- ═══ DOWNLOAD EXCEL BANNER (visible when framework is available) ═══ -->
+  ${delivMap.framework ? `
+  <section style="margin:0 20px 16px;padding:18px 24px;background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border:2px solid #86efac;border-radius:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;box-shadow:0 2px 8px rgba(5,150,105,0.1)">
+    <div style="display:flex;align-items:center;gap:14px">
+      <div style="width:48px;height:48px;border-radius:12px;background:#059669;display:flex;align-items:center;justify-content:center">
+        <i class="fas fa-file-excel" style="font-size:22px;color:white"></i>
+      </div>
+      <div>
+        <div style="font-size:15px;font-weight:700;color:#065f46">Framework d'Analyse PME — Excel</div>
+        <div style="font-size:12px;color:#047857;margin-top:2px">Fichier Excel rempli avec les données GOTCHE (8 onglets)</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <button onclick="downloadFrameworkExcelDirect()" id="btn-download-excel-main" style="display:inline-flex;align-items:center;gap:8px;padding:12px 24px;border-radius:10px;background:#059669;color:white;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(5,150,105,0.3)" onmouseover="this.style.background='#047857'" onmouseout="this.style.background='#059669'">
+        <i class="fas fa-download"></i> T\u00e9l\u00e9charger Excel (.xlsx)
+      </button>
+      <a href="/deliverable/framework" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#065f46;border:1px solid #86efac;font-size:12px;font-weight:600;text-decoration:none" onmouseover="this.style.background='#f0fdf4'" onmouseout="this.style.background='white'">
+        <i class="fas fa-expand"></i> Voir en pleine page
+      </a>
+    </div>
+  </section>
+  ` : ''}
+
   <!-- ═══ LOADING ═══ -->
   <section class="ev2-loading" id="loading-section">
     <div class="ev2-loading__spinner"></div>
@@ -3690,6 +3713,7 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
     let currentDelivType = 'diagnostic';
     const deliverables = ${JSON.stringify(delivMap)};
     const scoresDim = ${JSON.stringify(scoresDim)};
+    const USER_NAME = ${JSON.stringify((user?.name as string) || 'Entrepreneur')};
 
     // ── Upload toggle ──
     function toggleUpload() {
@@ -4017,7 +4041,22 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
     }
 
     function renderGenericHTML(c, score, col, type) {
-      let html = '<div class="ev2-deliv-view"><div class="ev2-deliv-view__score"><div class="ev2-deliv-view__score-num" style="color:' + col + '">' + score + '/100</div></div>';
+      let html = '<div class="ev2-deliv-view">';
+      
+      // Download bar for Excel-type deliverables (framework, plan_ovo, odd)
+      const excelTypes = ['framework', 'plan_ovo', 'odd'];
+      if (excelTypes.includes(type)) {
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border:1px solid #bbf7d0;border-radius:12px;margin-bottom:20px">';
+        html += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-excel" style="font-size:24px;color:#059669"></i><div><div style="font-size:14px;font-weight:700;color:#065f46">Télécharger le fichier Excel</div><div style="font-size:12px;color:#047857">Framework Analyse PME rempli avec vos données</div></div></div>';
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+        if (type === 'framework') {
+          html += '<button onclick="downloadFrameworkExcelInline()" id="btn-download-inline" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#059669;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(5,150,105,0.3)" onmouseover="this.style.opacity=\'0.9\'" onmouseout="this.style.opacity=\'1\'"><i class="fas fa-download"></i> Télécharger Excel (.xlsx)</button>';
+        }
+        html += '<a href="/deliverable/' + type + '" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#065f46;border:1px solid #bbf7d0;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=\'#f0fdf4\'" onmouseout="this.style.background=\'white\'"><i class="fas fa-expand"></i> Voir en pleine page</a>';
+        html += '</div></div>';
+      }
+      
+      html += '<div class="ev2-deliv-view__score"><div class="ev2-deliv-view__score-num" style="color:' + col + '">' + score + '/100</div></div>';
       if (c.sections) {
         for (const s of c.sections) {
           html += '<div class="ev2-deliv-view__section"><h3>' + esc(s.title||'') + (s.score ? ' <span style="color:' + getScoreColor(s.score) + ';font-size:13px">' + s.score + '/100</span>' : '') + '</h3><p>' + esc(s.content||'') + '</p></div>';
@@ -4031,6 +4070,29 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
       }
       html += '</div>';
       return html;
+    }
+
+    async function downloadFrameworkExcelInline() {
+      const btn = document.getElementById('btn-download-inline');
+      if (btn) { btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Génération...'; btn.disabled = true; }
+      try {
+        const resp = await fetch('/api/download/framework-excel', { credentials: 'include' });
+        if (!resp.ok) { const err = await resp.json().catch(() => ({})); throw new Error(err.error || 'Erreur ' + resp.status); }
+        const blob = await resp.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        const cd = resp.headers.get('Content-Disposition') || '';
+        const fnMatch = cd.match(/filename="?([^";]+)/);
+        a.download = fnMatch ? fnMatch[1] : 'Framework_Analyse_PME_' + USER_NAME.replace(/\\s+/g, '_') + '_' + new Date().toISOString().slice(0,10) + '.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+        if (btn) { btn.innerHTML = '<i class="fas fa-check"></i> Téléchargé !'; setTimeout(() => { btn.innerHTML = '<i class="fas fa-download"></i> Télécharger Excel (.xlsx)'; btn.disabled = false; }, 3000); }
+      } catch (e) {
+        alert('Erreur téléchargement: ' + e.message);
+        if (btn) { btn.innerHTML = '<i class="fas fa-download"></i> Télécharger Excel (.xlsx)'; btn.disabled = false; }
+      }
     }
 
     // ── Chat ──
@@ -4112,6 +4174,30 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
         if (input && e.dataTransfer.files.length) { input.files = e.dataTransfer.files; input.dispatchEvent(new Event('change')); }
       });
     });
+
+    // ── Download Framework Excel (main page) ──
+    async function downloadFrameworkExcelDirect() {
+      const btn = document.getElementById('btn-download-excel-main');
+      if (btn) { btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> G\u00e9n\u00e9ration...'; btn.disabled = true; }
+      try {
+        const resp = await fetch('/api/download/framework-excel', { credentials: 'include' });
+        if (!resp.ok) { const err = await resp.json().catch(() => ({})); throw new Error(err.error || 'Erreur ' + resp.status); }
+        const blob = await resp.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        const cd = resp.headers.get('Content-Disposition') || '';
+        const fnMatch = cd.match(/filename="?([^";]+)/);
+        a.download = fnMatch ? fnMatch[1] : 'Framework_Analyse_PME.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+        if (btn) { btn.innerHTML = '<i class="fas fa-check-circle"></i> T\u00e9l\u00e9charg\u00e9 !'; btn.style.background = '#065f46'; setTimeout(() => { btn.innerHTML = '<i class="fas fa-download"></i> T\u00e9l\u00e9charger Excel (.xlsx)'; btn.disabled = false; btn.style.background = '#059669'; }, 3000); }
+      } catch (e) {
+        alert('Erreur t\u00e9l\u00e9chargement: ' + e.message);
+        if (btn) { btn.innerHTML = '<i class="fas fa-download"></i> T\u00e9l\u00e9charger Excel (.xlsx)'; btn.disabled = false; }
+      }
+    }
 
     // ── Auto-scroll chat ──
     const chatEl = document.getElementById('chat-messages');
