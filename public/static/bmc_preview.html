@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Business Model Canvas — Mon Projet</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #2d6a4f;
+      --primary-light: #95d5b2;
+      --primary-bg: #e8f5e9;
+      --accent: #1565c0;
+      --accent-light: #e3f2fd;
+      --orange: #e65100;
+      --orange-light: #fff3e0;
+      --red: #c62828;
+      --red-light: #ffebee;
+      --text-dark: #1a2332;
+      --text-medium: #444444;
+      --text-light: #666666;
+      --text-muted: #999999;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Inter',system-ui,sans-serif; background:#f8fafb; color:var(--text-dark); line-height:1.6; }
+    .bmc-container { max-width:1200px; margin:0 auto; padding:0 24px; }
+
+    /* ─── HEADER ─── */
+    .bmc-header {
+      background: linear-gradient(135deg, #1a2e28 0%, #2d6a4f 40%, #40916c 100%);
+      padding: 48px 0 56px;
+      color: white;
+      position: relative;
+      overflow: hidden;
+    }
+    .bmc-header::before {
+      content:''; position:absolute; top:-50%; right:-10%;
+      width:400px; height:400px; border-radius:50%; background:rgba(255,255,255,0.04);
+    }
+    .bmc-header__inner { position:relative; z-index:1; }
+    .bmc-header__icon {
+      width:56px; height:56px; background:rgba(255,255,255,0.15);
+      border-radius:16px; display:flex; align-items:center; justify-content:center;
+      font-size:24px; margin-bottom:16px; backdrop-filter:blur(8px);
+    }
+    .bmc-header__title { font-size:36px; font-weight:800; letter-spacing:-0.5px; margin-bottom:4px; }
+    .bmc-header__company { font-size:18px; font-weight:600; opacity:0.95; }
+    .bmc-header__meta { font-size:14px; font-weight:400; opacity:0.75; margin-top:4px; }
+    .bmc-header__tags { display:flex; gap:8px; margin-top:16px; flex-wrap:wrap; }
+    .bmc-header__tag { padding:4px 12px; border-radius:20px; font-size:12px; font-weight:600; background:rgba(255,255,255,0.15); backdrop-filter:blur(8px); }
+    .bmc-header__ai-badge {
+      display:inline-flex; align-items:center; gap:6px;
+      padding:4px 14px; border-radius:20px; font-size:11px; font-weight:600;
+      background: rgba(99,102,241,0.25);
+      border: 1px solid rgba(99,102,241,0.4);
+    }
+
+    /* ─── SCORE HERO ─── */
+    .bmc-score-hero {
+      background:white; border-radius:20px; margin:-36px 24px 0;
+      position:relative; z-index:10; box-shadow:0 8px 32px rgba(0,0,0,0.1);
+      padding:32px 40px; display:grid; grid-template-columns:auto 1fr auto; gap:32px; align-items:center;
+    }
+    .bmc-score-circle {
+      width:130px; height:130px; border-radius:50%;
+      display:flex; flex-direction:column; align-items:center; justify-content:center; color:white;
+    }
+    .bmc-score-circle__value { font-size:42px; font-weight:800; line-height:1; }
+    .bmc-score-circle__unit { font-size:13px; font-weight:400; opacity:0.85; }
+    .bmc-score-label { font-size:13px; color:var(--text-muted); margin-bottom:4px; }
+    .bmc-maturity-checks { display:flex; flex-direction:column; gap:6px; }
+    .bmc-maturity-check { font-size:13px; display:flex; align-items:center; gap:6px; }
+
+    /* ─── SECTION CARDS ─── */
+    .bmc-card {
+      background:white; border-radius:16px; padding:32px;
+      margin:24px 0; border:1px solid var(--border);
+    }
+    .bmc-section-title {
+      font-size:20px; font-weight:700; color:var(--primary);
+      display:flex; align-items:center; gap:10px; margin-bottom:20px;
+    }
+
+    /* ─── SYNTHESE ─── */
+    .bmc-synthese {
+      background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+      border: 1px solid #86efac; border-radius:12px; padding:20px;
+      font-size:14px; line-height:1.7; color:#14532d; margin-bottom:20px;
+    }
+
+    /* ─── CANVAS GRID ─── */
+    .bmc-canvas-grid {
+      display:grid;
+      grid-template-columns: repeat(5, 1fr);
+      grid-template-rows: auto auto auto;
+      gap:0; border:2px solid #2d6a4f; border-radius:12px; overflow:hidden;
+    }
+    .bmc-canvas-cell {
+      padding:16px; border:1px solid #e2e8f0; min-height:140px;
+      position:relative;
+    }
+    .bmc-canvas-cell__header {
+      font-size:10px; font-weight:700; text-transform:uppercase;
+      letter-spacing:0.5px; color:white; padding:4px 10px;
+      border-radius:4px; display:inline-block; margin-bottom:10px;
+    }
+    .bmc-canvas-cell__bullet {
+      font-size:11px; color:var(--text-dark); margin-bottom:5px; line-height:1.4;
+      padding-left:12px; position:relative;
+    }
+    .bmc-canvas-cell__bullet::before {
+      content:'›'; position:absolute; left:0; color:var(--primary); font-weight:700;
+    }
+    .bmc-canvas-cell__subtitle {
+      font-size:10px; font-weight:600; color:var(--text-light);
+      text-transform:uppercase; letter-spacing:0.3px; margin:8px 0 4px;
+    }
+
+    /* ─── DIAGNOSTIC EXPERT ─── */
+    .bmc-diag-grid { display:grid; gap:12px; }
+    .bmc-diag-row {
+      display:grid; grid-template-columns:1fr 60px auto;
+      align-items:center; gap:12px; padding:12px 16px;
+      border-radius:10px; background:#fafbfc; border:1px solid rgba(0,0,0,0.05);
+    }
+    .bmc-diag-row__label { font-size:14px; font-weight:600; }
+    .bmc-diag-row__score { font-size:16px; font-weight:800; text-align:center; }
+    .bmc-diag-row__comment { font-size:12px; color:var(--text-light); }
+    .bmc-diag-bar { height:6px; background:#e5e7eb; border-radius:3px; overflow:hidden; margin-top:4px; }
+    .bmc-diag-bar__fill { height:100%; border-radius:3px; }
+
+    /* ─── FORCES & VIGILANCES ─── */
+    .bmc-forces-grid { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+    .bmc-force-card {
+      border-radius:12px; padding:20px; border-left:4px solid;
+    }
+    .bmc-force-card__title { font-size:15px; font-weight:700; margin-bottom:8px; }
+    .bmc-force-card__text { font-size:13px; line-height:1.6; }
+    .bmc-force-card__action { font-size:12px; font-weight:600; margin-top:8px; display:flex; align-items:center; gap:4px; }
+
+    /* ─── SWOT ─── */
+    .bmc-swot-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .bmc-swot-cell { border-radius:12px; padding:20px; min-height:160px; }
+    .bmc-swot-cell__title { font-size:14px; font-weight:700; margin-bottom:12px; }
+    .bmc-swot-item { font-size:12px; margin-bottom:5px; line-height:1.5; }
+
+    /* ─── RECOMMENDATIONS ─── */
+    .bmc-reco-card {
+      border-radius:12px; padding:20px; margin-bottom:16px;
+      border-left:4px solid; background:#fafbfc;
+    }
+    .bmc-reco-card__horizon { font-size:14px; font-weight:700; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+    .bmc-reco-card__item { font-size:13px; color:var(--text-dark); margin-bottom:6px; padding-left:16px; position:relative; line-height:1.5; }
+    .bmc-reco-card__item::before { content:'→'; position:absolute; left:0; font-weight:700; color:var(--primary); }
+
+    /* ─── FOOTER ─── */
+    .bmc-footer {
+      background:linear-gradient(135deg, #1a2e28 0%, #2d6a4f 40%, #40916c 100%);
+      border-radius:16px; padding:40px; margin:24px 0 48px;
+      color:white; text-align:center;
+    }
+    .bmc-footer__title { font-size:22px; font-weight:800; margin-bottom:4px; }
+    .bmc-footer__company { font-size:16px; font-weight:500; opacity:0.9; }
+    .bmc-footer__meta { font-size:12px; opacity:0.6; margin-top:8px; }
+    .bmc-footer__quote { font-style:italic; font-size:13px; opacity:0.7; margin-top:16px; }
+
+    /* ─── Print ─── */
+    @media print {
+      body { background:white; }
+      .bmc-header { page-break-after:avoid; }
+      .bmc-score-hero { box-shadow:none; border:1px solid #e5e7eb; }
+      .bmc-card { page-break-inside:avoid; }
+    }
+    @media (max-width:768px) {
+      .bmc-score-hero { grid-template-columns:1fr; text-align:center; }
+      .bmc-canvas-grid { grid-template-columns:1fr 1fr; }
+      .bmc-forces-grid { grid-template-columns:1fr; }
+      .bmc-swot-grid { grid-template-columns:1fr; }
+    }
+  </style>
+</head>
+<body>
+  <!-- ═══ 1. HEADER ═══ -->
+  <div class="bmc-header">
+    <div class="bmc-container bmc-header__inner">
+      <div class="bmc-header__icon">📋</div>
+      <div class="bmc-header__title">BUSINESS MODEL CANVAS</div>
+      <div class="bmc-header__company">Mon Projet</div>
+      <div class="bmc-header__meta">
+        Côte d'Ivoire
+      </div>
+      <div class="bmc-header__tags">
+        <span class="bmc-header__tag">PME</span>
+        <span class="bmc-header__tag">Analyse — 20/02/2026</span>
+        
+        <span class="bmc-header__ai-badge">🤖 Claude AI Analyse propulsée par Claude AI</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="bmc-container">
+    <!-- ═══ 2. SCORE HERO ═══ -->
+    <div class="bmc-score-hero">
+      <div>
+        <div class="bmc-score-circle" style="background:#1565c0;">
+          <span class="bmc-score-circle__value">72%</span>
+          <span class="bmc-score-circle__unit">Score BMC Global</span>
+        </div>
+      </div>
+      <div>
+        <div class="bmc-score-label">Maturité du business model</div>
+        <div class="bmc-maturity-checks">
+          <div class="bmc-maturity-check">
+              <span style="color:#2d6a4f;font-weight:700;">✓</span>
+              <span style="color:#2d6a4f;">Modèle économique défini et chiffré</span>
+            </div><div class="bmc-maturity-check">
+              <span style="color:#2d6a4f;font-weight:700;">✓</span>
+              <span style="color:#2d6a4f;">Segmentation client précise</span>
+            </div><div class="bmc-maturity-check">
+              <span style="color:#e65100;font-weight:700;">⚠</span>
+              <span style="color:#e65100;">Canaux de distribution diversifiés</span>
+            </div><div class="bmc-maturity-check">
+              <span style="color:#2d6a4f;font-weight:700;">✓</span>
+              <span style="color:#2d6a4f;">Structure de coûts optimisée</span>
+            </div><div class="bmc-maturity-check">
+              <span style="color:#1565c0;font-weight:700;">→</span>
+              <span style="color:#1565c0;">Ressources critiques sécurisées</span>
+            </div><div class="bmc-maturity-check">
+              <span style="color:#e65100;font-weight:700;">⚠</span>
+              <span style="color:#e65100;">Partenaires stratégiques contractualisés</span>
+            </div>
+        </div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:12px;color:var(--text-muted);">CA mensuel</div><div style="font-size:18px;font-weight:700;color:var(--primary);">≈ 40000</div>
+        
+      </div>
+    </div>
+
+    <!-- ═══ SYNTHESE GLOBALE (Claude AI) ═══ -->
+    
+    <div class="bmc-card">
+      <div class="bmc-section-title">🧠 Synthèse Globale — Diagnostic Expert</div>
+      <div class="bmc-synthese">Modèle intégré verticalement solide dans l'aviculture ivoirienne avec une approche de la ferme à la distribution. La stratégie d'intégration maïs-aliment-œufs est pertinente pour réduire les coûts (maïs représente 46,55% du coût aliment). Points forts : segmentation précise sur Bouaflé/Gagnoa, proposition de fraîcheur 72h différenciante. Axes d'amélioration : diversification clients, optimisation financière et réduction de la dépendance énergétique critique.</div>
+    </div>
+    
+
+    <!-- ═══ 3. CANVAS — VUE D'ENSEMBLE ═══ -->
+    <div class="bmc-card">
+      <div class="bmc-section-title">🗂️ CANVAS — VUE D'ENSEMBLE</div>
+      <div class="bmc-canvas-grid">
+        <div class="bmc-canvas-cell" style="grid-area:1 / 1 / 3 / 2;">
+            <div class="bmc-canvas-cell__header" style="background:#0891b2;">🤲 PARTENAIRES CLÉS</div>
+            
+            
+            <div class="bmc-canvas-cell__bullet">Fournisseurs essentiels : fournisseurs d'intrants (engrais, produits phytosanitaires, semences de maïs, poussins, produits vétérinaires), fournisseurs de matières premières (son de blé, coquillages, soja, concentrés de protéines, huile rouge), fournisseurs d'emballage (alvéoles, étiquettes, emballage film plastique, sacs), fournisseurs d'énergies (carburant, électricité)</div><div class="bmc-canvas-cell__bullet">Partenaires stratégiques : consultant en pédologie, agronomie, zootechnique</div><div class="bmc-canvas-cell__bullet">Bailleurs : site de production d'aliments, bâtiments d'élevage, parcelle agricole</div><div class="bmc-canvas-cell__bullet">Dépendance critique : fournisseur d'électricité pour la fabrication des aliments</div>
+          </div><div class="bmc-canvas-cell" style="grid-area:1 / 2 / 2 / 3;">
+            <div class="bmc-canvas-cell__header" style="background:#1565c0;">⚙️ ACTIVITÉS CLÉS</div>
+            
+            
+            <div class="bmc-canvas-cell__bullet">Ressources humaines clés : technicien avicole, technicien agronome, machinistes, maintenanciers, volailleurs, cultivateurs</div><div class="bmc-canvas-cell__bullet">Ressources matérielles : tracteur, outils de travaux du sol, de pulvérisation, de semis mécanique, d'épandage d'engrais mécanique, moissonneuse batteuse maïs, cours d'eau (fleuve), poulaillers avec système d'abreuvage automatique, mangeoires</div><div class="bmc-canvas-cell__bullet">Ressources immatérielles : marque OEUFS TICIA, expériences et expertises</div>
+          </div><div class="bmc-canvas-cell" style="grid-area:2 / 2 / 3 / 3;">
+            <div class="bmc-canvas-cell__header" style="background:#1565c0;">🔧 RESSOURCES CLÉS</div>
+            
+            
+            <div class="bmc-canvas-cell__bullet">Activités essentielles : produire du maïs, produire de l'aliment de pondeuses, produire des œufs de table</div><div class="bmc-canvas-cell__bullet">Activité la plus critique : production optimale de maïs</div>
+          </div><div class="bmc-canvas-cell" style="grid-area:1 / 3 / 3 / 4;">
+            <div class="bmc-canvas-cell__header" style="background:#2d6a4f;">💎 PROPOSITION DE VALEUR</div>
+            
+            
+            <div class="bmc-canvas-cell__bullet">Problème résolu : approvisionnement régulier en œufs de table</div><div class="bmc-canvas-cell__bullet">Solution : production locale à proximité des grandes villes de l'ouest ivoirien</div><div class="bmc-canvas-cell__bullet">Bénéfice : œufs livrés dans les 72h après ponte, zéro rupture de stock</div><div class="bmc-canvas-cell__bullet">Différenciation : fraîcheur garantie 72h et disponibilité permanente</div>
+          </div><div class="bmc-canvas-cell" style="grid-area:1 / 4 / 2 / 5;">
+            <div class="bmc-canvas-cell__header" style="background:#7c3aed;">🤝 RELATIONS CLIENTS</div>
+            
+            
+            <div class="bmc-canvas-cell__bullet">Type de relation : Personnalisée</div><div class="bmc-canvas-cell__bullet">Gestion relation client : les commerciaux</div><div class="bmc-canvas-cell__bullet">Après la vente : livraison, recouvrement, mesure de la satisfaction client, conseil et assistance si nécessaire</div>
+          </div><div class="bmc-canvas-cell" style="grid-area:2 / 4 / 3 / 5;">
+            <div class="bmc-canvas-cell__header" style="background:#7c3aed;">📦 CANAUX</div>
+            
+            
+            <div class="bmc-canvas-cell__bullet">Canaux d'acquisition : prospection terrain, réseaux sociaux, recommandations, marketplaces</div><div class="bmc-canvas-cell__bullet">Point de vente principal : GOTCHE DISTRIBUTION</div><div class="bmc-canvas-cell__bullet">Livraison : tricycle type vanette</div>
+          </div><div class="bmc-canvas-cell" style="grid-area:1 / 5 / 3 / 6;">
+            <div class="bmc-canvas-cell__header" style="background:#be185d;">👥 SEGMENTS CLIENTS</div>
+            
+            
+            <div class="bmc-canvas-cell__bullet">Client prioritaire : les boutiquiers de Bouaflé et Gagnoa. Problème principal : approvisionnement régulier en œufs de table frais. Intensité du problème : 10/</div><div class="bmc-canvas-cell__bullet">Un seul segment client prioritaire.</div>
+          </div><div class="bmc-canvas-cell" style="grid-area:3 / 1 / 4 / 3;">
+            <div class="bmc-canvas-cell__header" style="background:#e65100;">📊 STRUCTURE DE COÛTS</div>
+            
+            
+            <div class="bmc-canvas-cell__bullet">Principaux coûts fixes : loyer des baux, salaires, honoraires</div><div class="bmc-canvas-cell__bullet">Principaux coûts variables : intrants, matières premières, énergies, emballages</div><div class="bmc-canvas-cell__bullet">Poste de coût le plus lourd : coût d'achat du maïs 46,55% du coût de production d'aliments de pondeuses qui représente 83,41% du coût de production des œufs de table</div>
+          </div><div class="bmc-canvas-cell" style="grid-area:3 / 3 / 4 / 6;">
+            <div class="bmc-canvas-cell__header" style="background:#c62828;">💰 FLUX DE REVENUS</div>
+            
+            <div style="font-size:11px;font-weight:700;color:var(--primary);margin-bottom:6px;">CA mensuel ≈ 40000</div>
+            <div class="bmc-canvas-cell__bullet">Produit vendu : vente d'œufs de table</div><div class="bmc-canvas-cell__bullet">Mode de paiement : Paiement unique</div><div class="bmc-canvas-cell__bullet">Prix moyen payé par un client : 10 000 FCFA</div><div class="bmc-canvas-cell__bullet">Fréquence d'achat : hebdomadaire</div>
+          </div>
+      </div>
+    </div>
+
+    <!-- ═══ 4. DIAGNOSTIC EXPERT — Scores par bloc ═══ -->
+    <div class="bmc-card">
+      <div class="bmc-section-title">📊 DIAGNOSTIC EXPERT</div>
+      <div style="font-size:14px;font-weight:600;color:var(--text-dark);margin-bottom:16px;">
+        Score global : <span style="color:#1565c0;font-size:18px;font-weight:800;">72%</span>
+      </div>
+      <div class="bmc-diag-grid">
+        <div class="bmc-diag-row">
+            <div>
+              <div class="bmc-diag-row__label">Ressources Clés</div>
+              <div class="bmc-diag-bar"><div class="bmc-diag-bar__fill" style="width:85%;background:#2d6a4f;"></div></div>
+            </div>
+            <div class="bmc-diag-row__score" style="color:#2d6a4f;">85%</div>
+            <div class="bmc-diag-row__comment">Excellente identification des ressources avec intégration verticale complète : du tracteur à la moissonneuse batteuse, poulaillers automatisés et marque OEUFS TICIA déposée.</div>
+          </div><div class="bmc-diag-row">
+            <div>
+              <div class="bmc-diag-row__label">Structure de Coûts</div>
+              <div class="bmc-diag-bar"><div class="bmc-diag-bar__fill" style="width:82%;background:#2d6a4f;"></div></div>
+            </div>
+            <div class="bmc-diag-row__score" style="color:#2d6a4f;">82%</div>
+            <div class="bmc-diag-row__comment">Analyse détaillée remarquable avec données précises : maïs 46,55% du coût aliment qui représente 83,41% du coût de production œufs. Structure de coûts maîtrisée.</div>
+          </div><div class="bmc-diag-row">
+            <div>
+              <div class="bmc-diag-row__label">Activités Clés</div>
+              <div class="bmc-diag-bar"><div class="bmc-diag-bar__fill" style="width:80%;background:#2d6a4f;"></div></div>
+            </div>
+            <div class="bmc-diag-row__score" style="color:#2d6a4f;">80%</div>
+            <div class="bmc-diag-row__comment">Chaîne d'activités cohérente production maïs → aliment → œufs avec identification claire de l'activité critique (production optimale de maïs) et équipes spécialisées.</div>
+          </div><div class="bmc-diag-row">
+            <div>
+              <div class="bmc-diag-row__label">Partenaires Clés</div>
+              <div class="bmc-diag-bar"><div class="bmc-diag-bar__fill" style="width:78%;background:#1565c0;"></div></div>
+            </div>
+            <div class="bmc-diag-row__score" style="color:#1565c0;">78%</div>
+            <div class="bmc-diag-row__comment">Écosystème complet identifié avec dépendance critique bien cernée (électricité pour fabrication aliments). Consultants techniques et bailleurs de terrains stratégiques.</div>
+          </div><div class="bmc-diag-row">
+            <div>
+              <div class="bmc-diag-row__label">Segments Clients</div>
+              <div class="bmc-diag-bar"><div class="bmc-diag-bar__fill" style="width:75%;background:#1565c0;"></div></div>
+            </div>
+            <div class="bmc-diag-row__score" style="color:#1565c0;">75%</div>
+            <div class="bmc-diag-row__comment">Segmentation précise sur boutiquiers Bouaflé/Gagnoa avec problème quantifié (10/10). Concentration géographique cohérente mais risque de mono-segmentation.</div>
+          </div><div class="bmc-diag-row">
+            <div>
+              <div class="bmc-diag-row__label">Proposition de Valeur</div>
+              <div class="bmc-diag-bar"><div class="bmc-diag-bar__fill" style="width:72%;background:#1565c0;"></div></div>
+            </div>
+            <div class="bmc-diag-row__score" style="color:#1565c0;">72%</div>
+            <div class="bmc-diag-row__comment">Proposition claire avec différenciation fraîcheur 72h et zéro rupture. Répond au problème identifié mais manque de quantification de la valeur créée.</div>
+          </div><div class="bmc-diag-row">
+            <div>
+              <div class="bmc-diag-row__label">Flux de Revenus</div>
+              <div class="bmc-diag-bar"><div class="bmc-diag-bar__fill" style="width:65%;background:#1565c0;"></div></div>
+            </div>
+            <div class="bmc-diag-row__score" style="color:#1565c0;">65%</div>
+            <div class="bmc-diag-row__comment">Modèle simple avec panier moyen 10 000 FCFA hebdomadaire, mais manque de diversification des flux et d'optimisation tarifaire pour un modèle intégré.</div>
+          </div><div class="bmc-diag-row">
+            <div>
+              <div class="bmc-diag-row__label">Canaux</div>
+              <div class="bmc-diag-bar"><div class="bmc-diag-bar__fill" style="width:60%;background:#1565c0;"></div></div>
+            </div>
+            <div class="bmc-diag-row__score" style="color:#1565c0;">60%</div>
+            <div class="bmc-diag-row__comment">Mix acquisition classique mais point de vente unique GOTCHE DISTRIBUTION crée une dépendance. Livraison tricycle adaptée au contexte local.</div>
+          </div><div class="bmc-diag-row">
+            <div>
+              <div class="bmc-diag-row__label">Relations Clients</div>
+              <div class="bmc-diag-bar"><div class="bmc-diag-bar__fill" style="width:58%;background:#e65100;"></div></div>
+            </div>
+            <div class="bmc-diag-row__score" style="color:#e65100;">58%</div>
+            <div class="bmc-diag-row__comment">Approche personnalisée avec suivi complet mais manque de différenciation vs concurrence et d'outils de fidélisation spécifiques au B2B.</div>
+          </div>
+      </div>
+    </div>
+
+    <!-- ═══ 5. FORCES ═══ -->
+    <div class="bmc-card">
+      <div class="bmc-section-title">💪 Forces — 4 atouts majeurs</div>
+      <div style="display:grid;gap:16px;">
+        <div class="bmc-force-card" style="border-color:#2d6a4f;background:#e8f5e9;">
+            <div class="bmc-force-card__title" style="color:#2d6a4f;">✓ Intégration verticale maîtrisée</div>
+            <div class="bmc-force-card__text" style="color:#14532d;">Contrôle complet de la chaîne maïs → aliment → œufs avec réduction significative des coûts (maïs 46,55% du coût aliment). Modèle économique robuste adapté aux défis d'approvisionnement en Côte d'Ivoire.</div>
+          </div><div class="bmc-force-card" style="border-color:#2d6a4f;background:#e8f5e9;">
+            <div class="bmc-force-card__title" style="color:#2d6a4f;">✓ Différenciation fraîcheur 72h</div>
+            <div class="bmc-force-card__text" style="color:#14532d;">Proposition de valeur claire avec garantie de livraison sous 72h post-ponte et zéro rupture de stock. Répond précisément au problème d'approvisionnement régulier des boutiquiers identifiés.</div>
+          </div><div class="bmc-force-card" style="border-color:#2d6a4f;background:#e8f5e9;">
+            <div class="bmc-force-card__title" style="color:#2d6a4f;">✓ Ciblage géographique cohérent</div>
+            <div class="bmc-force-card__text" style="color:#14532d;">Concentration sur Bouaflé/Gagnoa permet une logistique optimisée avec livraison tricycle et connaissance fine du marché local. Stratégie de proximité pertinente.</div>
+          </div><div class="bmc-force-card" style="border-color:#2d6a4f;background:#e8f5e9;">
+            <div class="bmc-force-card__title" style="color:#2d6a4f;">✓ Ressources techniques complètes</div>
+            <div class="bmc-force-card__text" style="color:#14532d;">Équipement agricole moderne (tracteur, moissonneuse batteuse) et installation avicole automatisée (abreuvage, mangeoires). Équipes spécialisées techniciens agronome et avicole.</div>
+          </div>
+      </div>
+    </div>
+
+    <!-- ═══ 6. POINTS DE VIGILANCE ═══ -->
+    <div class="bmc-card">
+      <div class="bmc-section-title">⚠️ Points de vigilance — 4 risques identifiés</div>
+      <div style="display:grid;gap:16px;">
+        <div class="bmc-force-card" style="border-color:#e65100;background:#fff3e0;">
+            <div class="bmc-force-card__title" style="color:#e65100;">⚠ Dépendance électricité critique</div>
+            <div class="bmc-force-card__text" style="color:#7c2d12;">Fabrication d'aliments dépendante de l'électricité dans un contexte de délestages fréquents en Côte d'Ivoire.</div>
+            <div class="bmc-force-card__action" style="color:#2d6a4f;">→ Installer un groupe électrogène de secours ou négocier un contrat électricité prioritaire</div>
+          </div><div class="bmc-force-card" style="border-color:#e65100;background:#fff3e0;">
+            <div class="bmc-force-card__title" style="color:#e65100;">⚠ Mono-canal de distribution</div>
+            <div class="bmc-force-card__text" style="color:#7c2d12;">Dépendance totale à GOTCHE DISTRIBUTION crée un risque commercial majeur.</div>
+            <div class="bmc-force-card__action" style="color:#2d6a4f;">→ Diversifier avec 2-3 distributeurs alternatifs et développer la vente directe</div>
+          </div><div class="bmc-force-card" style="border-color:#e65100;background:#fff3e0;">
+            <div class="bmc-force-card__title" style="color:#e65100;">⚠ Concentration géographique</div>
+            <div class="bmc-force-card__text" style="color:#7c2d12;">Limitation à Bouaflé/Gagnoa expose aux risques locaux et limite la croissance.</div>
+            <div class="bmc-force-card__action" style="color:#2d6a4f;">→ Étendre progressivement vers Daloa et Yamoussoukro dans les 12 mois</div>
+          </div><div class="bmc-force-card" style="border-color:#e65100;background:#fff3e0;">
+            <div class="bmc-force-card__title" style="color:#e65100;">⚠ Mono-segmentation clientèle</div>
+            <div class="bmc-force-card__text" style="color:#7c2d12;">Focus exclusif boutiquiers limite les opportunités et expose aux variations sectorielles.</div>
+            <div class="bmc-force-card__action" style="color:#2d6a4f;">→ Développer segment restauration et grandes surfaces régionales</div>
+          </div>
+      </div>
+    </div>
+
+    <!-- ═══ 7. MATRICE SWOT SYNTHÉTIQUE ═══ -->
+    <div class="bmc-card">
+      <div class="bmc-section-title">📋 Matrice SWOT Synthétique</div>
+      <div class="bmc-swot-grid">
+        <div class="bmc-swot-cell" style="background:#dcfce7;border:1px solid #86efac;">
+          <div class="bmc-swot-cell__title" style="color:#166534;">💪 FORCES</div>
+          <div class="bmc-swot-item" style="color:#14532d;">Intégration verticale maïs-aliment-œufs réduisant les coûts</div><div class="bmc-swot-item" style="color:#14532d;">Différenciation fraîcheur 72h et zéro rupture de stock</div><div class="bmc-swot-item" style="color:#14532d;">Équipement moderne et automatisé</div><div class="bmc-swot-item" style="color:#14532d;">Expertise technique agronome et avicole</div><div class="bmc-swot-item" style="color:#14532d;">Marque OEUFS TICIA déposée</div>
+        </div>
+        <div class="bmc-swot-cell" style="background:#fee2e2;border:1px solid #fca5a5;">
+          <div class="bmc-swot-cell__title" style="color:#991b1b;">⚡ FAIBLESSES</div>
+          <div class="bmc-swot-item" style="color:#7f1d1d;">Dépendance critique à l'électricité</div><div class="bmc-swot-item" style="color:#7f1d1d;">Mono-canal distribution GOTCHE</div><div class="bmc-swot-item" style="color:#7f1d1d;">Concentration géographique limitée</div><div class="bmc-swot-item" style="color:#7f1d1d;">Mono-segmentation boutiquiers</div><div class="bmc-swot-item" style="color:#7f1d1d;">Flux de revenus peu diversifiés</div>
+        </div>
+        <div class="bmc-swot-cell" style="background:#dbeafe;border:1px solid #93c5fd;">
+          <div class="bmc-swot-cell__title" style="color:#1e40af;">🚀 OPPORTUNITÉS</div>
+          <div class="bmc-swot-item" style="color:#1e3a5f;">Croissance démographique ouest ivoirien</div><div class="bmc-swot-item" style="color:#1e3a5f;">Déficit structurel production œufs nationale</div><div class="bmc-swot-item" style="color:#1e3a5f;">Développement chaînes de restauration régionales</div><div class="bmc-swot-item" style="color:#1e3a5f;">Potentiel export vers pays CEDEAO</div><div class="bmc-swot-item" style="color:#1e3a5f;">Mécanisation agriculture ivoirienne en cours</div>
+        </div>
+        <div class="bmc-swot-cell" style="background:#fff7ed;border:1px solid #fdba74;">
+          <div class="bmc-swot-cell__title" style="color:#9a3412;">⛔ MENACES</div>
+          <div class="bmc-swot-item" style="color:#7c2d12;">Délestages électriques récurrents</div><div class="bmc-swot-item" style="color:#7c2d12;">Volatilité prix intrants importés</div><div class="bmc-swot-item" style="color:#7c2d12;">Concurrence fermes industrielles Abidjan</div><div class="bmc-swot-item" style="color:#7c2d12;">Épizooties aviaires</div><div class="bmc-swot-item" style="color:#7c2d12;">Instabilité climatique affects production maïs</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 8. RECOMMANDATIONS STRATÉGIQUES ═══ -->
+    <div class="bmc-card">
+      <div class="bmc-section-title">🎯 Recommandations stratégiques — Plan d'action</div>
+      <div class="bmc-reco-card" style="border-color:#2d6a4f;background:#e8f5e9;">
+          <div class="bmc-reco-card__horizon" style="color:#2d6a4f;">🏗️ Court terme — Sécurisation opérationnelle</div>
+          <div class="bmc-reco-card__item">Installer groupe électrogène 50 KVA pour sécuriser production aliments</div><div class="bmc-reco-card__item">Diversifier distribution avec 2 nouveaux partenaires à Gagnoa</div><div class="bmc-reco-card__item">Contractualiser approvisionnement maïs avec 3 producteurs locaux</div><div class="bmc-reco-card__item">Mettre en place tableau de bord coûts hebdomadaire</div>
+        </div><div class="bmc-reco-card" style="border-color:#1565c0;background:#e3f2fd;">
+          <div class="bmc-reco-card__horizon" style="color:#1565c0;">📈 Moyen terme — Expansion contrôlée</div>
+          <div class="bmc-reco-card__item">Étendre livraisons vers Daloa et Yamoussoukro (rayon 100km)</div><div class="bmc-reco-card__item">Développer segment restauration avec offre B2B adaptée</div><div class="bmc-reco-card__item">Optimiser prix avec grille tarifaire volume/fidélité</div><div class="bmc-reco-card__item">Certifier ISO 22000 pour crédibilité commerciale</div>
+        </div><div class="bmc-reco-card" style="border-color:#7c3aed;background:#f5f3ff;">
+          <div class="bmc-reco-card__horizon" style="color:#7c3aed;">🏭 Long terme — Développement stratégique</div>
+          <div class="bmc-reco-card__item">Créer centre de distribution régional Man-Daloa-Bouaké</div><div class="bmc-reco-card__item">Intégrer amont avec couvoir poussins pour autonomie complète</div><div class="bmc-reco-card__item">Développer gamme œufs bio/fermiers prix premium</div><div class="bmc-reco-card__item">Explorer opportunités export Mali/Burkina Faso</div>
+        </div>
+    </div>
+
+    <!-- ═══ 9. PROPOSITION DE VALEUR DÉTAILLÉE ═══ -->
+    
+    <div class="bmc-card">
+      <div class="bmc-section-title">💎 Proposition de Valeur — Détail</div>
+      <div style="padding:20px;border-radius:12px;background:linear-gradient(135deg,#e8f5e9,#f0fdf4);border:1px solid #95d5b2;">
+        <div style="font-size:16px;color:var(--primary);font-weight:700;margin-bottom:12px;font-style:italic;">
+          "Production locale d'œufs de table livrés frais sous 72h avec zéro rupture de stock pour boutiquiers de l'ouest ivoirien"
+        </div>
+        <div style="display:grid;gap:8px;">
+          <div style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--text-dark);">
+              <span style="color:#2d6a4f;font-weight:700;">›</span> Problème résolu : approvisionnement régulier en œufs de table
+            </div><div style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--text-dark);">
+              <span style="color:#2d6a4f;font-weight:700;">›</span> Solution : production locale à proximité des grandes villes de l'ouest ivoirien
+            </div><div style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--text-dark);">
+              <span style="color:#2d6a4f;font-weight:700;">›</span> Bénéfice : œufs livrés dans les 72h après ponte, zéro rupture de stock
+            </div><div style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--text-dark);">
+              <span style="color:#2d6a4f;font-weight:700;">›</span> Différenciation : fraîcheur garantie 72h et disponibilité permanente
+            </div>
+        </div>
+      </div>
+    </div>
+    
+
+    <!-- ═══ FOOTER ═══ -->
+    <div class="bmc-footer">
+      <div class="bmc-footer__title">BUSINESS MODEL CANVAS</div>
+      <div class="bmc-footer__company">Mon Projet</div>
+      <div class="bmc-footer__meta">
+        Côte d'Ivoire
+      </div>
+      <div class="bmc-footer__meta">Document généré le 20/02/2026 • Analyse propulsée par Claude AI</div>
+      <div class="bmc-footer__quote">"Les chiffres ne servent pas à juger le passé, mais à décider le futur."</div>
+    </div>
+  </div>
+
+  <div style="text-align:center;padding:16px;color:#94a3b8;font-size:11px;">
+    Généré par ESONO Investment Readiness · Module 1 BMC · 20/02/2026 · 🤖 Claude AI
+  </div>
+</body>
+</html>

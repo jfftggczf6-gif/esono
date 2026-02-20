@@ -26,7 +26,7 @@ import { getScoreLabel, getSectionName } from './ai-feedback'
 import { analyzeWithClaude, type AnalysisResult, type AnswerInput } from './services/ai-analysis'
 import { analyzeSIC, generateSicDiagnosticHtml, getSicScoreLabel, QUESTION_SECTION_MAP, SIC_SECTION_LABELS, type SicAnalysisResult } from './sic-engine'
 import { generateFullSicDeliverable, type SicDeliverableData } from './sic-deliverable-engine'
-import { generateFullBmcDeliverable, generateBmcDiagnosticHtml, type BmcDeliverableData } from './bmc-deliverable-engine'
+import { generateFullBmcDeliverable, generateBmcDiagnosticHtml, generateFullBmcDeliverableFallback, type BmcDeliverableData } from './bmc-deliverable-engine'
 import {
   analyzeInputs, generateInputsDiagnosticHtml, getInputsReadinessLabel,
   INPUT_TAB_ORDER, INPUT_TAB_LABELS, TAB_COACHING, TAB_FIELDS, scoreTab,
@@ -4258,7 +4258,7 @@ app.post('/api/sic/deliverable/refresh', async (c) => {
 // Module 1 — BMC Deliverable APIs
 // ═══════════════════════════════════════════════════════════════
 
-// GET /api/bmc/deliverable - Get BMC deliverable (HTML)
+// GET /api/bmc/deliverable - Get BMC deliverable (HTML) — Claude AI powered with cache
 app.get('/api/bmc/deliverable', async (c) => {
   try {
     const token = getCookie(c, 'auth_token')
@@ -4268,6 +4268,7 @@ app.get('/api/bmc/deliverable', async (c) => {
     if (!payload) return c.json({ error: 'Token invalide' }, 401)
 
     const format = c.req.query('format')?.trim() || 'html'
+    const refresh = c.req.query('refresh') === 'true'   // Force re-generation
     const db = c.env.DB
 
     const module = await db.prepare(`SELECT id FROM modules WHERE module_code = 'mod1_bmc'`).first()
@@ -4277,6 +4278,26 @@ app.get('/api/bmc/deliverable', async (c) => {
       SELECT id, project_id, ai_score, ai_feedback_json FROM progress WHERE user_id = ? AND module_id = ?
     `).bind(payload.userId, module.id).first()
     if (!progress) return c.json({ error: 'Pas de progression BMC' }, 404)
+
+    // ── Check cache: stored deliverable HTML in deliverables table ──
+    if (!refresh && (format === 'full' || format === 'diagnostic' || format === 'html')) {
+      const cachedType = format === 'full' ? 'bmc_full' : 'bmc_diagnostic'
+      const cached = await db.prepare(`
+        SELECT content_json FROM deliverables
+        WHERE user_id = ? AND module_id = ? AND deliverable_type = ?
+        ORDER BY validated_at DESC LIMIT 1
+      `).bind(payload.userId, module.id, cachedType).first()
+
+      if (cached?.content_json) {
+        try {
+          const cachedData = JSON.parse(cached.content_json as string)
+          if (cachedData?.html && typeof cachedData.html === 'string') {
+            console.log(`[BMC] Serving cached ${cachedType} deliverable`)
+            return c.html(cachedData.html)
+          }
+        } catch {}
+      }
+    }
 
     // Get BMC answers
     const answersResult = await db.prepare(`
@@ -4319,16 +4340,47 @@ app.get('/api/bmc/deliverable', async (c) => {
       brandName: '',
       tagline: '',
       analysisDate: new Date().toISOString(),
-      answers: bmcAnswers
+      answers: bmcAnswers,
+      apiKey: c.env.ANTHROPIC_API_KEY   // Claude AI key for deliverable generation
     }
 
     if (format === 'full') {
-      const fullHtml = generateFullBmcDeliverable(deliverableData)
+      const fullHtml = await generateFullBmcDeliverable(deliverableData)
+
+      // ── Cache the result ──
+      try {
+        const cachePayload = JSON.stringify({ html: fullHtml, generatedAt: new Date().toISOString() })
+        await db.prepare(`
+          INSERT INTO deliverables (user_id, project_id, module_id, deliverable_type, title, content_json, status, validated_at, created_at)
+          VALUES (?, ?, ?, 'bmc_full', 'BMC Livrable Complet', ?, 'ready', datetime('now'), datetime('now'))
+          ON CONFLICT(user_id, module_id, deliverable_type) DO UPDATE SET
+            content_json = excluded.content_json,
+            validated_at = datetime('now')
+        `).bind(payload.userId, progress.project_id ?? null, module.id, cachePayload).run()
+      } catch (cacheErr: any) {
+        console.warn('[BMC] Cache write failed (non-blocking):', cacheErr.message)
+      }
+
       return c.html(fullHtml)
     }
 
     if (format === 'diagnostic' || format === 'html') {
-      const diagHtml = generateBmcDiagnosticHtml(deliverableData)
+      const diagHtml = await generateBmcDiagnosticHtml(deliverableData)
+
+      // ── Cache the result ──
+      try {
+        const cachePayload = JSON.stringify({ html: diagHtml, generatedAt: new Date().toISOString() })
+        await db.prepare(`
+          INSERT INTO deliverables (user_id, project_id, module_id, deliverable_type, title, content_json, status, validated_at, created_at)
+          VALUES (?, ?, ?, 'bmc_diagnostic', 'BMC Diagnostic', ?, 'ready', datetime('now'), datetime('now'))
+          ON CONFLICT(user_id, module_id, deliverable_type) DO UPDATE SET
+            content_json = excluded.content_json,
+            validated_at = datetime('now')
+        `).bind(payload.userId, progress.project_id ?? null, module.id, cachePayload).run()
+      } catch (cacheErr: any) {
+        console.warn('[BMC] Cache write failed (non-blocking):', cacheErr.message)
+      }
+
       return c.html(diagHtml)
     }
 

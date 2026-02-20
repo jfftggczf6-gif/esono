@@ -547,34 +547,110 @@ export function adaptBMCData(rawContent: any, companyName: string, userName: str
     }))
   }
 
-  // Use enriched SWOT if available, otherwise build from blocks
+  // Use enriched SWOT if available, otherwise build dynamically from blocks
   const swot = rawContent.swot || {
-    forces: strongBlocks.map((b: any) => `${b.name} (${b.score}%)`).slice(0, 5),
-    faiblesses: weakBlocks.map((b: any) => `${b.name} — ${(b.recommendations || [])[0] || 'À renforcer'}`).slice(0, 5),
-    opportunites: ['Expansion vers d\'autres marchés', 'Diversification des produits/services', 'Digitalisation des canaux'],
-    menaces: ['Volatilité des prix', 'Entrée de concurrents', 'Dépendance au financement externe'],
+    forces: strongBlocks.map((b: any) => b.analysis ? `${b.name} — ${(b.analysis as string).slice(0, 80)}` : `${b.name} (${b.score}%)`).slice(0, 5),
+    faiblesses: weakBlocks.map((b: any) => `${b.name} — ${(b.recommendations || [])[0] || (b.analysis || 'À renforcer').slice(0, 60)}`).slice(0, 5),
+    opportunites: (() => {
+      const opps: string[] = []
+      for (const b of blocks) {
+        for (const r of (b.recommendations || [])) {
+          if (/expan|divers|digital|croissanc|nouveau/i.test(r) && opps.length < 5) opps.push(r)
+        }
+      }
+      while (opps.length < 3) opps.push(['Expansion vers de nouveaux marchés', 'Diversification des produits/services', 'Digitalisation des canaux'][opps.length])
+      return opps.slice(0, 5)
+    })(),
+    menaces: (() => {
+      const threats: string[] = []
+      for (const b of weakBlocks) {
+        if (b.analysis && /risque|dépend|volatile|concurrent/i.test(b.analysis)) threats.push((b.analysis as string).slice(0, 80))
+      }
+      while (threats.length < 3) threats.push(['Volatilité des prix matières premières', 'Entrée de nouveaux concurrents', 'Dépendance au financement externe'][threats.length])
+      return threats.slice(0, 5)
+    })(),
   }
 
-  // Use enriched recommandations if available
+  // Use enriched recommandations if available, otherwise build from block recommendations
   const allRecs = blocks.flatMap((b: any) => (b.recommendations || []).map((r: string) => r))
   const recommandations = rawContent.recommandations || {
-    court_terme: { title: 'Court terme — Consolider les fondations', content: allRecs.slice(0, 3).join('. ') || 'Sécuriser les approvisionnements et structurer le suivi client.' },
-    moyen_terme: { title: 'Moyen terme — Croissance maîtrisée', content: allRecs.slice(3, 6).join('. ') || 'Diversifier les produits et étendre la zone géographique.' },
-    long_terme: { title: 'Long terme — Industrialisation et marque', content: allRecs.slice(6, 9).join('. ') || 'Industrialiser la production et développer la marque.' },
+    court_terme: { title: 'Court terme — Consolider les fondations', content: (allRecs.slice(0, 4).join('. ') || 'Sécuriser les approvisionnements et structurer le suivi client.') + '.' },
+    moyen_terme: { title: 'Moyen terme — Croissance maîtrisée', content: (allRecs.slice(4, 8).join('. ') || 'Diversifier les produits et étendre la zone géographique.') + '.' },
+    long_terme: { title: 'Long terme — Industrialisation et marque', content: (allRecs.slice(8, 12).join('. ') || 'Industrialiser la production et développer la marque.') + '.' },
   }
 
-  // Use enriched canvas data if available, otherwise build basic one
-  const canvas: BMCData['canvas'] = rawContent.canvas || {
-    partenaires_cles: { items: [{ title: 'Partenaires identifiés', detail: 'Relations à formaliser', critical: false }] },
-    activites_cles: { items: [{ title: 'Activités opérationnelles', detail: 'Cohérentes avec la proposition de valeur', critical: true }] },
-    ressources_cles: { items: [{ title: 'Ressources identifiées', detail: 'Solides mais dépendantes de personnes clés', critical: true }] },
-    proposition_valeur: { items: [{ icon: '🎯', title: 'Proposition de valeur', detail: 'Claire et différenciante' }] },
-    relations_clients: { items: [{ title: 'Relation personnalisée', detail: 'À formaliser et digitaliser' }] },
-    canaux: { items: [{ title: 'Canaux de distribution', detail: 'Fonctionnels, manque de digital' }] },
-    segments_clients: { items: [{ title: 'Segments identifiés', detail: 'Zone géographique limitée' }] },
-    structure_couts: { items: [], total: 'À détailler', critical_cost: 'À identifier' },
-    flux_revenus: { items: [], ca_mensuel: 'À calculer', marge_brute: 'À évaluer' },
-  }
+  // Use enriched canvas data if available, otherwise BUILD from blocks analysis
+  const canvas: BMCData['canvas'] = rawContent.canvas || (() => {
+    // Map block names to canvas keys
+    const blockMap: Record<string, string> = {
+      'partenaires clés': 'partenaires_cles', 'partenaires cles': 'partenaires_cles',
+      'activités clés': 'activites_cles', 'activites cles': 'activites_cles',
+      'ressources clés': 'ressources_cles', 'ressources cles': 'ressources_cles',
+      'proposition de valeur': 'proposition_valeur',
+      'relations clients': 'relations_clients',
+      'canaux': 'canaux',
+      'segments clients': 'segments_clients',
+      'structure de coûts': 'structure_couts', 'structure de couts': 'structure_couts',
+      'flux de revenus': 'flux_revenus',
+    }
+
+    // Extract analysis text per canvas key from blocks
+    const blockByKey: Record<string, any> = {}
+    for (const b of blocks) {
+      const name = (b.name || '').toLowerCase().trim()
+      for (const [pattern, key] of Object.entries(blockMap)) {
+        if (name.includes(pattern) || pattern.includes(name)) {
+          blockByKey[key] = b
+          break
+        }
+      }
+    }
+
+    // Helper: split analysis into bullet items
+    const toItems = (b: any, fallbackTitle: string, fallbackDetail: string) => {
+      if (!b || !b.analysis) return [{ title: fallbackTitle, detail: fallbackDetail }]
+      const text = b.analysis as string
+      const sentences = text.split(/[.!?]+/).map((s: string) => s.trim()).filter((s: string) => s.length > 10)
+      if (sentences.length >= 2) {
+        return sentences.slice(0, 4).map((s: string, i: number) => ({
+          title: i === 0 ? (b.name || fallbackTitle) : s.slice(0, 40) + (s.length > 40 ? '...' : ''),
+          detail: s,
+          critical: i === 0 && (b.score || 0) >= 75
+        }))
+      }
+      return [{ title: b.name || fallbackTitle, detail: text || fallbackDetail, critical: (b.score || 0) >= 75 }]
+    }
+
+    const bPart = blockByKey['partenaires_cles']
+    const bAct = blockByKey['activites_cles']
+    const bRes = blockByKey['ressources_cles']
+    const bProp = blockByKey['proposition_valeur']
+    const bRel = blockByKey['relations_clients']
+    const bCan = blockByKey['canaux']
+    const bSeg = blockByKey['segments_clients']
+    const bCout = blockByKey['structure_couts']
+    const bRev = blockByKey['flux_revenus']
+
+    return {
+      partenaires_cles: { items: toItems(bPart, 'Partenaires clés', 'À identifier et formaliser') },
+      activites_cles: { items: toItems(bAct, 'Activités clés', 'À détailler').map((it: any) => ({ ...it, critical: it.critical ?? false })) },
+      ressources_cles: { items: toItems(bRes, 'Ressources clés', 'À inventorier').map((it: any) => ({ ...it, critical: it.critical ?? false })) },
+      proposition_valeur: { items: toItems(bProp, 'Proposition de valeur', 'À clarifier').map((it: any) => ({ icon: '🎯', title: it.title, detail: it.detail })) },
+      relations_clients: { items: toItems(bRel, 'Relations clients', 'À structurer') },
+      canaux: { items: toItems(bCan, 'Canaux', 'À développer') },
+      segments_clients: { items: toItems(bSeg, 'Segments clients', 'À identifier') },
+      structure_couts: {
+        items: bCout?.recommendations?.map((r: string) => ({ title: r.slice(0, 50), amount: '', type: 'variable', pct: '' })) || [],
+        total: bCout?.analysis?.match(/\d[\d\s,.]*\s*(FCFA|XOF|%)/i)?.[0] || 'Voir analyse',
+        critical_cost: bCout?.analysis?.match(/(?:plus lourd|critique|majeur)[^.]*\.?/i)?.[0] || 'Voir analyse'
+      },
+      flux_revenus: {
+        items: bRev?.recommendations?.map((r: string) => ({ title: r, detail: '' })) || [],
+        ca_mensuel: bRev?.analysis?.match(/\d[\d\s,.]*\s*(FCFA|XOF)/i)?.[0] || 'Voir analyse',
+        marge_brute: bRev?.analysis?.match(/\d+\s*%/)?.[0] || 'Voir analyse'
+      },
+    }
+  })()
 
   // Use enriched tags if available
   const tags: BMCData['tags'] = rawContent.tags || (() => {

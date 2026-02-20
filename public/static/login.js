@@ -56,7 +56,7 @@
         if (response.ok && result.success) {
           console.log('[Login] Success! Redirecting to dashboard...');
           // Redirect to dashboard
-          window.location.href = '/dashboard';
+          window.location.href = '/entrepreneur';
         } else {
           console.error('[Login] Error:', result.error);
           // Show error message

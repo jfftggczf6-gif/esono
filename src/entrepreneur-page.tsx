@@ -7,6 +7,7 @@ import { getCookie } from 'hono/cookie'
 import { verifyToken } from './auth'
 import { orchestrateGeneration, loadKBContext, type OrchestrationResult } from './agents/ai-agents'
 import { renderBMCPage, adaptBMCData } from './deliverable-bmc'
+import { generateFullBmcDeliverable, generateFullBmcDeliverableFallback, type BmcDeliverableData } from './bmc-deliverable-engine'
 
 type Bindings = {
   DB: D1Database
@@ -1147,10 +1148,89 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
       : null
 
     // ═══ DEDICATED DELIVERABLE PAGES ═══
-    // BMC Analysis — uses its own full-page template matching the PDF
-    if (dtype === 'bmc_analysis' && isAvailable) {
-      const bmcData = adaptBMCData(content, (user?.name as string) || 'Entrepreneur', (user?.name as string) || 'Entrepreneur')
-      return c.html(renderBMCPage(bmcData, (user?.name as string) || 'Entrepreneur'))
+    // BMC Analysis — uses the REAL Claude AI engine (bmc-deliverable-engine.ts)
+    // Same output as /api/bmc/deliverable?format=full and /static/bmc_preview
+    if (dtype === 'bmc_analysis') {
+      try {
+        // Get BMC answers from questionnaire (module system)
+        const bmcModule = await c.env.DB.prepare(
+          "SELECT id FROM modules WHERE module_code = 'mod1_bmc' LIMIT 1"
+        ).first() as any
+
+        let bmcAnswers = new Map<number, string>()
+        let hasQuestionnaireData = false
+
+        if (bmcModule) {
+          const bmcProgress = await c.env.DB.prepare(
+            'SELECT id FROM progress WHERE user_id = ? AND module_id = ?'
+          ).bind(payload.userId, bmcModule.id).first() as any
+
+          if (bmcProgress) {
+            const qRows = await c.env.DB.prepare(
+              'SELECT question_number, user_response FROM questions WHERE progress_id = ? AND user_response IS NOT NULL ORDER BY question_number'
+            ).bind(bmcProgress.id).all()
+            for (const row of (qRows.results || []) as any[]) {
+              if (row.user_response?.trim()) {
+                bmcAnswers.set(row.question_number, row.user_response)
+                hasQuestionnaireData = true
+              }
+            }
+          }
+        }
+
+        // Fallback: extract from uploaded BMC document if no questionnaire data
+        if (!hasQuestionnaireData) {
+          const bmcUpload = await c.env.DB.prepare(
+            "SELECT extracted_text FROM uploads WHERE user_id = ? AND category = 'bmc' ORDER BY uploaded_at DESC LIMIT 1"
+          ).bind(payload.userId).first() as any
+          if (bmcUpload?.extracted_text) {
+            bmcAnswers.set(1, bmcUpload.extracted_text)
+          }
+        }
+
+        if (bmcAnswers.size > 0) {
+          // Get project info (projects table only has: id, user_id, name, description, status)
+          const project = await c.env.DB.prepare(
+            'SELECT name, description FROM projects WHERE user_id = ? LIMIT 1'
+          ).bind(payload.userId).first() as any
+
+          const companyName = (project?.name as string) || (user?.name as string) || 'Mon Projet'
+          // Sector/location/country are not in projects table — extract from answers or use defaults
+          const sector = ''
+          const location = ''
+          const country = 'Côte d\'Ivoire'
+
+          const bmcDeliverableData: BmcDeliverableData = {
+            companyName,
+            entrepreneurName: (user?.name as string) || 'Entrepreneur',
+            sector,
+            location,
+            country,
+            brandName: '',
+            tagline: '',
+            analysisDate: new Date().toISOString(),
+            answers: bmcAnswers,
+            apiKey: c.env.ANTHROPIC_API_KEY
+          }
+
+          // Try Claude AI first, fallback to rule-based
+          let html: string
+          try {
+            html = await generateFullBmcDeliverable(bmcDeliverableData)
+          } catch {
+            html = generateFullBmcDeliverableFallback(bmcDeliverableData)
+          }
+          return c.html(html)
+        }
+      } catch (err: any) {
+        console.error('[BMC Deliverable Page] Error:', err.message)
+      }
+
+      // Ultimate fallback: use old template with stored data
+      if (isAvailable) {
+        const bmcData = adaptBMCData(content, (user?.name as string) || 'Entrepreneur', (user?.name as string) || 'Entrepreneur')
+        return c.html(renderBMCPage(bmcData, (user?.name as string) || 'Entrepreneur'))
+      }
     }
 
     // Build sections HTML depending on type

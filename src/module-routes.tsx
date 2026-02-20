@@ -18,7 +18,7 @@ import {
 import { generateMockFeedback, calculateOverallScore, getScoreLabel, getSectionName } from './ai-feedback'
 import { analyzeSIC, generateSicDiagnosticHtml, getSicScoreLabel, SIC_SECTION_LABELS, QUESTION_SECTION_MAP as SIC_QUESTION_MAP, type SicAnalysisResult, type SicSectionScore, ODD_ICONS, ODD_LABELS } from './sic-engine'
 import { generateFullSicDeliverable, type SicDeliverableData } from './sic-deliverable-engine'
-import { generateFullBmcDeliverable, generateBmcDiagnosticHtml, type BmcDeliverableData } from './bmc-deliverable-engine'
+import { generateFullBmcDeliverable, generateBmcDiagnosticHtml, generateFullBmcDeliverableFallback, type BmcDeliverableData } from './bmc-deliverable-engine'
 import { analyzePme, generatePmeExcelXml, generatePmePreviewHtml, type PmeInputData } from './framework-pme-engine'
 import {
   analyzeInputs, generateInputsDiagnosticHtml, getInputsReadinessLabel,
@@ -620,7 +620,8 @@ moduleRoutes.get('/module/:code/download', async (c) => {
         brandName,
         tagline: '',
         analysisDate: new Date().toISOString(),
-        answers: bmcAnswers
+        answers: bmcAnswers,
+        apiKey: c.env.ANTHROPIC_API_KEY
       }
 
       // Score label

@@ -1,8 +1,10 @@
 // ═══════════════════════════════════════════════════════════════
-// BMC Deliverable Engine — Full Professional Deliverable Generator
-// Réplique du format BMC_GOTCHE_FINAL.pdf
-// Sections : Header, Score, Canvas Vue d'Ensemble, Diagnostic Expert,
-//            Forces, Points de Vigilance, SWOT, Recommandations, Footer
+// BMC Deliverable Engine — Claude AI-Powered Full Deliverable Generator
+// L'agent IA Claude génère 100% du contenu expert du livrable :
+//   Scores par bloc, Forces, Vigilances, SWOT, Recommandations,
+//   Données financières, Maturity checks
+// Fallback : moteur règles si Claude indisponible
+// Template : Réplique pixel-perfect du BMC_GOTCHE_FINAL.pdf
 // ═══════════════════════════════════════════════════════════════
 
 // ─── Types ───
@@ -16,6 +18,7 @@ export interface BmcDeliverableData {
   tagline: string
   analysisDate: string
   answers: Map<number, string>
+  apiKey?: string            // Anthropic API key for Claude AI
 }
 
 interface BmcBlocScore {
@@ -61,6 +64,8 @@ interface BmcAnalysis {
   caMensuel: string
   margeBrute: string
   coutTotal: string
+  aiSource: 'claude' | 'fallback'
+  syntheseGlobale?: string
 }
 
 // ─── Color Palette (from PDF analysis) ───
@@ -119,7 +124,291 @@ function extractBullets(text: string): string[] {
   return lines.slice(0, 8)
 }
 
-// ─── Helper: Text quality scoring ───
+// ═══════════════════════════════════════════════════════════════
+// CLAUDE AI — Prompt système pour génération complète du livrable BMC
+// ═══════════════════════════════════════════════════════════════
+
+const BMC_DELIVERABLE_SYSTEM_PROMPT = `Tu es un consultant senior spécialisé en Business Model Canvas pour les PME africaines (focus Côte d'Ivoire / Afrique de l'Ouest). Tu génères un diagnostic COMPLET et EXPERT à partir des 9 blocs BMC remplis par un entrepreneur.
+
+TON OBJECTIF : Générer un JSON structuré qui alimente un livrable PDF professionnel de type "investment readiness". Le résultat doit être riche, personnalisé, spécifique au secteur et aux réponses de l'entrepreneur. Pas de phrases génériques.
+
+CRITÈRES DE SCORING PAR BLOC (0-100%) :
+- Spécificité : réponse concrète vs vague (30%)
+- Données chiffrées : présence de métriques, montants, KPIs (25%)
+- Cohérence inter-blocs : alignement entre les 9 blocs (20%)
+- Réalisme marché : pertinence pour le contexte africain (15%)
+- Complétude : tous les aspects couverts (10%)
+
+ÉCHELLE :
+- 0-25% : Insuffisant — réponse trop vague ou absente
+- 26-50% : À améliorer — idée présente mais manque de détails
+- 51-75% : Bien — réponse structurée mais perfectible
+- 76-100% : Excellent — réponse détaillée, chiffrée, actionnable
+
+RÈGLES ABSOLUES :
+1. Sois exigeant mais constructif. Score > 80% uniquement si vraiment détaillé + chiffré + cohérent.
+2. CHAQUE commentaire de bloc doit être SPÉCIFIQUE aux réponses (pas de générique).
+3. Les forces/vigilances doivent citer des éléments des réponses.
+4. Les recommandations doivent être ACTIONNABLES et adaptées au contexte ivoirien.
+5. Le SWOT doit être basé sur les réponses ET le contexte sectoriel.
+6. Extrais les données financières mentionnées (CA, marge, coûts en FCFA).
+
+CONTEXTE ÉCONOMIQUE CÔTE D'IVOIRE :
+- SMIG : ~75 000 FCFA/mois
+- Marge brute aviculture : 25-35%
+- Marge brute agriculture : 30-45%
+- TVA : 18%, IS : 25%
+- Charges sociales : ~25% du brut
+- Taux bancaire : 8-14%
+
+IMPORTANT : Réponds UNIQUEMENT avec un objet JSON valide. Pas de markdown, pas de backticks, pas de texte avant ou après.`
+
+function buildBmcDeliverableUserPrompt(answers: Map<number, string>, companyName: string, sector: string): string {
+  const blocTexts: string[] = []
+  for (const [qIdStr, sec] of Object.entries(BMC_SECTIONS)) {
+    const qId = Number(qIdStr)
+    const answer = answers.get(qId)?.trim() || '(non renseigné)'
+    blocTexts.push(`BLOC ${qId} — ${sec.label} :\n${answer}`)
+  }
+
+  return `Entreprise : ${companyName || 'Non précisé'}
+Secteur : ${sector || 'Non précisé'}
+
+Voici les 9 blocs du Business Model Canvas remplis par l'entrepreneur :
+
+${blocTexts.join('\n\n')}
+
+═══════════════════════════════
+
+Génère le JSON complet du diagnostic livrable avec EXACTEMENT cette structure :
+
+{
+  "globalScore": <number 0-100>,
+  "syntheseGlobale": "<paragraphe de synthèse expert 3-5 lignes, personnalisé>",
+  "blocScores": [
+    {
+      "key": "<segments_clients|proposition_valeur|canaux|relations_clients|flux_revenus|ressources_cles|activites_cles|partenaires_cles|structure_couts>",
+      "label": "<nom du bloc>",
+      "score": <number 0-100>,
+      "comment": "<commentaire expert spécifique 1-2 phrases, basé sur le contenu>"
+    }
+  ],
+  "forces": [
+    { "title": "<titre court de la force>", "description": "<description 2-3 phrases, basée sur les réponses>" }
+  ],
+  "vigilances": [
+    { "title": "<titre du risque>", "description": "<explication 1-2 phrases>", "action": "<action concrète recommandée>" }
+  ],
+  "swot": {
+    "forces": ["<force 1>", "<force 2>", "<force 3>", "<force 4>", "<force 5>"],
+    "faiblesses": ["<faiblesse 1>", "<faiblesse 2>", "<faiblesse 3>", "<faiblesse 4>", "<faiblesse 5>"],
+    "opportunites": ["<opportunité 1>", "<opportunité 2>", "<opportunité 3>", "<opportunité 4>", "<opportunité 5>"],
+    "menaces": ["<menace 1>", "<menace 2>", "<menace 3>", "<menace 4>", "<menace 5>"]
+  },
+  "recommendations": [
+    {
+      "horizon": "court_terme",
+      "horizonLabel": "Court terme — <sous-titre contextuel>",
+      "items": ["<recommandation 1>", "<recommandation 2>", "<recommandation 3>", "<recommandation 4>"]
+    },
+    {
+      "horizon": "moyen_terme",
+      "horizonLabel": "Moyen terme — <sous-titre contextuel>",
+      "items": ["<recommandation 1>", "<recommandation 2>", "<recommandation 3>", "<recommandation 4>"]
+    },
+    {
+      "horizon": "long_terme",
+      "horizonLabel": "Long terme — <sous-titre contextuel>",
+      "items": ["<recommandation 1>", "<recommandation 2>", "<recommandation 3>", "<recommandation 4>"]
+    }
+  ],
+  "maturityChecks": [
+    { "label": "<critère de maturité>", "status": "<ok|warning|action>" }
+  ],
+  "propositionDeValeur": "<résumé 1 phrase de la proposition de valeur>",
+  "caMensuel": "<montant FCFA/mois si mentionné, sinon vide>",
+  "margeBrute": "<pourcentage si mentionné, sinon vide>",
+  "coutTotal": "<montant FCFA si mentionné, sinon vide>"
+}
+
+CONTRAINTES :
+- blocScores : EXACTEMENT 9 blocs, triés par score décroissant
+- forces : 3 à 5 forces SPÉCIFIQUES aux réponses
+- vigilances : 3 à 5 risques avec actions concrètes
+- swot : 5 éléments par quadrant
+- recommendations : EXACTEMENT 3 horizons (court/moyen/long terme), 3-4 items chacun
+- maturityChecks : 4 à 6 critères
+- Tous les commentaires doivent être SPÉCIFIQUES, pas génériques
+- Si des montants en FCFA ou % sont mentionnés dans les réponses, LES EXTRAIRE`
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CLAUDE AI — Appel API pour génération du livrable
+// ═══════════════════════════════════════════════════════════════
+
+const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages'
+const CLAUDE_MODEL = 'claude-sonnet-4-20250514'
+const CLAUDE_MAX_TOKENS = 8192     // Livrable complet = ~4000-6000 tokens
+const CLAUDE_TIMEOUT_MS = 90_000   // 90s — livrable complet = beaucoup de tokens
+
+async function callClaudeForDeliverable(
+  apiKey: string,
+  answers: Map<number, string>,
+  companyName: string,
+  sector: string
+): Promise<BmcAnalysis> {
+  const userPrompt = buildBmcDeliverableUserPrompt(answers, companyName, sector)
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), CLAUDE_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(CLAUDE_API_URL, {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: CLAUDE_MAX_TOKENS,
+        system: BMC_DELIVERABLE_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userPrompt }]
+      }),
+      signal: controller.signal
+    })
+
+    clearTimeout(timeoutId)
+
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => 'Unknown error')
+      throw new Error(`Claude API error ${response.status}: ${errorBody.slice(0, 300)}`)
+    }
+
+    const data = await response.json() as {
+      content?: Array<{ type: string; text?: string }>
+      error?: { message?: string }
+    }
+
+    if (data.error) {
+      throw new Error(`Claude API returned error: ${data.error.message || JSON.stringify(data.error)}`)
+    }
+
+    const textBlock = data.content?.find(c => c.type === 'text')
+    if (!textBlock?.text) throw new Error('Claude returned empty response')
+
+    // Parse JSON — handle potential markdown wrapping
+    let jsonText = textBlock.text.trim()
+    if (jsonText.startsWith('```')) {
+      jsonText = jsonText.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '')
+    }
+
+    let parsed: any
+    try {
+      parsed = JSON.parse(jsonText)
+    } catch {
+      const jsonMatch = jsonText.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        parsed = JSON.parse(jsonMatch[0])
+      } else {
+        throw new Error(`Failed to parse Claude JSON: ${jsonText.slice(0, 200)}`)
+      }
+    }
+
+    return normalizeBmcAnalysis(parsed)
+
+  } catch (err: any) {
+    clearTimeout(timeoutId)
+    if (err.name === 'AbortError') throw new Error('Claude API timeout (>90s)')
+    throw err
+  }
+}
+
+// ─── Normalize Claude response to BmcAnalysis ───
+function normalizeBmcAnalysis(raw: any): BmcAnalysis {
+  const globalScore = typeof raw.globalScore === 'number'
+    ? Math.max(0, Math.min(100, Math.round(raw.globalScore)))
+    : 50
+
+  // Bloc scores
+  const blocScores: BmcBlocScore[] = Array.isArray(raw.blocScores)
+    ? raw.blocScores.map((b: any) => ({
+        key: typeof b.key === 'string' ? b.key : 'unknown',
+        label: typeof b.label === 'string' ? b.label : 'Bloc',
+        score: typeof b.score === 'number' ? Math.max(0, Math.min(100, Math.round(b.score))) : 50,
+        comment: typeof b.comment === 'string' ? b.comment : ''
+      }))
+    : []
+
+  // Forces
+  const forces: BmcForce[] = Array.isArray(raw.forces)
+    ? raw.forces.slice(0, 5).map((f: any) => ({
+        title: typeof f.title === 'string' ? f.title : 'Force',
+        description: typeof f.description === 'string' ? f.description : ''
+      }))
+    : []
+
+  // Vigilances
+  const vigilances: BmcVigilance[] = Array.isArray(raw.vigilances)
+    ? raw.vigilances.slice(0, 5).map((v: any) => ({
+        title: typeof v.title === 'string' ? v.title : 'Risque',
+        description: typeof v.description === 'string' ? v.description : '',
+        action: typeof v.action === 'string' ? v.action : 'À définir'
+      }))
+    : []
+
+  // SWOT
+  const swot: SwotData = {
+    forces: safeStringArray(raw.swot?.forces, 5),
+    faiblesses: safeStringArray(raw.swot?.faiblesses, 5),
+    opportunites: safeStringArray(raw.swot?.opportunites, 5),
+    menaces: safeStringArray(raw.swot?.menaces, 5)
+  }
+
+  // Recommendations
+  const recommendations: BmcRecommendation[] = Array.isArray(raw.recommendations)
+    ? raw.recommendations.slice(0, 3).map((r: any) => ({
+        horizon: typeof r.horizon === 'string' ? r.horizon : 'court_terme',
+        horizonLabel: typeof r.horizonLabel === 'string' ? r.horizonLabel : 'Recommandation',
+        items: safeStringArray(r.items, 4)
+      }))
+    : []
+
+  // Maturity checks
+  const maturityChecks = Array.isArray(raw.maturityChecks)
+    ? raw.maturityChecks.slice(0, 6).map((m: any) => ({
+        label: typeof m.label === 'string' ? m.label : '',
+        status: (['ok', 'warning', 'action'].includes(m.status) ? m.status : 'warning') as 'ok' | 'warning' | 'action'
+      }))
+    : []
+
+  return {
+    globalScore,
+    blocScores,
+    forces,
+    vigilances,
+    swot,
+    recommendations,
+    maturityChecks,
+    propositionDeValeur: typeof raw.propositionDeValeur === 'string' ? raw.propositionDeValeur : '',
+    caMensuel: typeof raw.caMensuel === 'string' && raw.caMensuel.trim() ? raw.caMensuel : '—',
+    margeBrute: typeof raw.margeBrute === 'string' && raw.margeBrute.trim() ? raw.margeBrute : '—',
+    coutTotal: typeof raw.coutTotal === 'string' && raw.coutTotal.trim() ? raw.coutTotal : '—',
+    aiSource: 'claude',
+    syntheseGlobale: typeof raw.syntheseGlobale === 'string' ? raw.syntheseGlobale : undefined
+  }
+}
+
+function safeStringArray(arr: any, max: number): string[] {
+  if (!Array.isArray(arr)) return []
+  return arr.filter((s: any) => typeof s === 'string' && s.trim()).slice(0, max)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FALLBACK — Moteur règles (si Claude indisponible)
+// ═══════════════════════════════════════════════════════════════
+
 function textQuality(text: string): number {
   if (!text || text.trim().length === 0) return 0
   const t = text.trim()
@@ -137,22 +426,18 @@ function textQuality(text: string): number {
   return Math.min(score, 100)
 }
 
-// ─── Helper: Extract financial data ───
 function extractFinancials(answers: Map<number, string>): { ca: string, marge: string, cout: string } {
   const revenueText = answers.get(5) ?? ''
   const costText = answers.get(9) ?? ''
 
-  // Try to find CA
   const caMatch = revenueText.match(/(\d[\d\s,.]*)\s*(FCFA|XOF|CFA|€|\$)/i)
     ?? revenueText.match(/CA.*?(\d[\d\s,.]*)/i)
     ?? revenueText.match(/(\d[\d\s,.]*)\s*\/\s*mois/i)
   const ca = caMatch ? caMatch[1].trim() : ''
 
-  // Try to find margin
   const margeMatch = revenueText.match(/marge.*?(\d+)\s*%/i) ?? revenueText.match(/(\d+)\s*%.*marge/i)
   const marge = margeMatch ? margeMatch[1] + '%' : ''
 
-  // Try to find total cost
   const coutMatch = costText.match(/total.*?(\d[\d\s,.]*)\s*(FCFA|XOF)/i)
     ?? costText.match(/(\d[\d\s,.]*)\s*(FCFA|XOF)/i)
   const cout = coutMatch ? coutMatch[1].trim() + ' ' + (coutMatch[2] ?? '') : ''
@@ -160,11 +445,9 @@ function extractFinancials(answers: Map<number, string>): { ca: string, marge: s
   return { ca, marge, cout }
 }
 
-// ─── Main Analysis Function ───
-function analyzeBmc(answers: Map<number, string>): BmcAnalysis {
+function analyzeBmcFallback(answers: Map<number, string>): BmcAnalysis {
   const blocScores: BmcBlocScore[] = []
 
-  // Score each bloc
   for (const [qIdStr, sec] of Object.entries(BMC_SECTIONS)) {
     const qId = Number(qIdStr)
     const answer = answers.get(qId) ?? ''
@@ -177,7 +460,6 @@ function analyzeBmc(answers: Map<number, string>): BmcAnalysis {
     else if (quality > 0) comment = 'Description trop courte ou vague — ajoutez des détails'
     else comment = 'Non renseigné'
 
-    // Specific comments per section
     if (qId === 2 && quality >= 60) comment = 'Claire, différenciante et vérifiable'
     if (qId === 7 && quality >= 60) comment = 'Maîtrisées, intégration verticale'
     if (qId === 6 && quality >= 60) comment = 'Solides mais à vérifier la dépendance personnes'
@@ -191,15 +473,12 @@ function analyzeBmc(answers: Map<number, string>): BmcAnalysis {
     blocScores.push({ key: sec.key, label: sec.label, score: quality, comment })
   }
 
-  // Sort by score descending
   blocScores.sort((a, b) => b.score - a.score)
 
-  // Global score
   const globalScore = blocScores.length > 0
     ? Math.round(blocScores.reduce((s, b) => s + b.score, 0) / blocScores.length)
     : 0
 
-  // Forces
   const forces: BmcForce[] = []
   const propositionText = answers.get(2) ?? ''
   const activitesText = answers.get(7) ?? ''
@@ -208,22 +487,21 @@ function analyzeBmc(answers: Map<number, string>): BmcAnalysis {
   const ressourcesText = answers.get(6) ?? ''
 
   if (activitesText.length > 100 && /intégr|chaîne|vertical|maîtris/i.test(activitesText)) {
-    forces.push({ title: 'Intégration verticale complète', description: 'Maîtrise totale de la chaîne de valeur — contrôle de la qualité et des coûts à chaque étape. Avantage concurrentiel majeur.' })
+    forces.push({ title: 'Intégration verticale complète', description: 'Maîtrise totale de la chaîne de valeur — contrôle de la qualité et des coûts à chaque étape.' })
   }
   if (propositionText.length > 50) {
     const propBullets = extractBullets(propositionText)
-    forces.push({ title: 'Proposition de valeur claire et différenciante', description: propBullets[0] ?? 'Promesse simple, concrète et vérifiable. Exactement ce que le marché attend.' })
+    forces.push({ title: 'Proposition de valeur claire et différenciante', description: propBullets[0] ?? 'Promesse simple, concrète et vérifiable.' })
   }
   if (segmentsText.length > 50 && /croissanc|demande|march/i.test(segmentsText)) {
-    forces.push({ title: 'Marché structurellement porteur', description: 'Marché en croissance avec une demande supérieure à l\'offre locale. Position géographique stratégique.' })
+    forces.push({ title: 'Marché structurellement porteur', description: 'Marché en croissance avec demande supérieure à l\'offre locale.' })
   }
   if (revenusText.length > 30 && /recurr|hebdo|mensuel|abonn/i.test(revenusText)) {
-    forces.push({ title: 'Modèle récurrent', description: 'Récurrence naturelle des revenus qui stabilise le chiffre d\'affaires et améliore la prévisibilité.' })
+    forces.push({ title: 'Modèle récurrent', description: 'Récurrence naturelle des revenus stabilisant le CA.' })
   }
   if (ressourcesText.length > 30 && /marque|brand|TICIA/i.test(ressourcesText)) {
-    forces.push({ title: 'Marque identifiable', description: 'Marque établie qui renforce la reconnaissance et la fidélisation client.' })
+    forces.push({ title: 'Marque identifiable', description: 'Marque établie renforçant la reconnaissance et fidélisation.' })
   }
-  // Default forces if few detected
   if (forces.length < 2) {
     for (const bloc of blocScores.filter(b => b.score >= 60).slice(0, 3)) {
       if (!forces.some(f => f.title.toLowerCase().includes(bloc.label.toLowerCase()))) {
@@ -232,109 +510,59 @@ function analyzeBmc(answers: Map<number, string>): BmcAnalysis {
     }
   }
 
-  // Vigilances
   const vigilances: BmcVigilance[] = []
   const coutText = answers.get(9) ?? ''
   const canauxText = answers.get(3) ?? ''
   const partenairesText = answers.get(8) ?? ''
 
   if (coutText && /maïs|matière|intrant/i.test(coutText)) {
-    vigilances.push({ title: 'Dépendance matières premières', description: 'Les coûts de matières premières représentent une part significative. Toute fluctuation des prix impacte la marge.', action: 'Sécuriser des contrats d\'approvisionnement à prix fixe.' })
+    vigilances.push({ title: 'Dépendance matières premières', description: 'Coûts de matières premières significatifs. Fluctuation impacte la marge.', action: 'Sécuriser des contrats d\'approvisionnement à prix fixe.' })
   }
   if (revenusText && !/divers|second|complém/i.test(revenusText)) {
-    vigilances.push({ title: 'Mono-produit', description: 'L\'activité repose principalement sur un seul produit/service. Risque de concentration.', action: 'Diversifier progressivement l\'offre.' })
+    vigilances.push({ title: 'Mono-produit', description: 'Activité reposant sur un seul produit/service. Risque de concentration.', action: 'Diversifier progressivement l\'offre.' })
   }
   if (canauxText && !/digital|web|online|whatsapp|facebook|instagram/i.test(canauxText)) {
-    vigilances.push({ title: 'Absence de digital', description: 'Aucun canal digital détecté. Dans un marché qui se digitalise, c\'est un manque visible.', action: 'Créer une présence digitale minimale (WhatsApp Business, réseaux sociaux).' })
+    vigilances.push({ title: 'Absence de digital', description: 'Aucun canal digital détecté.', action: 'Créer une présence digitale minimale.' })
   }
   if (segmentsText && /seul|unique|limit|2 ville|zone restreint/i.test(segmentsText)) {
-    vigilances.push({ title: 'Concentration géographique', description: 'Zone géographique limitée. Le potentiel de croissance nécessite une expansion.', action: 'Expansion géographique progressive et maîtrisée.' })
+    vigilances.push({ title: 'Concentration géographique', description: 'Zone géographique limitée.', action: 'Expansion géographique progressive.' })
   }
   if (partenairesText && !/contrat|formalis|accord/i.test(partenairesText)) {
-    vigilances.push({ title: 'Relations fournisseurs non formalisées', description: 'Les relations avec les fournisseurs ne semblent pas contractualisées. Risque de rupture.', action: 'Contractualiser les relations avec les fournisseurs critiques.' })
+    vigilances.push({ title: 'Relations fournisseurs non formalisées', description: 'Relations non contractualisées. Risque de rupture.', action: 'Contractualiser avec les fournisseurs critiques.' })
   }
-  // Default vigilances from low-score blocs
   for (const bloc of blocScores.filter(b => b.score < 50).slice(0, 3)) {
     if (!vigilances.some(v => v.title.toLowerCase().includes(bloc.label.toLowerCase()))) {
-      vigilances.push({ title: `${bloc.label} à renforcer`, description: `Score ${bloc.score}% — ${bloc.comment}`, action: `Enrichir la description avec des données concrètes et quantifiées.` })
+      vigilances.push({ title: `${bloc.label} à renforcer`, description: `Score ${bloc.score}% — ${bloc.comment}`, action: 'Enrichir avec données concrètes.' })
     }
   }
 
-  // SWOT
   const swot: SwotData = {
     forces: forces.map(f => f.title),
     faiblesses: vigilances.map(v => v.title),
-    opportunites: [
-      'Expansion vers d\'autres villes / régions',
-      'Diversification produits et services',
-      'Digitalisation (WhatsApp Business, e-commerce)',
-      'Croissance démographique = demande croissante',
-      'Partenariats avec grandes surfaces / restaurants'
-    ].slice(0, 5),
-    menaces: [
-      'Volatilité des prix des matières premières',
-      'Risque sanitaire / réglementaire',
-      'Entrée de concurrents industriels',
-      'Dépendance financement externe',
-      'Instabilité climatique / facteurs externes'
-    ].slice(0, 5)
+    opportunites: ['Expansion vers d\'autres villes/régions', 'Diversification produits et services', 'Digitalisation (WhatsApp Business, e-commerce)', 'Croissance démographique = demande croissante', 'Partenariats avec grandes surfaces/restaurants'].slice(0, 5),
+    menaces: ['Volatilité prix matières premières', 'Risque sanitaire/réglementaire', 'Entrée concurrents industriels', 'Dépendance financement externe', 'Instabilité climatique'].slice(0, 5)
   }
-
-  // Enrich SWOT from answers
-  if (activitesText && /intégr/i.test(activitesText)) swot.forces.push('Intégration verticale (chaîne de valeur maîtrisée)')
+  if (activitesText && /intégr/i.test(activitesText)) swot.forces.push('Intégration verticale')
   if (propositionText) swot.forces.push('Proposition de valeur claire')
   swot.forces = [...new Set(swot.forces)].slice(0, 6)
 
-  // Recommendations
   const recommendations: BmcRecommendation[] = [
-    {
-      horizon: 'court_terme',
-      horizonLabel: 'Court terme — Consolider les fondations',
-      items: [
-        'Sécuriser les approvisionnements via des contrats à prix fixe avec les fournisseurs.',
-        'Structurer le suivi client avec un CRM simple (WhatsApp Business + tableau de suivi).',
-        'Formaliser les processus pour réduire la dépendance aux personnes clés.',
-        'Contractualiser les relations avec les fournisseurs critiques.'
-      ]
-    },
-    {
-      horizon: 'moyen_terme',
-      horizonLabel: 'Moyen terme — Croissance maîtrisée',
-      items: [
-        'Diversifier les produits/services progressivement.',
-        'Étendre la zone géographique vers de nouvelles localités.',
-        'Créer une présence digitale professionnelle.',
-        'Renforcer les fonds propres pour réduire la dépendance externe.'
-      ]
-    },
-    {
-      horizon: 'long_terme',
-      horizonLabel: 'Long terme — Industrialisation et marque',
-      items: [
-        'Industrialiser et automatiser les processus de production.',
-        'Développer la marque au niveau national avec un positionnement premium.',
-        'Explorer l\'export sous-régional.',
-        'Structurer une gouvernance formelle avec reporting financier régulier.'
-      ]
-    }
+    { horizon: 'court_terme', horizonLabel: 'Court terme — Consolider les fondations', items: ['Sécuriser les approvisionnements via contrats à prix fixe.', 'Structurer le suivi client (CRM simple).', 'Formaliser les processus clés.', 'Contractualiser les relations fournisseurs.'] },
+    { horizon: 'moyen_terme', horizonLabel: 'Moyen terme — Croissance maîtrisée', items: ['Diversifier les produits/services.', 'Étendre la zone géographique.', 'Créer une présence digitale professionnelle.', 'Renforcer les fonds propres.'] },
+    { horizon: 'long_terme', horizonLabel: 'Long terme — Industrialisation et marque', items: ['Industrialiser et automatiser la production.', 'Développer la marque au niveau national.', 'Explorer l\'export sous-régional.', 'Structurer une gouvernance formelle.'] }
   ]
 
-  // Maturity checks
   const maturityChecks: BmcAnalysis['maturityChecks'] = []
-  if (propositionText.length > 50) maturityChecks.push({ label: 'Intégration verticale', status: 'ok' })
-  else maturityChecks.push({ label: 'Intégration verticale', status: 'warning' })
-
+  if (propositionText.length > 50) maturityChecks.push({ label: 'Proposition de valeur', status: 'ok' })
+  else maturityChecks.push({ label: 'Proposition de valeur', status: 'warning' })
   if (segmentsText && /croissanc|demande|march/i.test(segmentsText)) maturityChecks.push({ label: 'Marché porteur', status: 'ok' })
   else maturityChecks.push({ label: 'Marché porteur', status: 'warning' })
-
   if (revenusText && !/divers/i.test(revenusText)) maturityChecks.push({ label: 'Mono-produit', status: 'warning' })
   else maturityChecks.push({ label: 'Produit diversifié', status: 'ok' })
-
   if (canauxText && /digital|web/i.test(canauxText)) maturityChecks.push({ label: 'Présence digitale', status: 'ok' })
   else maturityChecks.push({ label: 'Digitalisation nécessaire', status: 'action' })
 
   const financials = extractFinancials(answers)
-  const propositionDeValeur = propositionText.length > 0 ? extractBullets(propositionText)[0] ?? '' : ''
 
   return {
     globalScore,
@@ -344,24 +572,67 @@ function analyzeBmc(answers: Map<number, string>): BmcAnalysis {
     swot,
     recommendations,
     maturityChecks,
-    propositionDeValeur,
+    propositionDeValeur: propositionText.length > 0 ? extractBullets(propositionText)[0] ?? '' : '',
     caMensuel: financials.ca ? financials.ca + ' FCFA/mois' : '—',
     margeBrute: financials.marge || '—',
-    coutTotal: financials.cout || '—'
+    coutTotal: financials.cout || '—',
+    aiSource: 'fallback'
   }
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MAIN: Generate Full BMC Deliverable HTML
+// MAIN ASYNC: Analyze BMC via Claude AI (with fallback)
 // ═══════════════════════════════════════════════════════════════
-export function generateFullBmcDeliverable(data: BmcDeliverableData): string {
-  const { companyName, entrepreneurName, sector, location, country, brandName, tagline, answers } = data
-  const analysis = analyzeBmc(answers)
+
+async function analyzeBmcWithAI(
+  answers: Map<number, string>,
+  companyName: string,
+  sector: string,
+  apiKey?: string
+): Promise<BmcAnalysis> {
+  // If no API key → fallback
+  if (!apiKey || apiKey === 'sk-ant-PLACEHOLDER' || apiKey.length < 20) {
+    console.log('[BMC Deliverable] No API key → using rule-based fallback')
+    return analyzeBmcFallback(answers)
+  }
+
+  try {
+    console.log('[BMC Deliverable] Calling Claude AI for full deliverable generation...')
+    const analysis = await callClaudeForDeliverable(apiKey, answers, companyName, sector)
+    console.log(`[BMC Deliverable] Claude AI generated successfully — Score: ${analysis.globalScore}%, Forces: ${analysis.forces.length}, Vigilances: ${analysis.vigilances.length}`)
+    return analysis
+  } catch (err: any) {
+    console.error('[BMC Deliverable] Claude AI failed, falling back to rules:', err.message)
+    return analyzeBmcFallback(answers)
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MAIN: Generate Full BMC Deliverable HTML (ASYNC — Claude AI)
+// ═══════════════════════════════════════════════════════════════
+export async function generateFullBmcDeliverable(data: BmcDeliverableData): Promise<string> {
+  const { companyName, entrepreneurName, sector, location, country, brandName, tagline, answers, apiKey } = data
+  const analysis = await analyzeBmcWithAI(answers, companyName, sector, apiKey)
+  return renderBmcDeliverableHtml(analysis, data)
+}
+
+// Synchronous version (fallback only — no Claude AI)
+export function generateFullBmcDeliverableFallback(data: BmcDeliverableData): string {
+  const analysis = analyzeBmcFallback(data.answers)
+  return renderBmcDeliverableHtml(analysis, data)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HTML RENDERER — Pixel-perfect template (unchanged)
+// ═══════════════════════════════════════════════════════════════
+function renderBmcDeliverableHtml(analysis: BmcAnalysis, data: BmcDeliverableData): string {
+  const { companyName, sector, location, country, brandName, tagline, answers } = data
   const dateStr = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const locationStr = [location, country].filter(Boolean).join(' — ')
   const sectorStr = sector || 'PME'
 
   const scoreColor = analysis.globalScore >= 80 ? COLORS.primary : analysis.globalScore >= 60 ? COLORS.accent : analysis.globalScore >= 40 ? COLORS.orange : COLORS.red
+  const aiLabel = analysis.aiSource === 'claude' ? 'Analyse propulsée par Claude AI' : 'Analyse automatique (règles)'
 
   return `<!DOCTYPE html>
 <html lang="fr">
@@ -413,6 +684,12 @@ export function generateFullBmcDeliverable(data: BmcDeliverableData): string {
     .bmc-header__meta { font-size:14px; font-weight:400; opacity:0.75; margin-top:4px; }
     .bmc-header__tags { display:flex; gap:8px; margin-top:16px; flex-wrap:wrap; }
     .bmc-header__tag { padding:4px 12px; border-radius:20px; font-size:12px; font-weight:600; background:rgba(255,255,255,0.15); backdrop-filter:blur(8px); }
+    .bmc-header__ai-badge {
+      display:inline-flex; align-items:center; gap:6px;
+      padding:4px 14px; border-radius:20px; font-size:11px; font-weight:600;
+      background: ${analysis.aiSource === 'claude' ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.1)'};
+      border: 1px solid ${analysis.aiSource === 'claude' ? 'rgba(99,102,241,0.4)' : 'rgba(255,255,255,0.2)'};
+    }
 
     /* ─── SCORE HERO ─── */
     .bmc-score-hero {
@@ -438,6 +715,13 @@ export function generateFullBmcDeliverable(data: BmcDeliverableData): string {
     .bmc-section-title {
       font-size:20px; font-weight:700; color:var(--primary);
       display:flex; align-items:center; gap:10px; margin-bottom:20px;
+    }
+
+    /* ─── SYNTHESE ─── */
+    .bmc-synthese {
+      background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+      border: 1px solid #86efac; border-radius:12px; padding:20px;
+      font-size:14px; line-height:1.7; color:#14532d; margin-bottom:20px;
     }
 
     /* ─── CANVAS GRID ─── */
@@ -545,6 +829,7 @@ export function generateFullBmcDeliverable(data: BmcDeliverableData): string {
         <span class="bmc-header__tag">${sectorStr}</span>
         <span class="bmc-header__tag">Analyse — ${dateStr}</span>
         ${tagline ? `<span class="bmc-header__tag">${tagline}</span>` : ''}
+        <span class="bmc-header__ai-badge">${analysis.aiSource === 'claude' ? '🤖 Claude AI' : '⚙️ Auto'} ${aiLabel}</span>
       </div>
     </div>
   </div>
@@ -576,6 +861,14 @@ export function generateFullBmcDeliverable(data: BmcDeliverableData): string {
         ${analysis.margeBrute !== '—' ? `<div style="font-size:12px;color:var(--text-muted);margin-top:8px;">Marge brute</div><div style="font-size:18px;font-weight:700;color:var(--accent);">≈ ${analysis.margeBrute}</div>` : ''}
       </div>
     </div>
+
+    <!-- ═══ SYNTHESE GLOBALE (Claude AI) ═══ -->
+    ${analysis.syntheseGlobale ? `
+    <div class="bmc-card">
+      <div class="bmc-section-title">🧠 Synthèse Globale — Diagnostic Expert</div>
+      <div class="bmc-synthese">${analysis.syntheseGlobale}</div>
+    </div>
+    ` : ''}
 
     <!-- ═══ 3. CANVAS — VUE D'ENSEMBLE ═══ -->
     <div class="bmc-card">
@@ -718,24 +1011,24 @@ export function generateFullBmcDeliverable(data: BmcDeliverableData): string {
       <div class="bmc-footer__meta">
         ${[sector, brandName ? 'Marque ' + brandName : '', locationStr].filter(Boolean).join(' — ')}
       </div>
-      <div class="bmc-footer__meta">Document généré le ${dateStr} • Analyse basée sur les données fournies et expertise sectorielle</div>
+      <div class="bmc-footer__meta">Document généré le ${dateStr} • ${aiLabel}</div>
       <div class="bmc-footer__quote">"Les chiffres ne servent pas à juger le passé, mais à décider le futur."</div>
     </div>
   </div>
 
   <div style="text-align:center;padding:16px;color:#94a3b8;font-size:11px;">
-    Généré par ESONO Investment Readiness · Module 1 BMC · ${dateStr}
+    Généré par ESONO Investment Readiness · Module 1 BMC · ${dateStr} · ${analysis.aiSource === 'claude' ? '🤖 Claude AI' : '⚙️ Moteur règles'}
   </div>
 </body>
 </html>`
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Diagnostic Résumé (lighter version)
+// Diagnostic Résumé (lighter version — also uses Claude AI)
 // ═══════════════════════════════════════════════════════════════
-export function generateBmcDiagnosticHtml(data: BmcDeliverableData): string {
-  const { companyName, entrepreneurName, answers } = data
-  const analysis = analyzeBmc(answers)
+export async function generateBmcDiagnosticHtml(data: BmcDeliverableData): Promise<string> {
+  const { companyName, entrepreneurName, answers, apiKey } = data
+  const analysis = await analyzeBmcWithAI(answers, companyName, data.sector, apiKey)
   const dateStr = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
   const scoreColor = analysis.globalScore >= 80 ? '#059669' : analysis.globalScore >= 60 ? '#0284c7' : analysis.globalScore >= 40 ? '#d97706' : '#dc2626'
 
@@ -779,6 +1072,7 @@ export function generateBmcDiagnosticHtml(data: BmcDeliverableData): string {
     <div class="header">
       <h1>📋 Diagnostic Business Model Canvas</h1>
       <p>${entrepreneurName} · ${companyName} · ${dateStr}</p>
+      <p style="font-size:12px;color:#94a3b8;margin-top:4px;">${analysis.aiSource === 'claude' ? '🤖 Analyse Claude AI' : '⚙️ Analyse automatique'}</p>
     </div>
 
     <div class="card">
@@ -789,7 +1083,7 @@ export function generateBmcDiagnosticHtml(data: BmcDeliverableData): string {
         </div>
         <div style="flex:1;">
           <h2 style="margin-bottom:8px;">Score Global BMC</h2>
-          <p style="font-size:14px;color:#64748b;">${analysis.globalScore >= 80 ? 'Excellent business model, bien structuré et documenté.' : analysis.globalScore >= 60 ? 'Bon business model avec des axes d\'amélioration identifiés.' : analysis.globalScore >= 40 ? 'Business model à renforcer — plusieurs blocs nécessitent plus de détails.' : 'Business model insuffisamment documenté. Reprenez les fondamentaux.'}</p>
+          <p style="font-size:14px;color:#64748b;">${analysis.syntheseGlobale || (analysis.globalScore >= 80 ? 'Excellent business model, bien structuré et documenté.' : analysis.globalScore >= 60 ? 'Bon business model avec des axes d\'amélioration identifiés.' : analysis.globalScore >= 40 ? 'Business model à renforcer — plusieurs blocs nécessitent plus de détails.' : 'Business model insuffisamment documenté.')}</p>
         </div>
       </div>
     </div>
@@ -810,7 +1104,7 @@ export function generateBmcDiagnosticHtml(data: BmcDeliverableData): string {
     </div>
 
     <div style="text-align:center;padding:24px;color:#94a3b8;font-size:12px;">
-      Généré par ESONO Investment Readiness · Module 1 BMC · ${new Date().toISOString().slice(0, 10)}
+      Généré par ESONO Investment Readiness · Module 1 BMC · ${new Date().toISOString().slice(0, 10)} · ${analysis.aiSource === 'claude' ? '🤖 Claude AI' : '⚙️ Règles'}
     </div>
   </div>
 </body>
