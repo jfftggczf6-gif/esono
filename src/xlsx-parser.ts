@@ -119,6 +119,7 @@ export function parseXlsx(data: Uint8Array): SheetData[] {
 /**
  * Convert parsed xlsx data to readable text format
  * for AI processing and storage
+ * LEGACY format: Row N: A1=val | B1=val
  */
 export function xlsxToText(sheets: SheetData[]): string {
   const lines: string[] = []
@@ -144,6 +145,113 @@ export function xlsxToText(sheets: SheetData[]): string {
     }
   }
   return lines.join('\n')
+}
+
+/**
+ * CORRECTION 1 UPGRADE — Convert parsed xlsx to Markdown table format
+ * Produces output that is MUCH more readable for Claude AI:
+ * 
+ * ### FEUILLE: Plan Financier
+ * | Poste          | Année 1    | Année 2    | Année 3    |
+ * |----------------|------------|------------|------------|
+ * | CA Total       | 59 130 000 | 85 000 000 | 120 000 000|
+ * | Achats MP      | 35 000 000 | 48 000 000 | 65 000 000 |
+ * 
+ * This format lets Claude understand the TABLE STRUCTURE natively
+ * instead of parsing "Row 5: A5=CA Total | B5=59130000"
+ */
+export function xlsxToMarkdownTables(sheets: SheetData[]): string {
+  const output: string[] = []
+  
+  for (const sheet of sheets) {
+    if (sheet.cells.length === 0) continue
+    
+    output.push(`\n### FEUILLE: ${sheet.name}`)
+    
+    // 1. Find grid bounds
+    let maxRow = 0
+    let maxCol = 0
+    const colLetters = new Set<string>()
+    
+    for (const cell of sheet.cells) {
+      const colLet = cell.ref.replace(/[0-9]/g, '')
+      const rowNum = parseInt(cell.ref.replace(/[A-Z]/g, ''))
+      colLetters.add(colLet)
+      if (rowNum > maxRow) maxRow = rowNum
+    }
+    
+    // Sort columns alphabetically (A, B, C, ... AA, AB...)
+    const sortedCols = Array.from(colLetters).sort((a, b) => {
+      if (a.length !== b.length) return a.length - b.length
+      return a.localeCompare(b)
+    })
+    
+    // Build column index
+    const colIdx: Record<string, number> = {}
+    sortedCols.forEach((c, i) => colIdx[c] = i)
+    maxCol = sortedCols.length
+    
+    // 2. Build a 2D grid
+    const grid: string[][] = []
+    for (let r = 0; r < maxRow; r++) {
+      grid.push(new Array(maxCol).fill(''))
+    }
+    
+    for (const cell of sheet.cells) {
+      const colLet = cell.ref.replace(/[0-9]/g, '')
+      const rowNum = parseInt(cell.ref.replace(/[A-Z]/g, '')) - 1
+      const ci = colIdx[colLet]
+      if (ci !== undefined && rowNum >= 0 && rowNum < maxRow) {
+        grid[rowNum][ci] = cell.value.trim()
+      }
+    }
+    
+    // 3. Skip entirely empty rows, find first meaningful row
+    const nonEmptyRows: number[] = []
+    for (let r = 0; r < grid.length; r++) {
+      if (grid[r].some(v => v !== '')) nonEmptyRows.push(r)
+    }
+    
+    if (nonEmptyRows.length === 0) continue
+    
+    // 4. Calculate column widths for alignment (cap at 30 chars)
+    const colWidths = sortedCols.map((_, ci) => {
+      let maxW = 3
+      for (const ri of nonEmptyRows) {
+        const len = grid[ri][ci].length
+        if (len > maxW) maxW = Math.min(len, 30)
+      }
+      return maxW
+    })
+    
+    // 5. Emit Markdown table — first non-empty row as header
+    const firstRow = nonEmptyRows[0]
+    
+    // Header row
+    const headerCells = sortedCols.map((_, ci) => {
+      const val = grid[firstRow][ci].slice(0, 30)
+      return ` ${val.padEnd(colWidths[ci])} `
+    })
+    output.push(`|${headerCells.join('|')}|`)
+    
+    // Separator
+    const sepCells = colWidths.map(w => '-'.repeat(w + 2))
+    output.push(`|${sepCells.join('|')}|`)
+    
+    // Data rows (skip empty)
+    for (let i = 1; i < nonEmptyRows.length; i++) {
+      const ri = nonEmptyRows[i]
+      const rowCells = sortedCols.map((_, ci) => {
+        const val = grid[ri][ci].slice(0, 30)
+        return ` ${val.padEnd(colWidths[ci])} `
+      })
+      output.push(`|${rowCells.join('|')}|`)
+    }
+    
+    output.push('') // blank line between sheets
+  }
+  
+  return output.join('\n')
 }
 
 /**

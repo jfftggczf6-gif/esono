@@ -12,7 +12,7 @@ import { generateFullSicDeliverable, generateFullSicDeliverableFallback, type Si
 import { analyzeInputsWithAI, generateInputsDiagnosticHtml, analyzeInputs, type InputTabKey } from './inputs-engine'
 import { analyzePmeWithAI, analyzePme, generatePmePreviewHtml, generatePmeExcelXml, type PmeInputData } from './framework-pme-engine'
 import { fillFrameworkExcel } from './framework-excel-filler'
-import { parseXlsx, xlsxToText, b64ToUint8 } from './xlsx-parser'
+import { parseXlsx, xlsxToText, xlsxToMarkdownTables, b64ToUint8 } from './xlsx-parser'
 import { buildPmeInputDataFromText, buildPmeInputDataGotche } from './pme-input-builder'
 import { buildPmeInputWithAI } from './pme-ai-extractor'
 import { crossAnalyzeBmcFinancials } from './pme-cross-analyzer'
@@ -628,15 +628,18 @@ entrepreneurRoutes.post('/api/upload', async (c) => {
     base64 = btoa(base64)
 
     // Extract text from Excel files for AI processing
+    // CORRECTION 1 CONFORME: Store both legacy text AND Markdown tables format
+    // Format: base64:<b64>\n\n---MARKDOWN_TABLES---\n<md>\n\n---EXTRACTED_TEXT---\n<legacy>
     let extractedText = `base64:${base64}`
     const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls') || file.type.includes('spreadsheet')
     if (isExcel) {
       try {
         const xlsxData = parseXlsx(bytes)
-        const textContent = xlsxToText(xlsxData)
-        // Store both: base64 for binary access + extracted text for AI
-        extractedText = `base64:${base64}\n\n---EXTRACTED_TEXT---\n${textContent}`
-        console.log(`[Upload] Extracted ${textContent.length} chars from ${file.name} (${xlsxData.length} sheets)`)
+        const legacyText = xlsxToText(xlsxData)
+        const markdownText = xlsxToMarkdownTables(xlsxData)
+        // Store all three formats: base64 for binary, Markdown tables for Claude AI, legacy for regex
+        extractedText = `base64:${base64}\n\n---MARKDOWN_TABLES---\n${markdownText}\n\n---EXTRACTED_TEXT---\n${legacyText}`
+        console.log(`[Upload] Extracted from ${file.name}: ${xlsxData.length} sheets, legacy=${legacyText.length}ch, markdown=${markdownText.length}ch`)
       } catch (err: any) {
         console.error('[Upload] XLSX parse error (non-fatal):', err.message)
         // Keep base64 only as fallback
@@ -806,17 +809,32 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
     const newVersion = ((lastIter?.maxV as number) || 0) + 1
 
     // Build document texts from uploads
+    // CORRECTION 1 CONFORME: Parse 3 sections from stored text:
+    //   base64:<b64>\n\n---MARKDOWN_TABLES---\n<md>\n\n---EXTRACTED_TEXT---\n<legacy>
     const documentTexts: Record<string, string> = {}
     const rawUploads: Record<string, string> = {} // Store full base64 for binary access
+    const markdownUploads: Record<string, string> = {} // CORRECTION 1: Store Markdown tables for Claude AI
     for (const u of uploadData) {
       const text = u.extracted_text || ''
-      // Check if we have extracted text after the base64
+      
+      // Check for new 3-section format: base64 + markdown tables + legacy text
+      const mdMarker = '---MARKDOWN_TABLES---'
       const extractedMarker = '---EXTRACTED_TEXT---'
-      const markerIdx = text.indexOf(extractedMarker)
-      if (markerIdx !== -1) {
-        // We have extracted text from XLSX parsing
-        documentTexts[u.category] = text.substring(markerIdx + extractedMarker.length).slice(0, 12000)
-        // Also keep the base64 for binary access
+      const mdIdx = text.indexOf(mdMarker)
+      const extractedIdx = text.indexOf(extractedMarker)
+      
+      if (mdIdx !== -1 && extractedIdx !== -1) {
+        // NEW FORMAT: has Markdown tables AND legacy text
+        // base64 is from position 7 to first \n\n---
+        const b64End = text.indexOf('\n\n---')
+        rawUploads[u.category] = b64End > 7 ? text.substring(7, b64End) : ''
+        // Markdown tables: between mdMarker and extractedMarker
+        markdownUploads[u.category] = text.substring(mdIdx + mdMarker.length, extractedIdx).trim().slice(0, 15000)
+        // Legacy text: after extractedMarker
+        documentTexts[u.category] = text.substring(extractedIdx + extractedMarker.length).slice(0, 12000)
+      } else if (extractedIdx !== -1) {
+        // OLD FORMAT: only base64 + legacy text (backward compat)
+        documentTexts[u.category] = text.substring(extractedIdx + extractedMarker.length).slice(0, 12000)
         const b64End = text.indexOf('\n\n---')
         rawUploads[u.category] = b64End > 7 ? text.substring(7, b64End) : ''
       } else if (text.startsWith('base64:')) {
@@ -1143,16 +1161,21 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
           let pmeData: PmeInputData
           
           // Priority 1: Parse from uploaded inputs text (extracted from XLSX)
-          // CORRECTION 1+2: Use hybrid Claude+regex extraction when API key available
+          // CORRECTION 1 CONFORME: Use Markdown tables (best) > legacy text, + pass xlsxBase64
           if (hasInputs && documentTexts.inputs && documentTexts.inputs !== `[Fichier binaire: ${uploadData.find(u => u.category === 'inputs')?.filename}]`) {
             console.log('[Generate-All] Building PmeInputData from extracted inputs text')
             if (apiKey && apiKey.length >= 20) {
               try {
-                console.log('[Generate-All] Using AI-powered hybrid extraction (Correction 1+2)')
+                // CORRECTION 1: Prefer Markdown tables for Claude, fallback to legacy text for regex
+                const bestTextForClaude = markdownUploads.inputs || documentTexts.inputs
+                const xlsxB64 = rawUploads.inputs || undefined
+                console.log(`[Generate-All] Using AI hybrid extraction (Correction 1+2), markdown=${!!markdownUploads.inputs}, hasBase64=${!!xlsxB64}`)
                 const enriched = await buildPmeInputWithAI(
-                  documentTexts.inputs, apiKey, companyName,
+                  bestTextForClaude, apiKey, companyName,
                   userCountry || "Cote d'Ivoire",
-                  (text: string, name: string, country: string) => buildPmeInputDataFromText(text, name, country)
+                  // Regex fallback uses legacy text (better for regex patterns)
+                  (text: string, name: string, country: string) => buildPmeInputDataFromText(documentTexts.inputs || text, name, country),
+                  xlsxB64
                 )
                 pmeData = enriched.data
                 console.log(`[Generate-All] Hybrid extraction: source=${enriched.quality.source}, confidence=${enriched.quality.confiance}, estimations=${enriched.estimations.length}`)
@@ -1177,22 +1200,25 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
                 try {
                   const xlsxBytes = b64ToUint8(b64)
                   const sheets = parseXlsx(xlsxBytes)
-                  const extractedText = xlsxToText(sheets)
-                  console.log(`[Generate-All] Parsed XLSX on-the-fly: ${extractedText.length} chars, ${sheets.length} sheets`)
-                  // CORRECTION 1+2: Use hybrid extraction for XLSX text too
+                  const legacyText = xlsxToText(sheets)
+                  const mdText = xlsxToMarkdownTables(sheets)
+                  console.log(`[Generate-All] Parsed XLSX on-the-fly: legacy=${legacyText.length}ch, markdown=${mdText.length}ch, ${sheets.length} sheets`)
+                  // CORRECTION 1 CONFORME: Use Markdown for Claude, legacy for regex, pass base64
                   if (apiKey && apiKey.length >= 20) {
                     try {
+                      const bestText = mdText.length > 200 ? mdText : legacyText
                       const enriched = await buildPmeInputWithAI(
-                        extractedText, apiKey, companyName,
+                        bestText, apiKey, companyName,
                         userCountry || "Cote d'Ivoire",
-                        (text: string, name: string, country: string) => buildPmeInputDataFromText(text, name, country)
+                        (text: string, name: string, country: string) => buildPmeInputDataFromText(legacyText || text, name, country),
+                        b64
                       )
                       pmeData = enriched.data
                     } catch {
-                      pmeData = buildPmeInputDataFromText(extractedText, companyName, userCountry || "Côte d'Ivoire")
+                      pmeData = buildPmeInputDataFromText(legacyText, companyName, userCountry || "Côte d'Ivoire")
                     }
                   } else {
-                    pmeData = buildPmeInputDataFromText(extractedText, companyName, userCountry || "Côte d'Ivoire")
+                    pmeData = buildPmeInputDataFromText(legacyText, companyName, userCountry || "Côte d'Ivoire")
                   }
                 } catch (parseErr: any) {
                   console.error('[Generate-All] XLSX parse error:', parseErr.message)
@@ -1620,34 +1646,71 @@ entrepreneurRoutes.get('/api/download/framework-excel', async (c) => {
         }
         
         // Priority 2b: Parse from extracted text
+        // CORRECTION 1 CONFORME: Use AI extraction with Markdown tables when possible
         if (!pmeData && inputsUpload.extracted_text) {
-          const extractedText = inputsUpload.extracted_text || ''
+          const fullText = inputsUpload.extracted_text || ''
+          const mdMarker = '---MARKDOWN_TABLES---'
           const extractedMarker = '---EXTRACTED_TEXT---'
-          const markerIdx = extractedText.indexOf(extractedMarker)
+          const mdIdx = fullText.indexOf(mdMarker)
+          const extractedIdx = fullText.indexOf(extractedMarker)
+          const apiKey = c.env.ANTHROPIC_API_KEY || ''
           
-          if (markerIdx !== -1) {
-            // We have extracted text from XLSX parsing (marker format)
-            const textContent = extractedText.substring(markerIdx + extractedMarker.length)
-            pmeData = buildPmeInputDataFromText(textContent, companyName, userCountry)
-            console.log('[Download Excel] Built PmeInputData from extracted text (marker)')
-          } else if (extractedText.startsWith('base64:')) {
-            // Try to parse the binary XLSX
-            const b64 = extractedText.substring(7).split('\n')[0]
-            if (b64.length > 100) {
-              try {
-                const xlsxBytes = b64ToUint8(b64)
-                const sheets = parseXlsx(xlsxBytes)
-                const textContent = xlsxToText(sheets)
-                pmeData = buildPmeInputDataFromText(textContent, companyName, userCountry)
-                console.log('[Download Excel] Built PmeInputData from binary XLSX parse')
-              } catch (e: any) {
-                console.error('[Download Excel] XLSX parse error:', e.message)
-              }
+          // Extract base64, markdown, and legacy text sections
+          let b64Part = ''
+          let mdPart = ''
+          let legacyPart = ''
+          
+          if (mdIdx !== -1 && extractedIdx !== -1) {
+            // NEW 3-section format
+            const b64End = fullText.indexOf('\n\n---')
+            b64Part = b64End > 7 ? fullText.substring(7, b64End) : ''
+            mdPart = fullText.substring(mdIdx + mdMarker.length, extractedIdx).trim()
+            legacyPart = fullText.substring(extractedIdx + extractedMarker.length)
+          } else if (extractedIdx !== -1) {
+            // OLD 2-section format
+            const b64End = fullText.indexOf('\n\n---')
+            b64Part = b64End > 7 ? fullText.substring(7, b64End) : ''
+            legacyPart = fullText.substring(extractedIdx + extractedMarker.length)
+          } else if (fullText.startsWith('base64:')) {
+            b64Part = fullText.substring(7).split('\n')[0]
+          } else if (fullText.length > 200 && /chiffre|ca\s*total|fcfa|revenus/i.test(fullText)) {
+            legacyPart = fullText
+          }
+          
+          // CORRECTION 1: Try AI extraction with best available text
+          const bestText = mdPart || legacyPart
+          if (bestText.length > 100 && apiKey.length >= 20) {
+            try {
+              console.log(`[Download Excel] CORRECTION 1: AI extraction (markdown=${!!mdPart}, base64=${!!b64Part})`)
+              const enriched = await buildPmeInputWithAI(
+                bestText, apiKey, companyName, userCountry,
+                (text: string, name: string, country: string) => buildPmeInputDataFromText(legacyPart || text, name, country),
+                b64Part || undefined
+              )
+              pmeData = enriched.data
+              console.log(`[Download Excel] AI extraction: source=${enriched.quality.source}, confidence=${enriched.quality.confiance}`)
+            } catch (aiErr: any) {
+              console.warn('[Download Excel] AI extraction failed, using regex:', aiErr.message)
             }
-          } else if (extractedText.length > 200 && /chiffre|ca\s*total|fcfa|revenus/i.test(extractedText)) {
-            // Plain text financial data (already extracted and stored as text)
-            pmeData = buildPmeInputDataFromText(extractedText, companyName, userCountry)
-            console.log('[Download Excel] Built PmeInputData from plain extracted text')
+          }
+          
+          // Fallback to regex if AI failed
+          if (!pmeData && legacyPart.length > 100) {
+            pmeData = buildPmeInputDataFromText(legacyPart, companyName, userCountry)
+            console.log('[Download Excel] Regex fallback from legacy text')
+          }
+          
+          // Last resort: try to parse binary XLSX
+          if (!pmeData && b64Part.length > 100) {
+            try {
+              const xlsxBytes = b64ToUint8(b64Part)
+              const sheets = parseXlsx(xlsxBytes)
+              const textContent = xlsxToText(sheets)
+              pmeData = buildPmeInputDataFromText(textContent, companyName, userCountry)
+              console.log('[Download Excel] Built PmeInputData from binary XLSX parse')
+            } catch (e: any) {
+              console.error('[Download Excel] XLSX parse error:', e.message)
+            }
           }
         }
       }

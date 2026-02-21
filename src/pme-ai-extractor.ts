@@ -4,8 +4,9 @@
 // CORRECTION 2 — Estimation contextuelle des donnees manquantes
 // ═══════════════════════════════════════════════════════════════
 
-import { callClaudeJSON, isValidApiKey } from './claude-api'
+import { callClaudeJSON, isValidApiKey, type ClaudeContentBlock } from './claude-api'
 import type { PmeInputData } from './framework-pme-engine'
+import { parseXlsx, xlsxToMarkdownTables, b64ToUint8 } from './xlsx-parser'
 
 // ─── TYPES ───
 
@@ -228,35 +229,80 @@ FORMAT JSON :
 // ─── MAIN EXTRACTION FUNCTION ───
 
 /**
- * CORRECTION 1: Extract financial data using Claude AI
- * Sends the extracted text to Claude for intelligent parsing
- * Falls back to regex-based extraction if Claude fails
+ * CORRECTION 1 (CONFORME): Extract financial data using Claude AI
+ * 
+ * Strategy (adapté car Claude API ne supporte PAS le XLSX nativement — PDF only) :
+ * 
+ * A) Si le texte passé est déjà en format Markdown tables (préféré)
+ *    → l'envoyer directement à Claude. Le format tableur structuré est
+ *    nettement plus lisible pour l'AI que le Row-based format.
+ * 
+ * B) Si on a le XLSX base64 mais pas de Markdown → on le re-parse en Markdown
+ *    tables et on envoie ce Markdown à Claude.
+ * 
+ * C) Si on n'a que le texte brut → on l'envoie tel quel (legacy)
+ * 
+ * D) Regex comme fallback/validation (inchangé)
  */
 export async function extractPmeDataWithClaude(
   extractedText: string,
   apiKey: string,
   companyName: string = 'Entreprise',
-  country: string = "Cote d'Ivoire"
+  country: string = "Cote d'Ivoire",
+  xlsxBase64?: string
 ): Promise<{ extracted: any; quality: ExtractionQuality }> {
+  
+  // CORRECTION 1 CONFORME: Determine best text format for Claude
+  let bestText = extractedText
+  let extractionMethod = 'text_brut'
+  
+  // Check if the text is already Markdown tables format (starts with ### FEUILLE)
+  if (extractedText.includes('### FEUILLE:') || extractedText.includes('|---')) {
+    extractionMethod = 'markdown_tables_pre_parsed'
+    console.log(`[PME AI Extractor] Input is already Markdown tables format: ${extractedText.length} chars`)
+  }
+  // If not already Markdown AND we have raw XLSX, convert it
+  else if (xlsxBase64 && xlsxBase64.length > 100) {
+    try {
+      const bytes = b64ToUint8(xlsxBase64)
+      const sheets = parseXlsx(bytes)
+      const mdTables = xlsxToMarkdownTables(sheets)
+      if (mdTables.length > 200) {
+        bestText = mdTables
+        extractionMethod = 'xlsx_markdown_tables'
+        console.log(`[PME AI Extractor] Converted XLSX to Markdown tables: ${mdTables.length} chars, ${sheets.length} sheets`)
+      }
+    } catch (err: any) {
+      console.warn(`[PME AI Extractor] XLSX→Markdown conversion failed (using text fallback): ${err.message}`)
+    }
+  }
   
   const userPrompt = `Voici le contenu extrait d'un fichier financier d'une PME.
 Extrais TOUTES les donnees financieres en JSON structure.
 
 NOM ENTREPRISE: ${companyName}
 PAYS: ${country}
+FORMAT SOURCE: ${extractionMethod}${extractionMethod.includes('markdown') ? `
+
+IMPORTANT: Le contenu ci-dessous est au format MARKDOWN TABLE issu d'un tableur Excel.
+Chaque section "### FEUILLE:" correspond a un onglet du fichier Excel.
+Les lignes "|...|...|" sont des tableaux — identifie les HEADERS (premiere ligne) 
+et extrais les VALEURS NUMERIQUES des lignes suivantes.
+Les montants sont en FCFA.` : ''}
 
 --- DEBUT CONTENU FICHIER ---
-${extractedText.slice(0, 12000)}
+${bestText.slice(0, 15000)}
 --- FIN CONTENU FICHIER ---
 
-Extrais les donnees en JSON strict selon le format demande.`
+Extrais les donnees en JSON strict selon le format demande.
+ATTENTION: Identifie les headers de chaque tableau et extrait les valeurs numeriques correspondantes.`
 
   const result = await callClaudeJSON<any>({
     apiKey,
     systemPrompt: SYSTEM_PROMPT_EXTRACTEUR,
     userPrompt,
     maxTokens: 3000,
-    timeoutMs: 20_000,
+    timeoutMs: 25_000,
     maxRetries: 2,
     label: 'PME Extraction'
   })
@@ -271,6 +317,7 @@ Extrais les donnees en JSON strict selon le format demande.`
     source: 'claude'
   }
 
+  console.log(`[PME AI Extractor] Claude extraction done (method=${extractionMethod}): ${quality.donnees_trouvees} found, ${quality.donnees_manquantes} missing, confidence=${quality.confiance}`)
   return { extracted: result, quality }
 }
 
@@ -513,18 +560,31 @@ export function claudeResultToPmeInput(
 // ─── MAIN PIPELINE: CORRECTION 1 + 2 combined ───
 
 /**
- * Full AI-powered extraction pipeline:
- * 1. Claude extracts structured data from text
- * 2. Claude estimates missing fields with sector benchmarks
- * 3. Converts to PmeInputData
+ * Full AI-powered extraction pipeline (CORRECTION 1 CONFORME):
+ * 
+ * FLUX COMPLET :
+ * 1. Si le texte passé est déjà en Markdown tables (### FEUILLE:) → envoi direct à Claude
+ * 2. Sinon, si xlsxBase64 disponible → re-parse en Markdown tables → Claude extrait
+ * 3. Sinon, texte brut legacy → Claude extrait (moins précis)
+ * 4. Claude estimates missing fields with sector benchmarks (Correction 2)
+ * 5. Converts to PmeInputData
+ * 6. Merge with regex results (hybrid strategy)
  * Falls back to regex-only if Claude fails
+ * 
+ * @param extractedText - Best available text: Markdown tables (preferred) or legacy text
+ * @param apiKey - Claude API key
+ * @param companyName - Company name
+ * @param country - Country (default: Cote d'Ivoire)
+ * @param regexFallback - Fallback function using regex-based extraction (should receive legacy text)
+ * @param xlsxBase64 - Optional: raw XLSX file as base64 string (backup if text isn't Markdown)
  */
 export async function buildPmeInputWithAI(
   extractedText: string,
   apiKey: string,
   companyName: string = 'Entreprise',
   country: string = "Cote d'Ivoire",
-  regexFallback: (text: string, name: string, country: string) => PmeInputData
+  regexFallback: (text: string, name: string, country: string) => PmeInputData,
+  xlsxBase64?: string
 ): Promise<EnrichedPmeInput> {
   
   if (!isValidApiKey(apiKey)) {
@@ -539,9 +599,11 @@ export async function buildPmeInputWithAI(
 
   try {
     // STEP 1: Claude extracts structured data
-    console.log('[PME AI Extractor] Step 1: Claude extraction...')
+    // CORRECTION 1 CONFORME: If xlsxBase64 is available, re-parse to Markdown tables
+    // giving Claude a much better representation of the spreadsheet structure
+    console.log(`[PME AI Extractor] Step 1: Claude extraction... (hasXlsxBase64=${!!xlsxBase64})`)
     const { extracted, quality } = await extractPmeDataWithClaude(
-      extractedText, apiKey, companyName, country
+      extractedText, apiKey, companyName, country, xlsxBase64
     )
     console.log(`[PME AI Extractor] Extraction: ${quality.donnees_trouvees} found, ${quality.donnees_manquantes} missing, confidence=${quality.confiance}`)
 

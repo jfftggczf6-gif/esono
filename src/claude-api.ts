@@ -6,10 +6,23 @@
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages'
 const CLAUDE_MODEL = 'claude-sonnet-4-20250514'
 
+/** Content block for multimodal messages (text, image, document) */
+export interface ClaudeContentBlock {
+  type: 'text' | 'image' | 'document'
+  text?: string
+  source?: {
+    type: 'base64'
+    media_type: string  // 'application/pdf', 'image/png', etc.
+    data: string        // base64-encoded file data
+  }
+}
+
 export interface ClaudeCallOptions {
   apiKey: string
   systemPrompt: string
   userPrompt: string
+  /** Optional: multimodal content blocks (documents, images + text) */
+  userContent?: ClaudeContentBlock[]
   maxTokens?: number
   timeoutMs?: number
   maxRetries?: number
@@ -48,7 +61,7 @@ export async function callClaudeJSON<T = any>(opts: ClaudeCallOptions): Promise<
           model: CLAUDE_MODEL,
           max_tokens: maxTokens,
           system: systemPrompt,
-          messages: [{ role: 'user', content: userPrompt }]
+          messages: [{ role: 'user', content: opts.userContent || userPrompt }]
         }),
         signal: controller.signal
       })
