@@ -13,6 +13,7 @@ import { analyzeInputsWithAI, generateInputsDiagnosticHtml, analyzeInputs, type 
 import { analyzePmeWithAI, analyzePme, generatePmePreviewHtml, generatePmeExcelXml, type PmeInputData } from './framework-pme-engine'
 import { fillFrameworkExcel } from './framework-excel-filler'
 import { parseXlsx, xlsxToText, xlsxToMarkdownTables, b64ToUint8 } from './xlsx-parser'
+import { parseDocx, docxToMarkdown } from './docx-parser'
 import { buildPmeInputDataFromText, buildPmeInputDataGotche } from './pme-input-builder'
 import { buildPmeInputWithAI } from './pme-ai-extractor'
 import { crossAnalyzeBmcFinancials } from './pme-cross-analyzer'
@@ -632,6 +633,7 @@ entrepreneurRoutes.post('/api/upload', async (c) => {
     // Format: base64:<b64>\n\n---MARKDOWN_TABLES---\n<md>\n\n---EXTRACTED_TEXT---\n<legacy>
     let extractedText = `base64:${base64}`
     const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls') || file.type.includes('spreadsheet')
+    const isDocx = file.name.endsWith('.docx') || file.name.endsWith('.doc') || file.type.includes('wordprocessingml')
     if (isExcel) {
       try {
         const xlsxData = parseXlsx(bytes)
@@ -642,6 +644,17 @@ entrepreneurRoutes.post('/api/upload', async (c) => {
         console.log(`[Upload] Extracted from ${file.name}: ${xlsxData.length} sheets, legacy=${legacyText.length}ch, markdown=${markdownText.length}ch`)
       } catch (err: any) {
         console.error('[Upload] XLSX parse error (non-fatal):', err.message)
+        // Keep base64 only as fallback
+      }
+    } else if (isDocx) {
+      try {
+        const docText = parseDocx(bytes)
+        const markdownText = docxToMarkdown(bytes)
+        // Store base64 + extracted document text for Claude AI
+        extractedText = `base64:${base64}\n\n---DOCUMENT_TEXT---\n${docText}\n\n---EXTRACTED_TEXT---\n${docText}`
+        console.log(`[Upload] Extracted DOCX from ${file.name}: text=${docText.length}ch`)
+      } catch (err: any) {
+        console.error('[Upload] DOCX parse error (non-fatal):', err.message)
         // Keep base64 only as fallback
       }
     }
@@ -811,6 +824,7 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
     // Build document texts from uploads
     // CORRECTION 1 CONFORME: Parse 3 sections from stored text:
     //   base64:<b64>\n\n---MARKDOWN_TABLES---\n<md>\n\n---EXTRACTED_TEXT---\n<legacy>
+    //   OR for DOCX: base64:<b64>\n\n---DOCUMENT_TEXT---\n<text>\n\n---EXTRACTED_TEXT---\n<text>
     const documentTexts: Record<string, string> = {}
     const rawUploads: Record<string, string> = {} // Store full base64 for binary access
     const markdownUploads: Record<string, string> = {} // CORRECTION 1: Store Markdown tables for Claude AI
@@ -819,19 +833,26 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
       
       // Check for new 3-section format: base64 + markdown tables + legacy text
       const mdMarker = '---MARKDOWN_TABLES---'
+      const docMarker = '---DOCUMENT_TEXT---'
       const extractedMarker = '---EXTRACTED_TEXT---'
       const mdIdx = text.indexOf(mdMarker)
+      const docIdx = text.indexOf(docMarker)
       const extractedIdx = text.indexOf(extractedMarker)
       
       if (mdIdx !== -1 && extractedIdx !== -1) {
-        // NEW FORMAT: has Markdown tables AND legacy text
-        // base64 is from position 7 to first \n\n---
+        // XLSX FORMAT: has Markdown tables AND legacy text
         const b64End = text.indexOf('\n\n---')
         rawUploads[u.category] = b64End > 7 ? text.substring(7, b64End) : ''
-        // Markdown tables: between mdMarker and extractedMarker
         markdownUploads[u.category] = text.substring(mdIdx + mdMarker.length, extractedIdx).trim().slice(0, 15000)
-        // Legacy text: after extractedMarker
         documentTexts[u.category] = text.substring(extractedIdx + extractedMarker.length).slice(0, 12000)
+      } else if (docIdx !== -1 && extractedIdx !== -1) {
+        // DOCX FORMAT: has Document text
+        const b64End = text.indexOf('\n\n---')
+        rawUploads[u.category] = b64End > 7 ? text.substring(7, b64End) : ''
+        const docText = text.substring(docIdx + docMarker.length, extractedIdx).trim().slice(0, 15000)
+        markdownUploads[u.category] = docText // Use document text as "markdown" for Claude
+        documentTexts[u.category] = text.substring(extractedIdx + extractedMarker.length).slice(0, 12000)
+        console.log(`[Generate] DOCX text for ${u.category}: ${docText.length}ch`)
       } else if (extractedIdx !== -1) {
         // OLD FORMAT: only base64 + legacy text (backward compat)
         documentTexts[u.category] = text.substring(extractedIdx + extractedMarker.length).slice(0, 12000)
@@ -1402,12 +1423,31 @@ entrepreneurRoutes.post('/api/chat/message', async (c) => {
         const hasSic = uploadedCats.has('sic')
         const hasInputs = uploadedCats.has('inputs')
 
-        // Build document texts
+        // Build document texts from uploads (same parsing logic as generate)
         const uploadData = (uploadsRes.results || []) as any[]
         const documentTexts: Record<string, string> = {}
         for (const u of uploadData) {
           const text = u.extracted_text || ''
-          documentTexts[u.category] = text.startsWith('base64:') ? `[Fichier binaire: ${u.filename}]` : text.slice(0, 6000)
+          const docMarker = '---DOCUMENT_TEXT---'
+          const extractedMarker = '---EXTRACTED_TEXT---'
+          const mdMarker = '---MARKDOWN_TABLES---'
+          const docIdx = text.indexOf(docMarker)
+          const mdIdx = text.indexOf(mdMarker)
+          const extractedIdx = text.indexOf(extractedMarker)
+          
+          if (mdIdx !== -1 && extractedIdx !== -1) {
+            // XLSX: use markdown tables
+            documentTexts[u.category] = text.substring(mdIdx + mdMarker.length, extractedIdx).trim().slice(0, 6000)
+          } else if (docIdx !== -1 && extractedIdx !== -1) {
+            // DOCX: use document text
+            documentTexts[u.category] = text.substring(docIdx + docMarker.length, extractedIdx).trim().slice(0, 6000)
+          } else if (extractedIdx !== -1) {
+            documentTexts[u.category] = text.substring(extractedIdx + extractedMarker.length).slice(0, 6000)
+          } else if (text.startsWith('base64:')) {
+            documentTexts[u.category] = `[Fichier binaire: ${u.filename}]`
+          } else {
+            documentTexts[u.category] = text.slice(0, 6000)
+          }
         }
 
         // ═══ USE MULTI-AGENT ORCHESTRATION FOR REGENERATION ═══
@@ -1838,6 +1878,55 @@ const DELIV_PAGE_META: Record<string, { title: string, icon: string, desc: strin
     format: 'Excel / PDF'
   }
 }
+
+// ═══ PUBLIC PREVIEW ROUTE (no auth) ═══
+entrepreneurRoutes.get('/preview/:userId/:type', async (c) => {
+  try {
+    const userId = parseInt(c.req.param('userId'))
+    const dtype = c.req.param('type')
+    if (!userId || !dtype) return c.text('Invalid params', 400)
+
+    const user = await c.env.DB.prepare('SELECT name, email FROM users WHERE id = ?')
+      .bind(userId).first() as any
+    if (!user) return c.text('User not found', 404)
+
+    const deliverable = await c.env.DB.prepare(
+      'SELECT * FROM entrepreneur_deliverables WHERE user_id = ? AND type = ? ORDER BY version DESC LIMIT 1'
+    ).bind(userId, dtype).first() as any
+    if (!deliverable) return c.text('Livrable non encore généré', 404)
+
+    let content: any = {}
+    try { content = JSON.parse(deliverable.content) } catch { content = {} }
+    const score = deliverable.score || content.score || 0
+
+    const meta = DELIV_PAGE_META[dtype] || { title: dtype, icon: 'fa-file', colorHex: '#1e3a5f' }
+
+    // For bmc_html type, return raw HTML
+    if (dtype === 'bmc_html' || dtype === 'framework_html') {
+      return c.html(deliverable.content)
+    }
+
+    return c.html(`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+      <title>${meta.title} — ${user.name}</title>
+      <script src="https://cdn.tailwindcss.com"></script>
+      <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css" rel="stylesheet">
+      <style>body{font-family:Inter,sans-serif;background:#f9fafb;color:#374151}pre{white-space:pre-wrap;word-wrap:break-word;background:#f3f4f6;padding:16px;border-radius:8px;font-size:12px}</style>
+    </head><body class="p-8 max-w-5xl mx-auto">
+      <div class="bg-white rounded-xl shadow-lg p-8 mb-6">
+        <div class="flex items-center gap-4 mb-6">
+          <div class="w-14 h-14 rounded-xl flex items-center justify-center text-white text-xl" style="background:${meta.colorHex}"><i class="fas ${meta.icon}"></i></div>
+          <div>
+            <h1 class="text-2xl font-bold text-gray-800">${meta.title}</h1>
+            <p class="text-sm text-gray-500">${user.name} — Score: <span class="font-bold" style="color:${score >= 70 ? '#059669' : score >= 50 ? '#d97706' : '#dc2626'}">${score}/100</span></p>
+          </div>
+        </div>
+        <pre>${JSON.stringify(content, null, 2).replace(/</g, '&lt;')}</pre>
+      </div>
+    </body></html>`)
+  } catch (e: any) {
+    return c.text('Erreur: ' + e.message, 500)
+  }
+})
 
 entrepreneurRoutes.get('/deliverable/:type', async (c) => {
   try {
@@ -3689,9 +3778,9 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
   </section>
   `}
 
-  <!-- ═══ DOWNLOAD EXCEL BANNER (visible when framework is available) ═══ -->
+  <!-- ═══ DOWNLOAD EXCEL BANNER (visible only when framework type is selected) ═══ -->
   ${delivMap.framework ? `
-  <section style="margin:0 20px 16px;padding:18px 24px;background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border:2px solid #86efac;border-radius:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;box-shadow:0 2px 8px rgba(5,150,105,0.1)">
+  <section id="excel-banner" style="margin:0 20px 16px;padding:18px 24px;background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border:2px solid #86efac;border-radius:14px;display:none;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;box-shadow:0 2px 8px rgba(5,150,105,0.1)">
     <div style="display:flex;align-items:center;gap:14px">
       <div style="width:48px;height:48px;border-radius:12px;background:#059669;display:flex;align-items:center;justify-content:center">
         <i class="fas fa-file-excel" style="font-size:22px;color:white"></i>
@@ -3798,14 +3887,14 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
           })()
           const statusText = available
             ? `${formatBadge} Disponible`
-            : (depsOk ? `${formatBadge} Prêt à générer` : `Manque : ${missing.join(', ')}`)
+            : (depsOk ? `${formatBadge} Prêt à générer` : `${formatBadge} Manque : ${missing.join(', ')}`)
           return `<div class="ev2-nav-item ${idx === 0 ? 'ev2-nav-item--active' : ''}" data-type="${dt.type}" onclick="selectDeliverable('${dt.type}')">
             <div class="ev2-nav-item__icon ev2-nav-item__icon--${iconClass}">
               <i class="fas ${dt.icon}"></i>
             </div>
             <div class="ev2-nav-item__info">
-              <div class="ev2-nav-item__name">${dt.label}</div>
-              <div class="ev2-nav-item__status">${statusText}</div>
+              <div class="ev2-nav-item__name">${formatBadge} ${dt.label}</div>
+              <div class="ev2-nav-item__status">${available ? 'Disponible' : (depsOk ? 'Prêt à générer' : `Manque : ${missing.join(', ')}`)}</div>
             </div>
             ${available ? `<div class="ev2-nav-item__score" style="color:${getScoreColor(dScore)}">${dScore}</div>` : ''}
           </div>`
@@ -4005,6 +4094,13 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
       const types = ${JSON.stringify(DELIVERABLE_TYPES)};
       const dt = types.find(t => t.type === type);
       document.getElementById('center-title').innerHTML = '<i class="fas ' + (dt?.icon || 'fa-file') + '"></i> ' + (dt?.label || type);
+      
+      // ═══ Show/hide Excel banner based on selected type ═══
+      var excelBanner = document.getElementById('excel-banner');
+      if (excelBanner) {
+        excelBanner.style.display = (type === 'framework') ? 'flex' : 'none';
+      }
+      
       // Render content
       renderDeliverableContent(type);
       // Scroll to center panel
@@ -4047,11 +4143,20 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
       } else if (type === 'bmc_analysis') {
         // Display pre-stored Claude AI HTML instantly (no fetch, no wait)
         if (BMC_HTML_TEMPLATE && BMC_HTML_TEMPLATE.length > 100) {
+          // Add download bar BEFORE iframe
+          var barHtml = '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #93c5fd;border-radius:12px;margin-bottom:20px">';
+          barHtml += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-word" style="font-size:24px;color:#2563eb"></i><div><div style="font-size:14px;font-weight:700;color:#1e40af">BMC Analys\\u00e9</div><div style="font-size:12px;color:#3b82f6">T\\u00e9l\\u00e9chargeable en Word ou PDF</div></div></div>';
+          barHtml += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+          barHtml += '<button data-download="docx" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#2563eb;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(37,99,235,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-word"></i> Word (.docx)</button>';
+          barHtml += '<button data-download="pdf" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(124,45,18,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>';
+          barHtml += '<a href="/deliverable/bmc_analysis" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e40af;border:1px solid #93c5fd;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#eff6ff&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>';
+          barHtml += '</div></div>';
+          
+          el.innerHTML = barHtml;
           var iframe = document.createElement('iframe');
           iframe.style.cssText = 'width:100%;min-height:80vh;border:none;border-radius:12px;background:#fff';
           iframe.srcdoc = BMC_HTML_TEMPLATE;
           iframe.onload = function() { try { iframe.style.height = iframe.contentDocument.body.scrollHeight + 40 + 'px'; } catch(e) {} };
-          el.innerHTML = '';
           el.appendChild(iframe);
         } else {
           // Fallback: render from JSON data
