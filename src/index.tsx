@@ -4578,10 +4578,66 @@ app.get('/api/pme/framework', async (c) => {
       ).bind(payload.userId, mod3.id).first<any>()
     }
 
+    // ── FALLBACK: If no financial_inputs, try entrepreneur_deliverables (generate-all pipeline) ──
     if (!inputsRow) {
-      return c.json({ error: 'Aucune donnée financière. Remplissez d\'abord les Inputs Entrepreneur (Module 3).' }, 400)
+      // Try to load pmeInput from entrepreneur_deliverables (stored by generate-all)
+      const pmeDataRow = await c.env.DB.prepare(
+        "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_pme_data' ORDER BY version DESC LIMIT 1"
+      ).bind(payload.userId).first<any>()
+      
+      if (!pmeDataRow?.content) {
+        // Last resort: serve the already-generated HTML if available
+        if (format === 'html') {
+          const htmlRow = await c.env.DB.prepare(
+            "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_html' ORDER BY version DESC LIMIT 1"
+          ).bind(payload.userId).first<any>()
+          if (htmlRow?.content) return c.html(htmlRow.content)
+        }
+        return c.json({ error: 'Aucune donnée financière. Uploadez votre fichier INPUTS_ENTREPRENEURS ou remplissez le Module 3.' }, 400)
+      }
+
+      // Rebuild from stored PmeInputData
+      const pmeInput = JSON.parse(pmeDataRow.content) as PmeInputData
+      const companyName = pmeInput.companyName || 'Mon Entreprise'
+      const apiKey = c.env.ANTHROPIC_API_KEY || ''
+
+      // Load BMC for cross-analysis
+      let bmcContent = ''
+      try {
+        let bmcDel = await c.env.DB.prepare(
+          "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_analysis' ORDER BY version DESC LIMIT 1"
+        ).bind(payload.userId).first<any>()
+        if (bmcDel?.content && bmcDel.content.length > 100) bmcContent = bmcDel.content.slice(0, 6000)
+        if (!bmcContent) {
+          bmcDel = await c.env.DB.prepare(
+            "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_html' ORDER BY version DESC LIMIT 1"
+          ).bind(payload.userId).first<any>()
+          if (bmcDel?.content && bmcDel.content.length > 100) bmcContent = bmcDel.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 6000)
+        }
+      } catch {}
+
+      const baseAnalysis = analyzePme(pmeInput)
+      let crossAnalysis
+      try { crossAnalysis = await crossAnalyzeBmcFinancials(bmcContent, pmeInput, baseAnalysis, apiKey) } catch {}
+      const analysis = await analyzePmeWithAI(pmeInput, apiKey, undefined, crossAnalysis)
+
+      if (format === 'excel') {
+        const xml = generatePmeExcelXml(pmeInput, analysis)
+        return new Response(xml, {
+          headers: {
+            'Content-Type': 'application/vnd.ms-excel',
+            'Content-Disposition': `attachment; filename="Framework_Analyse_${companyName.replace(/[^a-zA-Z0-9]/g, '_')}.xls"`,
+          }
+        })
+      }
+      if (format === 'html') {
+        const html = generatePmePreviewHtml(analysis, pmeInput)
+        return c.html(html)
+      }
+      return c.json({ success: true, analysis, input: pmeInput })
     }
 
+    // ── PRIMARY PATH: Build from financial_inputs (Module 3 form) ──
     // Parse all JSON tabs
     const infos = inputsRow.infos_generales_json ? JSON.parse(inputsRow.infos_generales_json) : {}
     const historiques = inputsRow.donnees_historiques_json ? JSON.parse(inputsRow.donnees_historiques_json) : {}
@@ -4612,11 +4668,10 @@ app.get('/api/pme/framework', async (c) => {
       companyName, userName
     )
 
-    // CORRECTION 5: Use enriched pipeline with AI + cross-analysis
+    // Use enriched pipeline with AI + cross-analysis
     const apiKey = c.env.ANTHROPIC_API_KEY || ''
     
-    // Step 3: Deterministic analysis first
-    // Step 4: BMC cross-check (load BMC deliverable if available)
+    // BMC cross-check (load BMC deliverable if available)
     let bmcContent = ''
     try {
       let bmcDel = await c.env.DB.prepare(
@@ -4630,7 +4685,7 @@ app.get('/api/pme/framework', async (c) => {
           "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_html' ORDER BY version DESC LIMIT 1"
         ).bind(payload.userId).first<any>()
         if (bmcDel?.content && bmcDel.content.length > 100) {
-          bmcContent = bmcDel.content.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').slice(0, 6000)
+          bmcContent = bmcDel.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 6000)
         }
       }
     } catch {}
@@ -4641,7 +4696,7 @@ app.get('/api/pme/framework', async (c) => {
       crossAnalysis = await crossAnalyzeBmcFinancials(bmcContent, pmeInput, baseAnalysis, apiKey)
     } catch {}
     
-    // Step 5: AI enrichment (Claude) with cross-analysis context
+    // AI enrichment (Claude) with cross-analysis context
     const analysis = await analyzePmeWithAI(pmeInput, apiKey, undefined, crossAnalysis)
 
     if (format === 'excel') {

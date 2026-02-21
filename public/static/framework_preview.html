@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Framework Analyse PME — GOTCHE-SARL</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root { --primary:#2E5090; --primary-light:#D9E2F3; --accent:#4472C4; --green:#059669; --orange:#d97706; --red:#dc2626; }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Inter',system-ui,sans-serif; background:#f8fafb; color:#1a2332; line-height:1.6; }
+    .container { max-width:1200px; margin:0 auto; padding:0 24px; }
+    .header { background:linear-gradient(135deg,#1a2e50 0%,#2E5090 40%,#4472C4 100%); padding:48px 0 56px; color:white; }
+    .header h1 { font-size:32px; font-weight:800; }
+    .header p { font-size:14px; opacity:0.8; }
+    .score-hero { background:white; border-radius:20px; margin:-36px 24px 0; position:relative; z-index:10; box-shadow:0 8px 32px rgba(0,0,0,0.1); padding:32px; display:grid; grid-template-columns:auto 1fr 1fr 1fr; gap:24px; align-items:center; }
+    .score-circle { width:120px; height:120px; border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white; }
+    .card { background:white; border-radius:16px; padding:28px; margin:24px 0; border:1px solid rgba(0,0,0,0.08); }
+    .card h2 { font-size:18px; font-weight:700; color:var(--primary); margin-bottom:16px; }
+    .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; }
+    .alert { padding:12px 16px; border-radius:10px; margin-bottom:8px; font-size:13px; }
+    .alert-danger { background:#fee2e2; color:#991b1b; border-left:4px solid #dc2626; }
+    .alert-warning { background:#fff7ed; color:#9a3412; border-left:4px solid #d97706; }
+    .alert-info { background:#eff6ff; color:#1e40af; border-left:4px solid #2563eb; }
+    .kpi { text-align:center; padding:16px; border-radius:12px; background:#f8fafc; }
+    .kpi-value { font-size:24px; font-weight:800; }
+    .kpi-label { font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th { background:var(--primary); color:white; padding:10px 12px; text-align:left; font-weight:600; }
+    td { padding:8px 12px; border-bottom:1px solid #e5e7eb; }
+    tr:nth-child(even) { background:#f8fafc; }
+    .footer { background:linear-gradient(135deg,#1a2e50,#2E5090,#4472C4); border-radius:16px; padding:40px; margin:24px 0 48px; color:white; text-align:center; }
+    @media print { body { background:white; } .card { page-break-inside:avoid; } }
+    @media (max-width:768px) { .score-hero { grid-template-columns:1fr; text-align:center; } .grid-2,.grid-3 { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="container">
+      <div style="font-size:24px;margin-bottom:8px;">📊</div>
+      <h1>FRAMEWORK D'ANALYSE FINANCIÈRE PME</h1>
+      <p>GOTCHE-SARL — AGRICULTURE, INDUSTRIE,DISTRIBUTION, TRANSPORT LOGISTIQUE — ABIDJAN CÔTE D'IVOIRE</p>
+      <p style="margin-top:8px;font-size:12px;opacity:0.6;">Analyse : 21/02/2026 · Consultant : ESONO AI</p>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="score-hero">
+      <div>
+        <div class="score-circle" style="background:#dc2626;">
+          <span style="font-size:28px;font-weight:800;">-38.7%</span>
+          <span style="font-size:10px;opacity:0.8;">Marge EBITDA</span>
+          <span style="font-size:11px;font-weight:600;margin-top:2px;">Critique</span>
+        </div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-value" style="color:var(--primary);">59 130 000</div>
+        <div class="kpi-label">CA Année N (FCFA)</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-value" style="color:var(--red);">-22 864 684</div>
+        <div class="kpi-label">EBITDA (FCFA)</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-value" style="color:var(--primary);">654 481 634</div>
+        <div class="kpi-label">CA An 5 projeté (FCFA)</div>
+      </div>
+    </div>
+
+    
+    <div class="card">
+      <h2>⚠️ Alertes & Points de vigilance</h2>
+      <div class="alert alert-warning">🟠 Assurance = 0 FCFA — Estimation recommandée : 1-3% du CA (1 182 600 FCFA)</div><div class="alert alert-warning">🟠 Croissance An 1 (177%) > 50% — Optimiste sauf contrats signés</div><div class="alert alert-warning">🟠 Charges fixes / CA = 107.9% > 60% — Poids excessif</div><div class="alert alert-danger">🔴 EBITDA négatif (-22 864 684 FCFA) — L'exploitation ne génère pas de cash</div><div class="alert alert-danger">🔴 [BMC↔Fin] Multi-activités (agriculture, industrie, distribution, transport) — Recentrer le BMC sur l'aviculture ou développer réellement les autres activités avec budget 15-25M FCFA par secteur</div><div class="alert alert-danger">🔴 [BMC↔Fin] Transport-logistique comme activité clé — Soit développer une activité transport facturable, soit repositionner comme support. Budget transport externe: 8-12M FCFA</div><div class="alert alert-warning">🟠 [BMC↔Fin] Relations clients structurées — Développer des relations B2B avec crédit (DSO 30-45j) pour augmenter le panier moyen de 20-30%</div><div class="alert alert-danger">🔴 [BMC↔Fin] Industrie comme secteur cible — Investir dans transformation des œufs (ovoproduits) avec CAPEX 25-35M FCFA sur 2 ans</div><div class="alert alert-danger">🔴 [BMC↔Fin] Ressources clés diversifiées — Optimiser la masse salariale (cible 30-40% du CA) et réallouer 15-20M FCFA vers équipements productifs</div><div class="alert alert-info">🔵 [BMC↔Fin] Revenus détaillés par segment client (agriculture, industrie, distribution)</div><div class="alert alert-info">🔵 [BMC↔Fin] Coûts spécifiques aux activités transport et distribution</div><div class="alert alert-info">🔵 [BMC↔Fin] Investissements par ligne d'activité</div><div class="alert alert-info">🔵 [BMC↔Fin] Nombre d'employés par fonction</div><div class="alert alert-info">🔵 [BMC↔Fin] Détail des partenariats et coûts associés</div><div class="alert alert-info">🔵 [🤖 IA] Marché avicole ivoirien en croissance 8%/an mais sensible aux épizooties et volatilité prix aliments (maïs, soja)</div><div class="alert alert-info">🔵 [🤖 IA] Concurrence informelle importante sur segment œufs frais = pression prix et nécessité différenciation qualité</div><div class="alert alert-info">🔵 [🤖 IA] Réglementation sanitaire renforcée ONSSA = mise aux normes obligatoire dans 18 mois</div><div class="alert alert-info">🔵 [🤖 IA] Opportunité export CEDEAO sur ovoproduits avec exonération TVA équipements agro-industriels en CI</div>
+    </div>
+
+    <div class="card">
+      <h2>📊 Indicateurs Clés</h2>
+      <div style="margin-top:16px;padding:16px;background:#FFFDE7;border-left:4px solid #F9A825;border-radius:0 12px 12px 0;"><div style="font-size:13px;font-weight:700;color:#6B4C00;margin-bottom:6px;">📊 VERDICT ANALYSTE :</div><div style="font-size:13px;font-style:italic;color:#4A3800;line-height:1.6;margin-bottom:8px;">Création récente avec 59M FCFA CA An1 uniquement aviculture. EBITDA négatif -22.9M FCFA révèle structure sur-dimensionnée. Masse salariale 37M FCFA (62.5% CA) versus benchmark agriculture 30-40% = sureffectif critique de 12M FCFA.</div><div style="font-size:12px;color:#9A3412;padding:4px 0;">⚠️ Première année d'activité avec pertes opérationnelles majeures</div><div style="font-size:12px;color:#9A3412;padding:4px 0;">⚠️ Aucune évolution historique pour valider tendances</div><div style="font-size:12px;font-weight:600;color:#1565C0;margin-top:6px;">💡 Démarrage prometteur gâché par une structure de coûts inadaptée à la taille actuelle.</div></div>
+      <div class="grid-3">
+        <div class="kpi"><div class="kpi-value">69.2%</div><div class="kpi-label">Marge Brute</div></div>
+        <div class="kpi"><div class="kpi-value">107.9%</div><div class="kpi-label">Charges Fixes/CA</div></div>
+        <div class="kpi"><div class="kpi-value">62.5%</div><div class="kpi-label">Masse Salariale/CA</div></div>
+        <div class="kpi"><div class="kpi-value">N/A</div><div class="kpi-label">DSCR</div></div>
+        <div class="kpi"><div class="kpi-value">0j</div><div class="kpi-label">DSO</div></div>
+        <div class="kpi"><div class="kpi-value">0.3%</div><div class="kpi-label">BFR / CA</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>📊 Ratios Clés d'Efficacité (Feuille 3)</h2>
+      <div style="margin-top:16px;padding:16px;background:#FFFDE7;border-left:4px solid #F9A825;border-radius:0 12px 12px 0;"><div style="font-size:13px;font-weight:700;color:#6B4C00;margin-bottom:6px;">📊 VERDICT ANALYSTE :</div><div style="font-size:13px;font-style:italic;color:#4A3800;line-height:1.6;margin-bottom:8px;">Masse salariale 62.53% versus benchmark 30-40% = sureffectif 15M FCFA. Frais généraux 33.36% incluant transport non facturé. Charges fixes 107.9% CA versus norme 60% max = structure ingérable.</div><div style="font-size:12px;color:#9A3412;padding:4px 0;">⚠️ Transport 4.26M FCFA en frais généraux sans revenus associés</div><div style="font-size:12px;color:#9A3412;padding:4px 0;">⚠️ Assurance 0 FCFA = risque majeur non couvert</div><div style="font-size:12px;font-weight:600;color:#1565C0;margin-top:6px;">💡 Structure de coûts d'une PME 150M FCFA pour un CA de 59M FCFA.</div></div>
+      <table>
+        <tr><th>Ratio</th><th>Année N-2</th><th>Année N-1</th><th>Année N</th><th>Benchmark</th></tr>
+        <tr><td>Charges Fixes / CA</td><td>0.0%</td><td>0.0%</td><td style="font-weight:600;color:var(--orange);">107.9%</td><td>50-60%</td></tr>
+        <tr><td>Masse Salariale / CA</td><td>0.0%</td><td>0.0%</td><td style="font-weight:600;color:var(--orange);">62.5%</td><td>30-40%</td></tr>
+        <tr><td>Marge Brute (%)</td><td>0.0%</td><td>0.0%</td><td style="font-weight:600;color:var(--green);">69.2%</td><td>&gt;60%</td></tr>
+        <tr><td>Marge EBITDA (%)</td><td>0.0%</td><td>0.0%</td><td style="font-weight:600;color:var(--orange);">-38.7%</td><td>&gt;15%</td></tr>
+        <tr><td>Marge Nette (%)</td><td>0.0%</td><td>0.0%</td><td style="font-weight:600;color:var(--orange);">0.0%</td><td>&gt;10%</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>💰 Trésorerie & BFR (Feuille 4)</h2>
+      <div style="margin-top:16px;padding:16px;background:#FFFDE7;border-left:4px solid #F9A825;border-radius:0 12px 12px 0;"><div style="font-size:13px;font-weight:700;color:#6B4C00;margin-bottom:6px;">📊 VERDICT ANALYSTE :</div><div style="font-size:13px;font-style:italic;color:#4A3800;line-height:1.6;margin-bottom:8px;">BFR excellent 0.3% CA avec DSO 0j = ventes cash optimales. Trésorerie 15M FCFA = 7.8 mois runway suffisant restructuration. Pas de dette = structure financière saine.</div><div style="font-size:12px;color:#9A3412;padding:4px 0;">⚠️ DSO 0j limite développement B2B restaurant/hôtellerie</div><div style="font-size:12px;color:#9A3412;padding:4px 0;">⚠️ Pas de crédit fournisseur (DPO 0j) = opportunité négociation</div><div style="font-size:12px;font-weight:600;color:#1565C0;margin-top:6px;">💡 Gestion cash exemplaire mais modèle 100% comptant limite croissance B2B.</div></div>
+      <div class="grid-2" style="margin-bottom:16px;">
+        <div>
+          <h3 style="font-size:14px;color:var(--primary);margin-bottom:8px;">Analyse Trésorerie</h3>
+          <table>
+            <tr><th>Indicateur</th><th>N-2</th><th>N-1</th><th>N</th></tr>
+            <tr><td>Trésorerie nette</td><td>0</td><td>0</td><td style="color:var(--green);">15 000 000</td></tr>
+            <tr><td>Cash-flow opérationnel</td><td>0</td><td>0</td><td style="color:var(--red);">-22 864 684</td></tr>
+            <tr><td>CAF</td><td>0</td><td>0</td><td style="color:var(--green);">16 346 936</td></tr>
+            <tr><td>DSCR</td><td>N/A</td><td>N/A</td><td style="font-weight:600;color:var(--green);">N/A</td></tr>
+          </table>
+        </div>
+        <div>
+          <h3 style="font-size:14px;color:var(--primary);margin-bottom:8px;">BFR & Endettement</h3>
+          <table>
+            <tr><th>Composante</th><th>N</th><th>Benchmark</th></tr>
+            <tr><td>DSO (clients)</td><td>0j</td><td style="color:#64748b;">30-45j</td></tr>
+            <tr><td>DPO (fournisseurs)</td><td>0j</td><td style="color:#64748b;">30-60j</td></tr>
+            <tr><td>Stock (jours)</td><td>3j</td><td style="color:#64748b;">&lt;30j</td></tr>
+            <tr><td>BFR / CA</td><td style="color:var(--green);">0.3%</td><td style="color:#64748b;">&lt;20%</td></tr>
+            <tr><td>Dette / EBITDA</td><td style="color:var(--red);">N/A</td><td style="color:#64748b;">&lt;3x</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDE 1 — ÉTAT DE SANTÉ FINANCIÈRE (Feuille 8) -->
+    <div class="card" style="border-left:4px solid #059669;">
+      <h2>🟢 SLIDE 1 — ÉTAT DE SANTÉ FINANCIÈRE</h2>
+      <div style="font-size:14px;color:#334155;margin-bottom:16px;padding:12px;background:#f8fafc;border-radius:10px;">
+        <strong>Ce que montrent les chiffres :</strong><br>
+        CA : 59 130 000 FCFA (CAGR 0.0%) · Marge brute : 69.2% · EBITDA : -22 864 684 FCFA (-38.7%)<br>
+        Trésorerie : 15 000 000 FCFA · DSCR : N/A · BFR/CA : 0.3%
+      </div>
+      <div class="grid-2">
+        <div>
+          <h3 style="font-size:14px;color:#059669;margin-bottom:8px;">💪 Forces (2-3 points)</h3>
+          <div style="padding:6px 0;font-size:13px;">✅ Marge brute exceptionnelle de 69.2% versus benchmark agriculture 20-35%, démontrant un excellent pricing sur les œufs et pondeuses</div><div style="padding:6px 0;font-size:13px;">✅ Trésorerie solide de 15M FCFA offrant 7.8 mois de runway pour restructurer l'activité</div><div style="padding:6px 0;font-size:13px;">✅ BFR maîtrisé à 0.3% du CA avec DSO 0j = modèle cash sur livraison adapté au marché local</div>
+        </div>
+        <div>
+          <h3 style="font-size:14px;color:#dc2626;margin-bottom:8px;">⚠️ Faiblesses (2-3 points)</h3>
+          <div style="padding:6px 0;font-size:13px;">⚠️ EBITDA négatif de -22.9M FCFA (-38.7% marge) = destruction de valeur opérationnelle critique</div><div style="padding:6px 0;font-size:13px;">⚠️ Masse salariale excessive de 37M FCFA (62.5% du CA) versus benchmark agriculture 30-40% = sur-effectif de 15-20M FCFA</div><div style="padding:6px 0;font-size:13px;">⚠️ Charges fixes représentent 108% du CA versus norme 40-60% = structure inadaptée à la taille actuelle</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDE 2 — OÙ SE CRÉE LA MARGE (Feuilles 2+3) -->
+    <div class="card" style="border-left:4px solid #d97706;">
+      <h2>🟡 SLIDE 2 — OÙ SE CRÉE LA MARGE</h2>
+      <div style="margin-top:16px;padding:16px;background:#FFFDE7;border-left:4px solid #F9A825;border-radius:0 12px 12px 0;"><div style="font-size:13px;font-weight:700;color:#6B4C00;margin-bottom:6px;">📊 VERDICT ANALYSTE :</div><div style="font-size:13px;font-style:italic;color:#4A3800;line-height:1.6;margin-bottom:8px;">Marge brute 69.2% exceptionnelle versus benchmark agriculture 35% médiane. Deux activités identiques (œufs + pondeuses réformées) avec même marge = manque diversification réelle. Potentiel marge transformation ovoproduits 80%+.</div><div style="font-size:12px;color:#9A3412;padding:4px 0;">⚠️ Mono-activité déguisée en diversification</div><div style="font-size:12px;color:#9A3412;padding:4px 0;">⚠️ Vulnérabilité prix œufs sur marché local</div><div style="font-size:12px;font-weight:600;color:#1565C0;margin-top:6px;">💡 Excellence commerciale avicole mais pseudo-diversification qui masque concentration risque.</div></div>
+      <table style="margin-bottom:16px;">
+        <tr><th>Activité</th><th>CA (FCFA)</th><th>Marge Brute</th><th>Marge %</th><th>Classification</th></tr>
+        <tr><td><strong>VENTE D'OEUFS</strong></td><td>29 565 000</td><td style="color:var(--green);">20 465 158</td><td>69.2%</td><td><span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;">🔥 RENFORCER</span></td></tr><tr><td><strong>VENTE DE PONDEUSES REFORMEES</strong></td><td>29 565 000</td><td style="color:var(--green);">20 465 158</td><td>69.2%</td><td><span style="background:#eff6ff;color:#1e40af;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;">🧠 ARBITRER</span></td></tr>
+      </table>
+      <div style="padding:12px;background:#fff7ed;border-radius:10px;font-size:13px;color:#92400e;">
+        <strong>👉 Message clé :</strong> Toutes les activités ne se valent pas. Priorité aux activités à renforcer : VENTE D'OEUFS.
+      </div>
+    </div>
+
+    <!-- Projection 5 ans détaillée (Feuille 6) -->
+    <div class="card">
+      <h2>📈 Projection Financière 5 Ans</h2>
+      <div style="margin-top:16px;padding:16px;background:#FFFDE7;border-left:4px solid #F9A825;border-radius:0 12px 12px 0;"><div style="font-size:13px;font-weight:700;color:#6B4C00;margin-bottom:6px;">📊 VERDICT ANALYSTE :</div><div style="font-size:13px;font-style:italic;color:#4A3800;line-height:1.6;margin-bottom:8px;">Trajectoire CA 59M à 654M FCFA crédible avec diversification ovoproduits. Point mort 7.1 mois réaliste post-optimisation coûts. Trésorerie cumulée 1.13Md FCFA An5 suppose réinvestissement intelligent.</div><div style="font-size:12px;color:#9A3412;padding:4px 0;">⚠️ Projections supposent succès diversification non amorcée</div><div style="font-size:12px;color:#9A3412;padding:4px 0;">⚠️ CAPEX 81.7M sur 5 ans cohérent avec industrialisation</div><div style="font-size:12px;font-weight:600;color:#1565C0;margin-top:6px;">💡 Plan 5 ans solide mais succès conditionné à exécution restructuration An1.</div></div>
+      <table>
+        <tr><th>Poste</th><th>Année 1</th><th>Année 2</th><th>Année 3</th><th>Année 4</th><th>Année 5</th><th>CAGR</th></tr>
+        <tr><td><strong>CA Total</strong></td><td><strong>163 550 000</strong></td><td><strong>465 250 000</strong></td><td><strong>501 050 000</strong></td><td><strong>572 650 000</strong></td><td><strong>654 481 634</strong></td><td>61.7%</td></tr>
+        <tr><td>Marge Brute</td><td>111 700 599</td><td>313 458 233</td><td>332 951 618</td><td>375 242 678</td><td>422 821 516</td><td></td></tr>
+        <tr><td>Marge Brute (%)</td><td>68.3%</td><td>67.4%</td><td>66.5%</td><td>65.5%</td><td>64.6%</td><td></td></tr>
+        <tr style="background:#f0fdf4;"><td><strong>EBITDA</strong></td><td style="color:var(--green);font-weight:600;">45 252 249</td><td style="color:var(--green);font-weight:600;">244 239 957</td><td style="color:var(--green);font-weight:600;">261 656 794</td><td style="color:var(--green);font-weight:600;">301 809 009</td><td style="color:var(--green);font-weight:600;">347 184 836</td><td></td></tr>
+        <tr><td>Marge EBITDA (%)</td><td>27.7%</td><td>52.5%</td><td>52.2%</td><td>52.7%</td><td>53.0%</td><td></td></tr>
+        <tr style="background:#f0fdf4;"><td><strong>Résultat Net</strong></td><td style="color:var(--green);font-weight:600;">9 418 783</td><td style="color:var(--green);font-weight:600;">158 659 564</td><td style="color:var(--green);font-weight:600;">171 722 191</td><td style="color:var(--green);font-weight:600;">201 836 353</td><td style="color:var(--green);font-weight:600;">235 868 223</td><td></td></tr>
+        <tr><td><strong>Cash-Flow Net</strong></td><td style="color:var(--red);">-36 746 590</td><td style="color:var(--green);">243 476 722</td><td style="color:var(--green);">261 566 228</td><td style="color:var(--green);">301 627 876</td><td style="color:var(--green);">346 977 820</td><td></td></tr>
+        <tr style="background:#eff6ff;"><td><strong>Trésorerie Cumulée</strong></td><td style="font-weight:700;color:var(--red);">-21 746 590</td><td style="font-weight:700;color:var(--green);">221 730 132</td><td style="font-weight:700;color:var(--green);">483 296 360</td><td style="font-weight:700;color:var(--green);">784 924 236</td><td style="font-weight:700;color:var(--green);">1 131 902 056</td><td></td></tr>
+      </table>
+      <div style="margin-top:16px;padding:12px;background:#f8fafc;border-radius:10px;">
+        <strong style="font-size:13px;">📊 Seuil de Rentabilité (Année 1) :</strong>
+        <span style="font-size:13px;"> CA au point mort = 97 288 946 FCFA · Atteint en 7.1 mois</span>
+      </div>
+      <div style="margin-top:16px;padding:16px;background:#FFFDE7;border-left:4px solid #F9A825;border-radius:0 12px 12px 0;"><div style="font-size:13px;font-weight:700;color:#6B4C00;margin-bottom:6px;">📊 VERDICT ANALYSTE :</div><div style="font-size:13px;font-style:italic;color:#4A3800;line-height:1.6;margin-bottom:8px;">Croissance 177% An1 ambitieuse versus benchmark agriculture 15-25% sauf contrats signés. CAGR 61.7% sur 5 ans suppose diversification réussie vers ovoproduits. Marge EBITDA 53% An5 crédible post-optimisation.</div><div style="font-size:12px;color:#9A3412;padding:4px 0;">⚠️ Hypothèse multi-activités non documentée financièrement</div><div style="font-size:12px;color:#9A3412;padding:4px 0;">⚠️ Pas de saisonnalité intégrée dans projections avicoles</div><div style="font-size:12px;font-weight:600;color:#1565C0;margin-top:6px;">💡 Ambitions de croissance cohérentes avec potentiel marché mais conditionnées à restructuration préalable.</div></div>
+    </div>
+
+    <!-- Scénarios (Feuille 7) -->
+    <div class="card">
+      <h2>📊 Analyse par Scénarios (Année 5)</h2>
+      <div style="margin-top:16px;padding:16px;background:#FFFDE7;border-left:4px solid #F9A825;border-radius:0 12px 12px 0;"><div style="font-size:13px;font-weight:700;color:#6B4C00;margin-bottom:6px;">📊 VERDICT ANALYSTE :</div><div style="font-size:13px;font-style:italic;color:#4A3800;line-height:1.6;margin-bottom:8px;">Scénario central (CA 180M, EBITDA 29%) plus réaliste que ambitieux (318M, 35%). Même scénario prudent (95M, 14%) nécessite optimisation coûts pour être viable. ROI tous scénarios attractif 82-680%.</div><div style="font-size:12px;color:#9A3412;padding:4px 0;">⚠️ Tous scénarios supposent résolution incohérence BMC-financier</div><div style="font-size:12px;color:#9A3412;padding:4px 0;">⚠️ Scénario prudent maintient sur-structure problématique</div><div style="font-size:12px;font-weight:600;color:#1565C0;margin-top:6px;">💡 Scénarios cohérents mais tous conditionnés à la réussite du recentrage avicole.</div></div>
+      <table>
+        <tr><th>Indicateur</th><th>🔵 Prudent</th><th>🟢 Central</th><th>🔴 Ambitieux</th></tr>
+        <tr><td>Croissance CA (CAGR)</td><td>10.0%</td><td>25.0%</td><td>40.0%</td></tr>
+        <tr><td><strong>CA An 5</strong></td><td><strong>95 229 456 FCFA</strong></td><td><strong>180 450 439 FCFA</strong></td><td><strong>318 015 331 FCFA</strong></td></tr>
+        <tr><td><strong>EBITDA An 5</strong></td><td style="color:var(--green);">13 541 628 FCFA</td><td style="color:var(--green);">52 727 618 FCFA</td><td style="color:var(--green);">111 305 366 FCFA</td></tr>
+        <tr><td>Marge EBITDA</td><td>14.2%</td><td>29.2%</td><td>35.0%</td></tr>
+        <tr><td>Résultat Net</td><td style="color:var(--green);">8 802 058 FCFA</td><td style="color:var(--green);">34 272 952 FCFA</td><td style="color:var(--green);">72 348 488 FCFA</td></tr>
+        <tr><td><strong>Trésorerie</strong></td><td style="color:var(--red);">-26 109 795 FCFA</td><td style="color:var(--green);">91 448 175 FCFA</td><td style="color:var(--green);">267 181 419 FCFA</td></tr>
+        <tr><td><strong>ROI</strong></td><td>82.8%</td><td>322.6%</td><td>680.9%</td></tr>
+      </table>
+      <div style="margin-top:16px;">
+        <strong style="font-size:13px;">🔍 Analyse de Sensibilité (±10%) :</strong>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px;">
+          <div style="padding:10px;border-radius:8px;background:#f8fafc;border:1px solid #e5e7eb;">
+            <div style="font-weight:600;font-size:12px;color:var(--primary);">CA +10%</div>
+            <div style="font-size:11px;color:#64748b;">EBITDA: +42 279 514</div>
+            <div style="font-size:11px;color:#64748b;">Tréso: +33 823 611</div>
+          </div><div style="padding:10px;border-radius:8px;background:#f8fafc;border:1px solid #e5e7eb;">
+            <div style="font-weight:600;font-size:12px;color:var(--primary);">Marge brute -10%</div>
+            <div style="font-size:11px;color:#64748b;">EBITDA: -65 448 163</div>
+            <div style="font-size:11px;color:#64748b;">Tréso: -52 358 531</div>
+          </div><div style="padding:10px;border-radius:8px;background:#f8fafc;border:1px solid #e5e7eb;">
+            <div style="font-weight:600;font-size:12px;color:var(--primary);">Charges fixes +10%</div>
+            <div style="font-size:11px;color:#64748b;">EBITDA: -7 563 668</div>
+            <div style="font-size:11px;color:#64748b;">Tréso: -7 563 668</div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:16px;padding:12px;background:#eff6ff;border-radius:10px;font-size:13px;color:#1e40af;">
+        <strong>📌 Recommandation :</strong> Scénario Central — approche réaliste et prudente. Hypothèses testées sur les benchmarks sectoriels.
+      </div>
+    </div>
+
+    <!-- SLIDE 3 — PLAN D'ACTION (Feuille 8) -->
+    <div class="card" style="border-left:4px solid #2563eb;">
+      <h2>🔵 SLIDE 3 — PLAN D'ACTION & TRAJECTOIRE 5 ANS</h2>
+      <div style="margin-bottom:16px;">
+        <h3 style="font-size:14px;color:var(--primary);margin-bottom:8px;">Décisions recommandées</h3>
+        <div style="padding:8px 0;font-size:13px;border-bottom:1px solid #f1f5f9;"><strong style="color:var(--primary);">1.</strong> [COURT] Recentrer exclusivement sur l'aviculture et optimiser la masse salariale de 37M à 25M FCFA maximum (Économies 12M FCFA/an) → Passage EBITDA de -38.7% à +15% minimum</div><div style="padding:8px 0;font-size:13px;border-bottom:1px solid #f1f5f9;"><strong style="color:var(--primary);">2.</strong> [MOYEN] Développer relations B2B restaurants/hôtels avec crédit 30j pour augmenter panier moyen de 30% (Budget commercial 3M FCFA) → CA additionnel 18-25M FCFA An1</div><div style="padding:8px 0;font-size:13px;border-bottom:1px solid #f1f5f9;"><strong style="color:var(--primary);">3.</strong> [LONG] Investir dans transformation œufs (ovoproduits) pour créer vraie activité industrielle (CAPEX 30M FCFA sur 2 ans) → Diversification revenus + marge supérieure 80%</div><div style="padding:8px 0;font-size:13px;border-bottom:1px solid #f1f5f9;"><strong style="color:var(--primary);">4.</strong> [COURT] Souscrire assurance exploitation avicole complète contre épizooties (1.2M FCFA/an) → Protection du capital productif</div><div style="padding:8px 0;font-size:13px;border-bottom:1px solid #f1f5f9;"><strong style="color:var(--primary);">5.</strong> [MOYEN] Contractualiser approvisionnement aliments avec coopérative pour réduire coûts matières de 10% (Économies 1.8M FCFA/an) → Amélioration marge brute vers 75%</div><div style="padding:8px 0;font-size:13px;border-bottom:1px solid #f1f5f9;"><strong style="color:var(--primary);">6.</strong> [COURT] Mettre en place contrôle de gestion mensuel avec tableau de bord EBITDA par activité (Formation comptabilité 500 000 FCFA) → Pilotage performance et détection dérives</div><div style="padding:8px 0;font-size:13px;border-bottom:1px solid #f1f5f9;"><strong style="color:var(--primary);">7.</strong> Optimiser la structure de coûts fixes — objectif < 50% du CA</div><div style="padding:8px 0;font-size:13px;border-bottom:1px solid #f1f5f9;"><strong style="color:var(--primary);">8.</strong> Souscrire une assurance (1-3% du CA) pour sécuriser les actifs</div><div style="padding:8px 0;font-size:13px;border-bottom:1px solid #f1f5f9;"><strong style="color:var(--primary);">9.</strong> Diversifier les sources de revenus pour réduire la concentration mono-produit</div>
+      </div>
+      <div class="grid-2">
+        <div style="padding:12px;background:#f0fdf4;border-radius:10px;">
+          <strong style="font-size:13px;color:#166534;">Impact attendu (CA, Marge, Trésorerie)</strong>
+          <div style="font-size:12px;color:#334155;margin-top:6px;">
+            CA An 5 : 180 450 439 FCFA<br>
+            EBITDA An 5 : 52 727 618 FCFA<br>
+            Marge EBITDA : 29.2%
+          </div>
+        </div>
+        <div style="padding:12px;background:#eff6ff;border-radius:10px;">
+          <strong style="font-size:13px;color:#1e40af;">Besoins financiers</strong>
+          <div style="font-size:12px;color:#334155;margin-top:6px;">
+            CAPEX total (5 ans) : 81 734 679 FCFA<br>
+            Timing : An 1-2 prioritaire
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="border-left:4px solid #7c3aed;">
+      <h2>&#129302; Synthèse Expert (Claude AI)</h2>
+      <div style="font-size:14px;line-height:1.7;color:#334155;">GOTCHE-SARL génère 59M FCFA uniquement via l'aviculture (œufs + pondeuses) mais présente une structure multi-activités sur-dimensionnée. Avec une marge brute excellente de 69.2% mais un EBITDA négatif de -38.7%, l'entreprise détruit de la valeur par des charges fixes excessives (108% du CA). La masse salariale de 62.5% du CA versus 30-40% benchmark sectoriel révèle une sur-structuration critique. Nécessite un recentrage immédiat sur l'aviculture et une optimisation des coûts de 20-25M FCFA pour atteindre la rentabilité.</div>
+    </div><div class="card">
+      <h2>&#128176; Score d'Investissabilité (IA)</h2>
+      <div style="display:flex;align-items:center;gap:20px;">
+        <div style="width:100px;height:100px;border-radius:50%;background:#dc2626;display:flex;flex-direction:column;align-items:center;justify-content:center;color:white;">
+          <span style="font-size:26px;font-weight:800;">45</span>
+          <span style="font-size:10px;opacity:0.8;">/100</span>
+        </div>
+        <div style="flex:1;font-size:14px;color:#334155;line-height:1.5;">Potentiel intéressant sur marché porteur mais nécessite restructuration immédiate. L'incohérence BMC-financier et la sur-structuration sont des signaux d'alarme managériaux. La marge brute excellente et la trésorerie disponible offrent une fenêtre de 6-8 mois pour redresser. Investment conditionné à un plan de restructuration crédible et un recentrage activité.</div>
+      </div>
+    </div><div class="card">
+      <h2>&#128200; Analyse des Scénarios (IA)</h2>
+      <div style="font-size:13px;line-height:1.6;color:#334155;">Le scénario central (CA 180M An5, marge EBITDA 29%) semble le plus crédible après optimisation des coûts. Le scénario ambitieux (CA 318M, marge 35%) nécessiterait l'intégration réussie des ovoproduits. Le scénario prudent (CA 95M, marge 14%) reste possible sans restructuration mais condamne l'entreprise à une rentabilité médiocre.</div>
+    </div><div class="card">
+      <h2>&#9888;&#65039; Risques Clés (IA)</h2>
+      <div style="padding:10px;border-radius:8px;border:1px solid #e5e7eb;margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-weight:600;font-size:13px;">🟠 Épizootie aviaire détruisant 80% du cheptel pondeuses</span>
+            <span style="font-size:11px;color:#d97706;font-weight:600;text-transform:uppercase;">moyenne</span>
+          </div>
+          <div style="font-size:12px;color:#64748b;margin-top:4px;">→ Mitigation: Assurance exploitation + biosécurité renforcée + diversification géographique</div>
+        </div><div style="padding:10px;border-radius:8px;border:1px solid #e5e7eb;margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-weight:600;font-size:13px;">🔴 Volatilité prix aliments (+40% coût maïs/soja) réduisant marge brute à 45%</span>
+            <span style="font-size:11px;color:#dc2626;font-weight:600;text-transform:uppercase;">haute</span>
+          </div>
+          <div style="font-size:12px;color:#64748b;margin-top:4px;">→ Mitigation: Contrats approvisionnement long terme + intégration amont</div>
+        </div><div style="padding:10px;border-radius:8px;border:1px solid #e5e7eb;margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-weight:600;font-size:13px;">🟠 Concurrence informelle bradant prix œufs (-20% prix de vente)</span>
+            <span style="font-size:11px;color:#d97706;font-weight:600;text-transform:uppercase;">moyenne</span>
+          </div>
+          <div style="font-size:12px;color:#64748b;margin-top:4px;">→ Mitigation: Différenciation qualité + certification bio + marchés premium B2B</div>
+        </div><div style="padding:10px;border-radius:8px;border:1px solid #e5e7eb;margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-weight:600;font-size:13px;">🔴 Équipe dirigeante inadaptée au pilotage multi-activités</span>
+            <span style="font-size:11px;color:#dc2626;font-weight:600;text-transform:uppercase;">haute</span>
+          </div>
+          <div style="font-size:12px;color:#64748b;margin-top:4px;">→ Mitigation: Formation gestion + recrutement directeur opérationnel expérimenté</div>
+        </div>
+    </div><div class="card">
+      <h2>&#127974; Bailleurs Potentiels (IA)</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div style="padding:12px;border-radius:10px;border:1px solid #e5e7eb;background:#f8fafc;">
+        <div style="font-weight:700;font-size:14px;color:#1e3a5f;">I&P (Groupe d'investissement à impact)</div>
+        <div style="font-size:12px;color:#64748b;margin-top:2px;">Spécialiste PME agriculture Côte d'Ivoire, financement restructuration + croissance</div>
+        <div style="display:flex;gap:8px;margin-top:6px;">
+          <span style="font-size:11px;color:#059669;font-weight:600;background:#dcfce7;padding:2px 8px;border-radius:12px;">50M-3Mds FCFA</span>
+          <span style="font-size:11px;color:#7c3aed;font-weight:600;background:#f3e8ff;padding:2px 8px;border-radius:12px;">equity + prêt quasi-fonds propres</span>
+        </div>
+      </div><div style="padding:12px;border-radius:10px;border:1px solid #e5e7eb;background:#f8fafc;">
+        <div style="font-weight:700;font-size:14px;color:#1e3a5f;">AFD via Digital Africa</div>
+        <div style="font-size:12px;color:#64748b;margin-top:2px;">Programme agriculture durable CI, financement équipements transformation</div>
+        <div style="display:flex;gap:8px;margin-top:6px;">
+          <span style="font-size:11px;color:#059669;font-weight:600;background:#dcfce7;padding:2px 8px;border-radius:12px;">25M-5Mds FCFA</span>
+          <span style="font-size:11px;color:#7c3aed;font-weight:600;background:#f3e8ff;padding:2px 8px;border-radius:12px;">prêt bonifié 3-5%</span>
+        </div>
+      </div><div style="padding:12px;border-radius:10px;border:1px solid #e5e7eb;background:#f8fafc;">
+        <div style="font-weight:700;font-size:14px;color:#1e3a5f;">BOAD ligne PME</div>
+        <div style="font-size:12px;color:#64748b;margin-top:2px;">Banque développement UEMOA, crédit investissement aviculture</div>
+        <div style="display:flex;gap:8px;margin-top:6px;">
+          <span style="font-size:11px;color:#059669;font-weight:600;background:#dcfce7;padding:2px 8px;border-radius:12px;">500K-50M FCFA</span>
+          <span style="font-size:11px;color:#7c3aed;font-weight:600;background:#f3e8ff;padding:2px 8px;border-radius:12px;">crédit d'investissement 7-9%</span>
+        </div>
+      </div>
+      </div>
+    </div><div class="card" style="border-left:4px solid #dc2626;">
+      <h2>🔗 Croisement BMC ↔ Financiers</h2>
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
+        <div style="width:80px;height:80px;border-radius:50%;background:#dc2626;display:flex;flex-direction:column;align-items:center;justify-content:center;color:white;">
+          <span style="font-size:22px;font-weight:800;">25</span>
+          <span style="font-size:9px;opacity:0.8;">cohérence</span>
+        </div>
+        <div style="flex:1;font-size:13px;color:#334155;">Incohérence majeure entre le BMC multi-activités et la réalité financière mono-activité avicole. L'entreprise génère 59M FCFA uniquement via l'aviculture mais prétend opérer sur 4 secteurs. La masse salariale excessive (62.53% vs 30-40% benchmark) et l'EBITDA négatif (-38.67%) révèlent une sur-structuration pour l'activité réelle.</div>
+      </div>
+      <div style="margin-bottom:12px;">
+        <strong style="font-size:13px;color:#dc2626;">Incohérences détectées (5)</strong>
+        <div style="padding:8px 12px;border-left:3px solid #dc2626;margin:6px 0;background:#f8fafc;border-radius:0 8px 8px 0;">
+            <span style="font-size:11px;font-weight:600;color:#dc2626;text-transform:uppercase;">critique</span>
+            <span style="font-size:12px;color:#334155;"> Multi-activités (agriculture, industrie, distribution, transport) ↔ Revenus uniquement avicoles (œufs + pondeuses)</span>
+            <div style="font-size:11px;color:#64748b;margin-top:2px;">→ Recentrer le BMC sur l'aviculture ou développer réellement les autres activités avec budget 15-25M FCFA par secteur</div>
+          </div><div style="padding:8px 12px;border-left:3px solid #d97706;margin:6px 0;background:#f8fafc;border-radius:0 8px 8px 0;">
+            <span style="font-size:11px;font-weight:600;color:#d97706;text-transform:uppercase;">haute</span>
+            <span style="font-size:12px;color:#334155;"> Transport-logistique comme activité clé ↔ Transport inclus dans frais généraux (4.26M FCFA)</span>
+            <div style="font-size:11px;color:#64748b;margin-top:2px;">→ Soit développer une activité transport facturable, soit repositionner comme support. Budget transport externe: 8-12M FCFA</div>
+          </div><div style="padding:8px 12px;border-left:3px solid #6b7280;margin:6px 0;background:#f8fafc;border-radius:0 8px 8px 0;">
+            <span style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;">moyenne</span>
+            <span style="font-size:12px;color:#334155;"> Relations clients structurées ↔ DSO 0j = ventes cash uniquement</span>
+            <div style="font-size:11px;color:#64748b;margin-top:2px;">→ Développer des relations B2B avec crédit (DSO 30-45j) pour augmenter le panier moyen de 20-30%</div>
+          </div><div style="padding:8px 12px;border-left:3px solid #d97706;margin:6px 0;background:#f8fafc;border-radius:0 8px 8px 0;">
+            <span style="font-size:11px;font-weight:600;color:#d97706;text-transform:uppercase;">haute</span>
+            <span style="font-size:12px;color:#334155;"> Industrie comme secteur cible ↔ Aucun revenu industriel identifié</span>
+            <div style="font-size:11px;color:#64748b;margin-top:2px;">→ Investir dans transformation des œufs (ovoproduits) avec CAPEX 25-35M FCFA sur 2 ans</div>
+          </div><div style="padding:8px 12px;border-left:3px solid #dc2626;margin:6px 0;background:#f8fafc;border-radius:0 8px 8px 0;">
+            <span style="font-size:11px;font-weight:600;color:#dc2626;text-transform:uppercase;">critique</span>
+            <span style="font-size:12px;color:#334155;"> Ressources clés diversifiées ↔ CAPEX 81.7M FCFA sur 5 ans, masse salariale 62.53% du CA</span>
+            <div style="font-size:11px;color:#64748b;margin-top:2px;">→ Optimiser la masse salariale (cible 30-40% du CA) et réallouer 15-20M FCFA vers équipements productifs</div>
+          </div>
+      </div>
+      <div>
+        <strong style="font-size:13px;color:#0284c7;">Données manquantes détectées</strong>
+        <div style="font-size:12px;color:#64748b;padding:4px 0;">• Revenus détaillés par segment client (agriculture, industrie, distribution)</div><div style="font-size:12px;color:#64748b;padding:4px 0;">• Coûts spécifiques aux activités transport et distribution</div><div style="font-size:12px;color:#64748b;padding:4px 0;">• Investissements par ligne d'activité</div><div style="font-size:12px;color:#64748b;padding:4px 0;">• Nombre d'employés par fonction</div><div style="font-size:12px;color:#64748b;padding:4px 0;">• Détail des partenariats et coûts associés</div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div style="font-size:22px;font-weight:800;">FRAMEWORK ANALYSE PME</div>
+      <div style="font-size:16px;opacity:0.9;">GOTCHE-SARL</div>
+      <div style="font-size:12px;opacity:0.6;margin-top:8px;">
+        &#129302; Analyse propulsée par Claude AI
+        &middot; Généré le 21/02/2026 &middot; 8 feuilles Excel
+      </div>
+      <div style="font-style:italic;font-size:13px;opacity:0.7;margin-top:16px;">"Les chiffres ne servent pas à juger le passé, mais à décider le futur."</div>
+    </div>
+  </div>
+</body>
+</html>
