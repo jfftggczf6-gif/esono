@@ -2693,23 +2693,44 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
       </div>
     </header>
 
-    <!-- Downloads bar -->
+    <!-- Downloads bar — CORRECTION: boutons dynamiques par type de livrable -->
     <div class="dlv-section" style="padding:16px">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
         <h2 style="font-size:14px;font-weight:600;color:#1f2937;display:flex;align-items:center;gap:8px;margin:0"><i class="fas fa-download" style="color:${meta.color}"></i> Télécharger le livrable</h2>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           ${isAvailable ? (() => {
-            const excelTypes = ['framework', 'odd', 'plan_ovo']
-            const isExcel = excelTypes.includes(dtype)
-            const fileIcon = isExcel ? 'fa-file-excel' : 'fa-file-pdf'
-            const fileLabel = isExcel ? 'Télécharger Excel (.xlsx)' : dtype === 'business_plan' ? 'Télécharger Word (.docx)' : 'Télécharger PDF'
-            const fileBtnColor = isExcel ? '#059669' : dtype === 'business_plan' ? '#2563eb' : meta.color
-            return `
-              <button onclick="downloadDeliverable()" id="btn-download" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:${fileBtnColor};color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
-                <i class="fas ${fileIcon}"></i> ${fileLabel}
+            // Matrice des boutons de téléchargement par type de livrable
+            const downloadButtons: { label: string; icon: string; color: string; onclick: string; id?: string }[] = []
+            
+            if (dtype === 'diagnostic') {
+              // Diagnostic Expert → HTML + PDF
+              downloadButtons.push(
+                { label: '📄 Télécharger HTML', icon: 'fa-file-code', color: '#1e3a5f', onclick: "downloadDeliverable('html')", id: 'btn-download-html' },
+                { label: '📕 Télécharger PDF', icon: 'fa-file-pdf', color: '#7c2d12', onclick: "downloadDeliverable('pdf')", id: 'btn-download-pdf' }
+              )
+            } else if (dtype === 'framework' || dtype === 'plan_ovo' || dtype === 'odd') {
+              // Excel-type → Excel uniquement
+              downloadButtons.push(
+                { label: '📊 Télécharger Excel (.xlsx)', icon: 'fa-file-excel', color: '#059669', onclick: "downloadDeliverable('xlsx')", id: 'btn-download' }
+              )
+            } else if (dtype === 'bmc_analysis' || dtype === 'sic_analysis' || dtype === 'business_plan') {
+              // Word-type → Word + PDF
+              downloadButtons.push(
+                { label: '📄 Télécharger Word (.docx)', icon: 'fa-file-word', color: '#2563eb', onclick: "downloadDeliverable('docx')", id: 'btn-download-word' },
+                { label: '📕 Télécharger PDF', icon: 'fa-file-pdf', color: '#7c2d12', onclick: "downloadDeliverable('pdf')", id: 'btn-download-pdf' }
+              )
+            } else {
+              // Fallback
+              downloadButtons.push(
+                { label: 'Télécharger', icon: 'fa-download', color: meta.color, onclick: "downloadDeliverable()", id: 'btn-download' }
+              )
+            }
+            
+            return downloadButtons.map(btn => `
+              <button onclick="${btn.onclick}" ${btn.id ? `id="${btn.id}"` : ''} style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:${btn.color};color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px ${btn.color}30" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
+                <i class="fas ${btn.icon}"></i> ${btn.label}
               </button>
-              ${!isExcel && dtype !== 'business_plan' ? `<button onclick="window.print()" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:#f3f4f6;color:#374151;border:none;font-size:12px;font-weight:500;cursor:pointer"><i class="fas fa-print"></i> Imprimer</button>` : ''}
-            `
+            `).join('')
           })() : `
             <span style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:10px;background:#fef3c7;color:#92400e;font-size:12px;font-weight:500">
               <i class="fas fa-hourglass-half"></i> Non encore généré
@@ -2742,23 +2763,59 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
     const USER_NAME = ${JSON.stringify(user?.name || 'Entrepreneur')};
     const DLIV_DATE = ${JSON.stringify(new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }))};
 
-    function downloadDeliverable() {
-      const btn = document.getElementById('btn-download');
-      if(btn){ btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Génération...'; btn.disabled = true; }
+    function downloadDeliverable(format) {
+      // Find the button that was clicked — try specific IDs first, then generic
+      const btn = document.getElementById('btn-download') 
+        || document.getElementById('btn-download-word')
+        || document.getElementById('btn-download-html')
+        || document.getElementById('btn-download-pdf');
+      const clickedBtn = event?.target?.closest?.('button');
+      const activeBtn = clickedBtn || btn;
+      const originalHtml = activeBtn ? activeBtn.innerHTML : '';
+      if(activeBtn){ activeBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Génération...'; activeBtn.disabled = true; }
+      
+      const resetBtn = () => {
+        if(activeBtn){ activeBtn.innerHTML = '<i class="fas fa-check"></i> Téléchargé !'; setTimeout(() => { activeBtn.innerHTML = originalHtml; activeBtn.disabled = false; }, 2500); }
+      };
+      const errorBtn = (msg) => {
+        alert('Erreur: ' + msg);
+        if(activeBtn){ activeBtn.innerHTML = originalHtml; activeBtn.disabled = false; }
+      };
+      
       try {
-        if (DLIV_TYPE === 'framework') {
-          // Download filled template from server
-          downloadFrameworkExcelFromServer();
-          return;
-        } else if (['odd','plan_ovo'].includes(DLIV_TYPE)) {
-          generateExcel();
-        } else if (DLIV_TYPE === 'business_plan') {
+        // Route by format parameter
+        if (format === 'xlsx') {
+          if (DLIV_TYPE === 'framework') {
+            downloadFrameworkExcelFromServer();
+            return; // async — handles its own button reset
+          } else {
+            generateExcel();
+            resetBtn();
+          }
+        } else if (format === 'docx') {
           generateWord();
-        } else {
+          resetBtn();
+        } else if (format === 'pdf') {
           generatePrintPDF();
+          resetBtn();
+        } else if (format === 'html') {
+          generatePrintPDF(); // HTML view is same as PDF print view
+          resetBtn();
+        } else {
+          // Legacy fallback (no format specified)
+          if (DLIV_TYPE === 'framework') {
+            downloadFrameworkExcelFromServer();
+            return;
+          } else if (['odd','plan_ovo'].includes(DLIV_TYPE)) {
+            generateExcel();
+          } else if (['business_plan','bmc_analysis','sic_analysis'].includes(DLIV_TYPE)) {
+            generateWord();
+          } else {
+            generatePrintPDF();
+          }
+          resetBtn();
         }
-      } catch(e) { alert('Erreur: ' + e.message); }
-      finally { if(DLIV_TYPE !== 'framework' && btn){ btn.innerHTML = '<i class="fas fa-check"></i> Téléchargé !'; setTimeout(() => { btn.innerHTML = btn.dataset.originalHtml || 'Télécharger'; btn.disabled = false; }, 2000); } }
+      } catch(e) { errorBtn(e.message); }
     }
 
     // ═══ FRAMEWORK EXCEL — Server-side filled template ═══
@@ -3106,9 +3163,10 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
       printWin.document.close();
     }
 
-    // ═══ WORD GENERATION ═══
+    // ═══ WORD GENERATION — Works for business_plan, bmc_analysis, sic_analysis ═══
     function generateWord() {
       const mainContent = document.querySelector('.space-y-0') || document.querySelector('main');
+      const typeLabel = DLIV_TYPE === 'bmc_analysis' ? 'BMC_Analyse' : DLIV_TYPE === 'sic_analysis' ? 'SIC_Analyse' : 'BusinessPlan';
       const htmlContent = \`
         <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
         <head><meta charset='utf-8'><title>\${DLIV_META.title}</title>
@@ -3124,15 +3182,18 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'BusinessPlan_' + USER_NAME.replace(/\\s+/g, '_') + '_' + new Date().toISOString().slice(0,10) + '.doc';
+      a.download = typeLabel + '_' + USER_NAME.replace(/\\s+/g, '_') + '_' + new Date().toISOString().slice(0,10) + '.doc';
       a.click();
       URL.revokeObjectURL(url);
     }
 
     // Store original button HTML for reset
     document.addEventListener('DOMContentLoaded', () => {
-      const btn = document.getElementById('btn-download');
-      if (btn) btn.dataset.originalHtml = btn.innerHTML;
+      // Store original HTML for all download buttons
+      ['btn-download', 'btn-download-word', 'btn-download-html', 'btn-download-pdf'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.dataset.originalHtml = btn.innerHTML;
+      });
     });
   </script>
 </body>
@@ -3726,9 +3787,18 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
           const depsOk = canGenerate(dt.deps, uploadedCategories)
           const missing = missingDeps(dt.deps, uploadedCategories)
           const iconClass = available ? 'available' : (depsOk ? 'pending' : 'none')
+          // Format badge per deliverable type
+          const formatBadge = (() => {
+            const excelTypes = ['framework', 'plan_ovo', 'odd']
+            const wordTypes = ['bmc_analysis', 'sic_analysis', 'business_plan']
+            if (excelTypes.includes(dt.type)) return '<span style="display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:4px;background:#f0fdf4;color:#059669;font-size:9px;font-weight:700;border:1px solid #bbf7d0">📊 .xlsx</span>'
+            if (wordTypes.includes(dt.type)) return '<span style="display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:4px;background:#eff6ff;color:#2563eb;font-size:9px;font-weight:700;border:1px solid #93c5fd">📄 .docx</span>'
+            if (dt.type === 'diagnostic') return '<span style="display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:4px;background:#f0f4ff;color:#1e3a5f;font-size:9px;font-weight:700;border:1px solid #a3b8d8">🌐 .html</span>'
+            return ''
+          })()
           const statusText = available
-            ? `${dt.format} · Disponible`
-            : (depsOk ? 'Prêt à générer' : `Manque : ${missing.join(', ')}`)
+            ? `${formatBadge} Disponible`
+            : (depsOk ? `${formatBadge} Prêt à générer` : `Manque : ${missing.join(', ')}`)
           return `<div class="ev2-nav-item ${idx === 0 ? 'ev2-nav-item--active' : ''}" data-type="${dt.type}" onclick="selectDeliverable('${dt.type}')">
             <div class="ev2-nav-item__icon ev2-nav-item__icon--${iconClass}">
               <i class="fas ${dt.icon}"></i>
@@ -4004,6 +4074,16 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
     function renderDiagHTML(c, dims, score, col) {
       const d = c.dimensions || [];
       let html = '<div class="ev2-diag">';
+      
+      // ═══ BARRE BLEU FONCÉ — Diagnostic: HTML + PDF ═══
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#f0f4ff,#e8edfb);border:1px solid #a3b8d8;border-radius:12px;margin-bottom:20px">';
+      html += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-stethoscope" style="font-size:24px;color:#1e3a5f"></i><div><div style="font-size:14px;font-weight:700;color:#1e3a5f">🔍 Diagnostic Expert</div><div style="font-size:12px;color:#4b6584">Disponible en HTML et PDF</div></div></div>';
+      html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+      html += '<button onclick="downloadDeliverable(\'html\')" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#1e3a5f;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(30,58,95,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-code"></i> HTML</button>';
+      html += '<button onclick="downloadDeliverable(\'pdf\')" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(124,45,18,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>';
+      html += '<a href="/deliverable/diagnostic" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e3a5f;border:1px solid #a3b8d8;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#f0f4ff&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>';
+      html += '</div></div>';
+      
       html += '<div class="ev2-diag__dims">';
       for (const dim of d) {
         const dc = getScoreColor(dim.score || 0);
@@ -4038,6 +4118,15 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
       const weakBlocks = blocks.filter(b => (b.score||0) < 70);
       
       let html = '<div class="ev2-bmc-rich">';
+      
+      // ═══ BARRE BLEUE — BMC: Word + PDF ═══
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #93c5fd;border-radius:12px;margin-bottom:20px">';
+      html += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-word" style="font-size:24px;color:#2563eb"></i><div><div style="font-size:14px;font-weight:700;color:#1e40af">📄 BMC Analysé</div><div style="font-size:12px;color:#3b82f6">Téléchargeable en Word ou PDF</div></div></div>';
+      html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+      html += '<button onclick="downloadDeliverable(\'docx\')" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#2563eb;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(37,99,235,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-word"></i> Word (.docx)</button>';
+      html += '<button onclick="downloadDeliverable(\'pdf\')" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(124,45,18,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>';
+      html += '<a href="/deliverable/bmc_analysis" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e40af;border:1px solid #93c5fd;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#eff6ff&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>';
+      html += '</div></div>';
       
       // ── Score header with badge ──
       html += '<div class="ev2-bmc-header" style="background:linear-gradient(135deg,' + col + '15,' + col + '08);border:1px solid ' + col + '30;border-radius:16px;padding:24px;margin-bottom:24px;display:flex;align-items:center;gap:20px">';
@@ -4148,7 +4237,18 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
     }
 
     function renderSICHTML(c, score, col) {
-      let html = '<div class="ev2-deliv-view"><div class="ev2-deliv-view__score"><div class="ev2-deliv-view__score-num" style="color:' + col + '">' + score + '/100</div></div>';
+      let html = '<div class="ev2-deliv-view">';
+      
+      // ═══ BARRE BLEUE — SIC: Word + PDF ═══
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #93c5fd;border-radius:12px;margin-bottom:20px">';
+      html += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-word" style="font-size:24px;color:#2563eb"></i><div><div style="font-size:14px;font-weight:700;color:#1e40af">📈 SIC Analysé</div><div style="font-size:12px;color:#3b82f6">Téléchargeable en Word ou PDF</div></div></div>';
+      html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+      html += '<button onclick="downloadDeliverable(\'docx\')" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#2563eb;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(37,99,235,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-word"></i> Word (.docx)</button>';
+      html += '<button onclick="downloadDeliverable(\'pdf\')" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(124,45,18,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>';
+      html += '<a href="/deliverable/sic_analysis" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e40af;border:1px solid #93c5fd;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#eff6ff&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>';
+      html += '</div></div>';
+      
+      html += '<div class="ev2-deliv-view__score"><div class="ev2-deliv-view__score-num" style="color:' + col + '">' + score + '/100</div></div>';
       for (const p of (c.pillars || [])) {
         html += '<div class="ev2-deliv-view__section"><h3>' + esc(p.name) + ' <span style="color:' + getScoreColor(p.score||0) + ';font-size:13px">' + (p.score||0) + '/100</span></h3><p>' + esc(p.analysis||'') + '</p>';
         if (p.recommendations?.length) {
@@ -4163,7 +4263,17 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
     }
 
     function renderOVOHTML(c, score, col) {
-      let html = '<div class="ev2-deliv-view"><div class="ev2-deliv-view__score"><div class="ev2-deliv-view__score-num" style="color:' + col + '">' + score + '/100</div></div>';
+      let html = '<div class="ev2-deliv-view">';
+      
+      // ═══ BARRE VERTE — Plan OVO: Excel uniquement ═══
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border:1px solid #bbf7d0;border-radius:12px;margin-bottom:20px">';
+      html += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-excel" style="font-size:24px;color:#059669"></i><div><div style="font-size:14px;font-weight:700;color:#065f46">💰 Plan Financier OVO</div><div style="font-size:12px;color:#047857">Fichier Excel avec projections financières</div></div></div>';
+      html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+      html += '<button onclick="downloadDeliverable(\'xlsx\')" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#059669;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(5,150,105,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-download"></i> Excel (.xlsx)</button>';
+      html += '<a href="/deliverable/plan_ovo" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#065f46;border:1px solid #bbf7d0;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#f0fdf4&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>';
+      html += '</div></div>';
+      
+      html += '<div class="ev2-deliv-view__score"><div class="ev2-deliv-view__score-num" style="color:' + col + '">' + score + '/100</div></div>';
       html += '<div class="ev2-deliv-view__section"><h3>Analyse</h3><p>' + esc(c.analysis||'Projections à générer') + '</p></div>';
       const proj = c.projections || {};
       for (const [key, val] of Object.entries(proj)) {
@@ -4176,16 +4286,38 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
     function renderGenericHTML(c, score, col, type) {
       let html = '<div class="ev2-deliv-view">';
       
-      // Download bar for Excel-type deliverables (framework, plan_ovo, odd)
+      // CORRECTION: Download bar adapté au type de livrable
       const excelTypes = ['framework', 'plan_ovo', 'odd'];
+      const wordTypes = ['business_plan', 'bmc_analysis', 'sic_analysis'];
+      
       if (excelTypes.includes(type)) {
+        // ═══ BARRE VERTE — Excel (.xlsx) ═══
         html += '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border:1px solid #bbf7d0;border-radius:12px;margin-bottom:20px">';
-        html += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-excel" style="font-size:24px;color:#059669"></i><div><div style="font-size:14px;font-weight:700;color:#065f46">Télécharger le fichier Excel</div><div style="font-size:12px;color:#047857">Framework Analyse PME rempli avec vos données</div></div></div>';
+        html += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-excel" style="font-size:24px;color:#059669"></i><div><div style="font-size:14px;font-weight:700;color:#065f46">📊 Fichier Excel disponible</div><div style="font-size:12px;color:#047857">' + (type === 'framework' ? 'Framework Analyse PME rempli avec vos données' : type === 'odd' ? 'Rapport ODD Due Diligence' : 'Plan Financier OVO') + '</div></div></div>';
         html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
         if (type === 'framework') {
           html += '<button onclick="downloadFrameworkExcelInline()" id="btn-download-inline" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#059669;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(5,150,105,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-download"></i> Télécharger Excel (.xlsx)</button>';
         }
         html += '<a href="/deliverable/' + type + '" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#065f46;border:1px solid #bbf7d0;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#f0fdf4&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Voir en pleine page</a>';
+        html += '</div></div>';
+      } else if (wordTypes.includes(type)) {
+        // ═══ BARRE BLEUE — Word (.docx) + PDF ═══
+        const typeLabel = type === 'bmc_analysis' ? 'BMC Analysé' : type === 'sic_analysis' ? 'SIC Analysé' : 'Business Plan';
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #93c5fd;border-radius:12px;margin-bottom:20px">';
+        html += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-word" style="font-size:24px;color:#2563eb"></i><div><div style="font-size:14px;font-weight:700;color:#1e40af">📄 ' + typeLabel + '</div><div style="font-size:12px;color:#3b82f6">Téléchargeable en Word ou PDF</div></div></div>';
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+        html += '<button onclick="downloadDeliverable(\'docx\')" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#2563eb;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(37,99,235,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-word"></i> Word (.docx)</button>';
+        html += '<button onclick="downloadDeliverable(\'pdf\')" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(124,45,18,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>';
+        html += '<a href="/deliverable/' + type + '" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e40af;border:1px solid #93c5fd;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#eff6ff&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>';
+        html += '</div></div>';
+      } else if (type === 'diagnostic') {
+        // ═══ BARRE BLEU FONCÉ — HTML + PDF ═══
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#f0f4ff,#e8edfb);border:1px solid #a3b8d8;border-radius:12px;margin-bottom:20px">';
+        html += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-stethoscope" style="font-size:24px;color:#1e3a5f"></i><div><div style="font-size:14px;font-weight:700;color:#1e3a5f">🔍 Diagnostic Expert</div><div style="font-size:12px;color:#4b6584">Disponible en HTML et PDF</div></div></div>';
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+        html += '<button onclick="downloadDeliverable(\'html\')" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#1e3a5f;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(30,58,95,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-code"></i> HTML</button>';
+        html += '<button onclick="downloadDeliverable(\'pdf\')" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(124,45,18,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>';
+        html += '<a href="/deliverable/' + type + '" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e3a5f;border:1px solid #a3b8d8;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#f0f4ff&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>';
         html += '</div></div>';
       }
       
