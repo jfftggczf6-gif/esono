@@ -3426,6 +3426,12 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
     ).bind(payload.userId).first() as any
     const bmcClaudeHtml = bmcHtmlRow?.content || ''
 
+    // Load pre-stored Framework PME HTML from database (instant display)
+    const fwHtmlRow = await c.env.DB.prepare(
+      "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_html' ORDER BY version DESC LIMIT 1"
+    ).bind(payload.userId).first() as any
+    const frameworkClaudeHtml = fwHtmlRow?.content || ''
+
     // Fetch chat messages
     const chatMessages = await c.env.DB.prepare(
       'SELECT id, role, content, created_at FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC LIMIT 50'
@@ -4081,6 +4087,7 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
     const scoresDim = ${JSON.stringify(scoresDim)};
     const USER_NAME = ${JSON.stringify((user?.name as string) || 'Entrepreneur')};
     const BMC_HTML_TEMPLATE = ${JSON.stringify(bmcClaudeHtml)};
+    const FRAMEWORK_HTML_TEMPLATE = ${JSON.stringify(frameworkClaudeHtml)};
 
     // ── Upload toggle ──
     function toggleUpload() {
@@ -4242,6 +4249,21 @@ ${hasGenerated ? `<body class="ev2-app-shell">` : `<body>`}
         el.innerHTML = renderSICHTML(content, score, sColor);
       } else if (type === 'plan_ovo') {
         el.innerHTML = renderOVOHTML(content, score, sColor);
+      } else if (type === 'framework' && FRAMEWORK_HTML_TEMPLATE && FRAMEWORK_HTML_TEMPLATE.length > 100) {
+        // ═══ Framework PME: display pre-generated HTML in iframe ═══
+        var fwBarHtml = '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border:1px solid #bbf7d0;border-radius:12px;margin-bottom:20px">';
+        fwBarHtml += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-excel" style="font-size:24px;color:#059669"></i><div><div style="font-size:14px;font-weight:700;color:#065f46">📊 Fichier Excel disponible</div><div style="font-size:12px;color:#047857">Framework Analyse PME rempli avec vos données</div></div></div>';
+        fwBarHtml += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+        fwBarHtml += '<button onclick="downloadFrameworkExcelInline()" id="btn-download-inline" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#059669;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(5,150,105,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-download"></i> Télécharger Excel (.xlsx)</button>';
+        fwBarHtml += '<a href="/deliverable/framework" target="_blank" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#065f46;border:1px solid #bbf7d0;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#f0fdf4&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Voir en pleine page</a>';
+        fwBarHtml += '</div></div>';
+        
+        el.innerHTML = fwBarHtml;
+        var fwIframe = document.createElement('iframe');
+        fwIframe.style.cssText = 'width:100%;min-height:80vh;border:none;border-radius:12px;background:#fff';
+        fwIframe.srcdoc = FRAMEWORK_HTML_TEMPLATE;
+        fwIframe.onload = function() { try { fwIframe.style.height = fwIframe.contentDocument.body.scrollHeight + 40 + 'px'; } catch(e) {} };
+        el.appendChild(fwIframe);
       } else {
         el.innerHTML = renderGenericHTML(content, score, sColor, type);
       }
