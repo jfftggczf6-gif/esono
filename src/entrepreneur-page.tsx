@@ -1208,46 +1208,40 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
               pmeData = buildPmeInputDataFromText(documentTexts.inputs, companyName, userCountry || "Côte d'Ivoire")
             }
           }
-          // Priority 2: Check if the filename matches known patterns (GOTCHE)
+          // Priority 2: Try to parse from binary XLSX (works for ANY company)
           else if (hasInputs) {
-            const inputsFile = uploadData.find(u => u.category === 'inputs')
-            if (inputsFile?.filename?.toLowerCase().includes('gotche')) {
-              console.log('[Generate-All] Detected GOTCHE inputs file, using known data')
-              pmeData = buildPmeInputDataGotche(companyName, userCountry || "Côte d'Ivoire")
-            } else {
-              // Try to parse from binary if we have base64
-              const b64 = rawUploads.inputs
-              if (b64 && b64.length > 100) {
-                try {
-                  const xlsxBytes = b64ToUint8(b64)
-                  const sheets = parseXlsx(xlsxBytes)
-                  const legacyText = xlsxToText(sheets)
-                  const mdText = xlsxToMarkdownTables(sheets)
-                  console.log(`[Generate-All] Parsed XLSX on-the-fly: legacy=${legacyText.length}ch, markdown=${mdText.length}ch, ${sheets.length} sheets`)
-                  // CORRECTION 1 CONFORME: Use Markdown for Claude, legacy for regex, pass base64
-                  if (apiKey && apiKey.length >= 20) {
-                    try {
-                      const bestText = mdText.length > 200 ? mdText : legacyText
-                      const enriched = await buildPmeInputWithAI(
-                        bestText, apiKey, companyName,
-                        userCountry || "Cote d'Ivoire",
-                        (text: string, name: string, country: string) => buildPmeInputDataFromText(legacyText || text, name, country),
-                        b64
-                      )
-                      pmeData = enriched.data
-                    } catch {
-                      pmeData = buildPmeInputDataFromText(legacyText, companyName, userCountry || "Côte d'Ivoire")
-                    }
-                  } else {
+            // Always try dynamic extraction first — works for any company
+            const b64 = rawUploads.inputs
+            if (b64 && b64.length > 100) {
+              try {
+                const xlsxBytes = b64ToUint8(b64)
+                const sheets = parseXlsx(xlsxBytes)
+                const legacyText = xlsxToText(sheets)
+                const mdText = xlsxToMarkdownTables(sheets)
+                console.log(`[Generate-All] Parsed XLSX on-the-fly: legacy=${legacyText.length}ch, markdown=${mdText.length}ch, ${sheets.length} sheets`)
+                // Use Markdown for Claude, legacy for regex, pass base64
+                if (apiKey && apiKey.length >= 20) {
+                  try {
+                    const bestText = mdText.length > 200 ? mdText : legacyText
+                    const enriched = await buildPmeInputWithAI(
+                      bestText, apiKey, companyName,
+                      userCountry || "Cote d'Ivoire",
+                      (text: string, name: string, country: string) => buildPmeInputDataFromText(legacyText || text, name, country),
+                      b64
+                    )
+                    pmeData = enriched.data
+                  } catch {
                     pmeData = buildPmeInputDataFromText(legacyText, companyName, userCountry || "Côte d'Ivoire")
                   }
-                } catch (parseErr: any) {
-                  console.error('[Generate-All] XLSX parse error:', parseErr.message)
-                  pmeData = _buildPmeInputDataFromDeliverable(result?.deliverables?.framework || {}, companyName, userCountry || "Côte d'Ivoire")
+                } else {
+                  pmeData = buildPmeInputDataFromText(legacyText, companyName, userCountry || "Côte d'Ivoire")
                 }
-              } else {
+              } catch (parseErr: any) {
+                console.error('[Generate-All] XLSX parse error:', parseErr.message)
                 pmeData = _buildPmeInputDataFromDeliverable(result?.deliverables?.framework || {}, companyName, userCountry || "Côte d'Ivoire")
               }
+            } else {
+              pmeData = _buildPmeInputDataFromDeliverable(result?.deliverables?.framework || {}, companyName, userCountry || "Côte d'Ivoire")
             }
           }
           // Priority 3: Fallback to orchestration result
@@ -1679,15 +1673,9 @@ entrepreneurRoutes.get('/api/download/framework-excel', async (c) => {
       ).bind(payload.userId).first() as any
       
       if (inputsUpload) {
-        // Priority 2a: Detect known GOTCHE file — use hardcoded perfect data
-        if (inputsUpload.filename?.toLowerCase().includes('gotche')) {
-          pmeData = buildPmeInputDataGotche(companyName, userCountry)
-          console.log('[Download Excel] Using GOTCHE known data (filename match)')
-        }
-        
-        // Priority 2b: Parse from extracted text
+        // Priority 2: Parse from extracted text (works for ANY company)
         // CORRECTION 1 CONFORME: Use AI extraction with Markdown tables when possible
-        if (!pmeData && inputsUpload.extracted_text) {
+        if (inputsUpload.extracted_text) {
           const fullText = inputsUpload.extracted_text || ''
           const mdMarker = '---MARKDOWN_TABLES---'
           const extractedMarker = '---EXTRACTED_TEXT---'

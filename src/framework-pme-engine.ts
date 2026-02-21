@@ -493,6 +493,7 @@ export function analyzePme(data: PmeInputData): PmeAnalysisResult {
 
   let prevCA = h.caTotal[2]
   let prevCoutsDirects = totalCoutsDirects[2]
+  const ratioCDBase = h.caTotal[2] > 0 ? totalCoutsDirects[2] / h.caTotal[2] : 0.45 // ratio CD/CA figé de l'année N
   let prevChargesFixes = totalChargesFixes[2]
   let prevSalaires = h.salaires[2]
   let prevLoyers = h.loyers[2]
@@ -500,6 +501,48 @@ export function analyzePme(data: PmeInputData): PmeAnalysisResult {
   let cumAmort = 0
   let tresoCum = h.tresoFin[2]
   const IS_RATE = 0.25 // Taux IS Côte d'Ivoire
+
+  // PRE-VALIDATION: Sanitize hypothesis ranges to prevent unrealistic projections
+  // These guards ensure ANY company's data produces coherent results
+  const cfSurCA_N = totalChargesFixes[2] / h.caTotal[2]
+  for (let i = 0; i < 5; i++) {
+    // Cap revenue growth at 50% per year (already generous for PME)
+    if (hyp.croissanceCA[i] > 50) hyp.croissanceCA[i] = 50
+    if (hyp.croissanceCA[i] < -30) hyp.croissanceCA[i] = -30
+    // Cap cost evolution at reasonable level
+    if (hyp.evolutionCoutsDirects[i] > 5) hyp.evolutionCoutsDirects[i] = 5
+    // Salary growth: NEVER exceed CA growth. If CF/CA is already high, reduce even more
+    const maxSalGrowth = cfSurCA_N > 0.5 
+      ? Math.min(hyp.croissanceCA[i], 5) // If CF>50% CA, salaries grow max 5% or CA growth
+      : Math.min(hyp.croissanceCA[i] + 3, 10) // Otherwise max CA+3% or 10%
+    if (hyp.evolutionMasseSalariale[i] > maxSalGrowth) {
+      hyp.evolutionMasseSalariale[i] = maxSalGrowth
+    }
+    // Cap fixed charge inflation at 5%
+    if (hyp.inflationChargesFixes[i] > 5) hyp.inflationChargesFixes[i] = 5
+  }
+
+  // PRE-VALIDATION: Cap total hiring costs to max 10% of current CA per year
+  const maxEmbauchesCostPerYear = h.caTotal[2] * 0.10
+  if (hyp.embauches?.length) {
+    const costByYear: Record<number, number> = {}
+    for (const emb of hyp.embauches) {
+      const yr = emb.annee || 1
+      costByYear[yr] = (costByYear[yr] || 0) + emb.salaireMensuel * 12
+    }
+    for (const [yr, cost] of Object.entries(costByYear)) {
+      if (cost > maxEmbauchesCostPerYear) {
+        // Scale down all salaries in this year proportionally
+        const scale = maxEmbauchesCostPerYear / cost
+        for (const emb of hyp.embauches) {
+          if (emb.annee === Number(yr)) {
+            emb.salaireMensuel = Math.round(emb.salaireMensuel * scale)
+          }
+        }
+        console.log(`[PME Engine] Embauches Y${yr} capped: ${Math.round(cost/1e6)}M → ${Math.round(maxEmbauchesCostPerYear/1e6)}M FCFA`)
+      }
+    }
+  }
 
   for (let y = 0; y < 5; y++) {
     // CA
@@ -514,9 +557,10 @@ export function analyzePme(data: PmeInputData): PmeAnalysisResult {
       projection.caByActivity[a].push(Math.round(prevActCA * (1 + actGrowth / 100)))
     }
 
-    // Coûts directs
+    // Coûts directs — MAINTENIR le ratio coûts/CA de l'année N stable
+    // Seule l'inflation unitaire des coûts s'applique (pas de double-croissance)
     const growthCD = hyp.evolutionCoutsDirects[y] / 100
-    const cd = Math.round(prevCoutsDirects * (1 + growthCA) * (1 + growthCD))
+    const cd = Math.round(ca * ratioCDBase * (1 + growthCD * (y + 1))) // inflation linéaire sur le ratio de base
     projection.coutsDirects.push(cd)
 
     // Marge brute
@@ -524,10 +568,13 @@ export function analyzePme(data: PmeInputData): PmeAnalysisResult {
     projection.margeBrute.push(mb)
     projection.margeBrutePct.push(pct(mb, ca))
 
-    // Charges fixes
+    // Charges fixes — Les salaires ne doivent PAS croître plus vite que le CA
     const infCF = hyp.inflationChargesFixes[y] / 100
     const growthMS = hyp.evolutionMasseSalariale[y] / 100
-    const sal = Math.round(prevSalaires * (1 + growthMS))
+    // GUARD: la masse salariale ne peut pas croître plus vite que le CA (+5% marge)
+    const maxSalGrowth = growthCA + 0.05
+    const effectiveSalGrowth = Math.min(growthMS, maxSalGrowth)
+    const sal = Math.round(prevSalaires * (1 + effectiveSalGrowth))
     const loy = Math.round(prevLoyers * (1 + infCF))
     const autresFixed = Math.round((prevChargesFixes - prevSalaires - prevLoyers) * (1 + infCF))
 
@@ -537,7 +584,15 @@ export function analyzePme(data: PmeInputData): PmeAnalysisResult {
       if (emb.annee === y + 1) embauchesCout += emb.salaireMensuel * 12
     }
 
-    const totalCF = sal + loy + autresFixed + embauchesCout
+    let totalCF = sal + loy + autresFixed + embauchesCout
+    
+    // GUARD: Si les charges fixes dépassent 95% de la marge brute, cap les embauches
+    // Une entreprise réelle ne s'autodétruirait pas en embauchant au-delà de ses moyens
+    if (totalCF > mb * 0.95 && embauchesCout > 0) {
+      const maxEmbCost = Math.max(0, mb * 0.90 - (sal + loy + autresFixed))
+      embauchesCout = Math.min(embauchesCout, Math.max(0, maxEmbCost))
+      totalCF = sal + loy + autresFixed + embauchesCout
+    }
     projection.salaires.push(sal + embauchesCout)
     projection.loyers.push(loy)
     projection.autresCharges.push(autresFixed)
@@ -604,6 +659,16 @@ export function analyzePme(data: PmeInputData): PmeAnalysisResult {
   }
 
   projection.cagrCA = cagr(h.caTotal[2], projection.caTotal[4], 5)
+
+  // POST-VALIDATION: Si EBITDA négatif en Y5 alors que marge brute > 0,
+  // c'est un signe que les charges fixes croissent trop vite → alerte
+  if (projection.ebitda[4] < 0 && projection.margeBrute[4] > 0) {
+    const cfSurCA_Y5 = projection.chargesFixes[4] / projection.caTotal[4] * 100
+    alertes.push({ 
+      type: 'danger', 
+      message: `EBITDA négatif en Y5 (${Math.round(projection.ebitda[4]/1000000)}M FCFA). Charges fixes = ${cfSurCA_Y5.toFixed(0)}% du CA. Réduction structurelle nécessaire.` 
+    })
+  }
 
   // ═══ 4. SCÉNARIOS ═══
   const buildScenario = (nom: string, cagrPct: number, mbPct: number, cfSurCAPct: number, investLabel: string): Scenario => {

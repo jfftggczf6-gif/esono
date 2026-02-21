@@ -356,7 +356,8 @@ export function buildPmeInputDataFromText(
       evolutionPrix: [augPrix, augPrix, augPrix, augPrix, augPrix],
       evolutionCoutsDirects: [inflation, inflation, inflation, inflation, inflation],
       inflationChargesFixes: [inflation, inflation, inflation, inflation, inflation],
-      evolutionMasseSalariale: [10, 15, 10, 8, 8],
+      // Masse salariale: inflation + prime modérée. Le moteur cap à croissanceCA+5%
+      evolutionMasseSalariale: [5, 5, 5, 4, 4],
       capex,
       amortissement: 5,
       embauches: embauches.length > 0 ? embauches : undefined,
@@ -427,7 +428,8 @@ export function buildPmeInputDataGotche(companyName: string = 'GOTCHE SARL', cou
       evolutionPrix: [5, 5, 5, 5, 5],
       evolutionCoutsDirects: [3, 3, 3, 3, 3],
       inflationChargesFixes: [3, 3, 3, 3, 3],
-      evolutionMasseSalariale: [12, 15, 10, 8, 8],
+      // Masse salariale: inflation + prime. Le moteur cap à croissanceCA+5%
+      evolutionMasseSalariale: [5, 5, 5, 4, 4],
       capex: [76_867_000, 10_000_000, 5_000_000, 3_000_000, 2_000_000],
       amortissement: 5,
       embauches: [

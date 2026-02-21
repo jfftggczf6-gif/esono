@@ -601,9 +601,12 @@ export function claudeResultToPmeInput(
     hypotheses: {
       croissanceCA,
       evolutionPrix: [5, 5, 5, 5, 5],
+      // Coûts directs: seule l'inflation s'applique (le ratio CD/CA est maintenu par le moteur)
       evolutionCoutsDirects: [inflationPct, inflationPct, inflationPct, inflationPct, inflationPct],
       inflationChargesFixes: [inflationPct, inflationPct, inflationPct, inflationPct, inflationPct],
-      evolutionMasseSalariale: [10, 15, 10, 8, 8],
+      // Masse salariale: doit suivre inflation+prime, PAS exploser à +15%
+      // Le moteur cap automatiquement à croissanceCA+5%
+      evolutionMasseSalariale: [5, 5, 5, 4, 4],
       capex: [totalCapex, Math.round(totalCapex * 0.15), Math.round(totalCapex * 0.05), 0, 0],
       amortissement: 5,
       embauches: embauches.length > 0 ? embauches : undefined,
