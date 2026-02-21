@@ -5,13 +5,13 @@
 
 import { unzipSync } from 'fflate'
 
-interface CellData {
+export interface CellData {
   ref: string
   value: string
   type: 'number' | 'string' | 'bool' | 'formula'
 }
 
-interface SheetData {
+export interface SheetData {
   name: string
   cells: CellData[]
 }
@@ -42,7 +42,7 @@ export function parseXlsx(data: Uint8Array): SheetData[] {
   const wbPath = 'xl/workbook.xml'
   if (files[wbPath]) {
     const wbXml = decoder.decode(files[wbPath])
-    const sheetRegex = /<sheet\s+name="([^"]+)"/g
+    const sheetRegex = /<sheet\s[^>]*name="([^"]+)"/g
     let m
     while ((m = sheetRegex.exec(wbXml)) !== null) {
       sheetNames.push(m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'))
@@ -59,15 +59,21 @@ export function parseXlsx(data: Uint8Array): SheetData[] {
     const cells: CellData[] = []
     
     // Parse cells: <c r="A1" t="s"><v>0</v></c>
-    const cellRegex = /<c\s+r="([A-Z]+\d+)"([^>]*)>([\s\S]*?)<\/c>/g
+    // Also handles: <c s="33" r="A1"><v>...</v></c> (attribute order varies)
+    // And self-closing: <c r="A1" s="33"/>
+    const cellRegex = /<c\s([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g
     let cm
     while ((cm = cellRegex.exec(sheetXml)) !== null) {
-      const ref = cm[1]
-      const attrs = cm[2]
-      const inner = cm[3]
+      const allAttrs = cm[1]
+      const inner = cm[2] || '' // empty for self-closing tags
+      
+      // Extract ref from attributes
+      const refMatch = allAttrs.match(/r="([A-Z]+\d+)"/)
+      if (!refMatch) continue
+      const ref = refMatch[1]
       
       // Get type
-      const typeMatch = attrs.match(/\s+t="([^"]+)"/)
+      const typeMatch = allAttrs.match(/t="([^"]+)"/)
       const cellType = typeMatch ? typeMatch[1] : 'n'
       
       // Get value

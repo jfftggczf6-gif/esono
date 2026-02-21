@@ -58,6 +58,7 @@ export interface PmeInputData {
   // Hypothèses de projection (5 ans)
   hypotheses: {
     croissanceCA: [number, number, number, number, number] // %
+    caObjectifs?: [number, number, number, number, number] // Absolute CA targets (FCFA) — overrides croissanceCA if provided
     croissanceParActivite?: [number, number, number, number, number][]
     evolutionPrix: [number, number, number, number, number] // %
     evolutionCoutsDirects: [number, number, number, number, number] // %
@@ -504,17 +505,24 @@ export function analyzePme(data: PmeInputData): PmeAnalysisResult {
 
   // PRE-VALIDATION: Sanitize hypothesis ranges to prevent unrealistic projections
   // These guards ensure ANY company's data produces coherent results
+  // ONLY apply when no absolute CA objectives are provided
+  const hasAbsoluteCA = hyp.caObjectifs && hyp.caObjectifs.some(v => v > 0)
   const cfSurCA_N = totalChargesFixes[2] / h.caTotal[2]
+  if (!hasAbsoluteCA) {
+    for (let i = 0; i < 5; i++) {
+      // Cap revenue growth at 50% per year (already generous for PME)
+      if (hyp.croissanceCA[i] > 50) hyp.croissanceCA[i] = 50
+      if (hyp.croissanceCA[i] < -30) hyp.croissanceCA[i] = -30
+    }
+  }
   for (let i = 0; i < 5; i++) {
-    // Cap revenue growth at 50% per year (already generous for PME)
-    if (hyp.croissanceCA[i] > 50) hyp.croissanceCA[i] = 50
-    if (hyp.croissanceCA[i] < -30) hyp.croissanceCA[i] = -30
     // Cap cost evolution at reasonable level
     if (hyp.evolutionCoutsDirects[i] > 5) hyp.evolutionCoutsDirects[i] = 5
     // Salary growth: NEVER exceed CA growth. If CF/CA is already high, reduce even more
+    const effectiveCAGrowth = hasAbsoluteCA ? 30 : hyp.croissanceCA[i] // Use 30% as max ref for absolute CA
     const maxSalGrowth = cfSurCA_N > 0.5 
-      ? Math.min(hyp.croissanceCA[i], 5) // If CF>50% CA, salaries grow max 5% or CA growth
-      : Math.min(hyp.croissanceCA[i] + 3, 10) // Otherwise max CA+3% or 10%
+      ? Math.min(effectiveCAGrowth, 5) // If CF>50% CA, salaries grow max 5% or CA growth
+      : Math.min(effectiveCAGrowth + 3, 10) // Otherwise max CA+3% or 10%
     if (hyp.evolutionMasseSalariale[i] > maxSalGrowth) {
       hyp.evolutionMasseSalariale[i] = maxSalGrowth
     }
@@ -545,16 +553,28 @@ export function analyzePme(data: PmeInputData): PmeAnalysisResult {
   }
 
   for (let y = 0; y < 5; y++) {
-    // CA
+    // CA — Use absolute objectives if provided, otherwise use growth rates
     const growthCA = hyp.croissanceCA[y] / 100
-    const ca = Math.round(prevCA * (1 + growthCA))
+    let ca: number
+    if (hasAbsoluteCA && hyp.caObjectifs![y] > 0) {
+      ca = hyp.caObjectifs![y]
+    } else {
+      ca = Math.round(prevCA * (1 + growthCA))
+    }
     projection.caTotal.push(ca)
 
     // CA par activité
     for (let a = 0; a < data.activities.length; a++) {
-      const actGrowth = hyp.croissanceParActivite?.[a]?.[y] ?? hyp.croissanceCA[y]
-      const prevActCA = y === 0 ? (h.caByActivity[a]?.[2] ?? 0) : projection.caByActivity[a][y - 1]
-      projection.caByActivity[a].push(Math.round(prevActCA * (1 + actGrowth / 100)))
+      if (hasAbsoluteCA && hyp.caObjectifs![y] > 0) {
+        // Distribute absolute CA proportionally across activities based on year N ratio
+        const totalCAN = h.caByActivity.reduce((s, act) => s + (act[2] || 0), 0)
+        const actRatio = totalCAN > 0 ? (h.caByActivity[a]?.[2] ?? 0) / totalCAN : (1 / data.activities.length)
+        projection.caByActivity[a].push(Math.round(ca * actRatio))
+      } else {
+        const actGrowth = hyp.croissanceParActivite?.[a]?.[y] ?? hyp.croissanceCA[y]
+        const prevActCA = y === 0 ? (h.caByActivity[a]?.[2] ?? 0) : projection.caByActivity[a][y - 1]
+        projection.caByActivity[a].push(Math.round(prevActCA * (1 + actGrowth / 100)))
+      }
     }
 
     // Coûts directs — MAINTENIR le ratio coûts/CA de l'année N stable

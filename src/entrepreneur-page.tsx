@@ -16,6 +16,7 @@ import { parseXlsx, xlsxToText, xlsxToMarkdownTables, b64ToUint8 } from './xlsx-
 import { parseDocx, docxToMarkdown } from './docx-parser'
 import { buildPmeInputDataFromText } from './pme-input-builder'
 import { buildPmeInputWithAI } from './pme-ai-extractor'
+import { tryParseInputsEntrepreneur } from './inputs-entrepreneur-parser'
 import { crossAnalyzeBmcFinancials } from './pme-cross-analyzer'
 import type { KBContext } from './claude-api'
 
@@ -1181,25 +1182,37 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
           // Build PmeInputData from REAL uploaded inputs data
           let pmeData: PmeInputData
           
-          // Priority 1: Parse from uploaded inputs text (extracted from XLSX)
-          // CORRECTION 1 CONFORME: Use Markdown tables (best) > legacy text, + pass xlsxBase64
-          if (hasInputs && documentTexts.inputs && documentTexts.inputs !== `[Fichier binaire: ${uploadData.find(u => u.category === 'inputs')?.filename}]`) {
-            console.log('[Generate-All] Building PmeInputData from extracted inputs text')
+          // ═══ PRIORITY 0: Try structured INPUTS_ENTREPRENEURS parser (most reliable) ═══
+          // This parser reads EACH cell of the XLSX structurally — no AI, no guessing
+          const xlsxB64ForParser = rawUploads.inputs || undefined
+          let usedStructuredParser = false
+          
+          if (hasInputs && xlsxB64ForParser && xlsxB64ForParser.length > 100) {
+            console.log('[Generate-All] Trying structured INPUTS_ENTREPRENEURS parser...')
+            const structuredResult = tryParseInputsEntrepreneur(xlsxB64ForParser)
+            if (structuredResult) {
+              pmeData = structuredResult
+              usedStructuredParser = true
+              console.log(`[Generate-All] ✅ Structured parser SUCCESS: CA=[${pmeData.historique.caTotal.join(',')}], Activities=${pmeData.activities.length}, Growth=[${pmeData.hypotheses.croissanceCA.join(',')}]%`)
+            }
+          }
+          
+          // ═══ PRIORITY 1: If structured parser didn't work, try AI extraction ═══
+          if (!usedStructuredParser && hasInputs && documentTexts.inputs && documentTexts.inputs !== `[Fichier binaire: ${uploadData.find(u => u.category === 'inputs')?.filename}]`) {
+            console.log('[Generate-All] Structured parser not applicable, using AI extraction')
             if (apiKey && apiKey.length >= 20) {
               try {
-                // CORRECTION 1: Prefer Markdown tables for Claude, fallback to legacy text for regex
                 const bestTextForClaude = markdownUploads.inputs || documentTexts.inputs
                 const xlsxB64 = rawUploads.inputs || undefined
-                console.log(`[Generate-All] Using AI hybrid extraction (Correction 1+2), markdown=${!!markdownUploads.inputs}, hasBase64=${!!xlsxB64}`)
+                console.log(`[Generate-All] Using AI hybrid extraction, markdown=${!!markdownUploads.inputs}, hasBase64=${!!xlsxB64}`)
                 const enriched = await buildPmeInputWithAI(
                   bestTextForClaude, apiKey, companyName,
                   userCountry || "Cote d'Ivoire",
-                  // Regex fallback uses legacy text (better for regex patterns)
                   (text: string, name: string, country: string) => buildPmeInputDataFromText(documentTexts.inputs || text, name, country),
                   xlsxB64
                 )
                 pmeData = enriched.data
-                console.log(`[Generate-All] Hybrid extraction: source=${enriched.quality.source}, confidence=${enriched.quality.confiance}, estimations=${enriched.estimations.length}`)
+                console.log(`[Generate-All] Hybrid extraction: source=${enriched.quality.source}, confidence=${enriched.quality.confiance}`)
               } catch (aiErr: any) {
                 console.error('[Generate-All] AI extraction failed, falling back to regex:', aiErr.message)
                 pmeData = buildPmeInputDataFromText(documentTexts.inputs, companyName, userCountry || "Côte d'Ivoire")
@@ -1208,9 +1221,8 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
               pmeData = buildPmeInputDataFromText(documentTexts.inputs, companyName, userCountry || "Côte d'Ivoire")
             }
           }
-          // Priority 2: Try to parse from binary XLSX (works for ANY company)
-          else if (hasInputs) {
-            // Always try dynamic extraction first — works for any company
+          // ═══ PRIORITY 2: Try to parse from binary XLSX with AI ═══
+          else if (!usedStructuredParser && hasInputs) {
             const b64 = rawUploads.inputs
             if (b64 && b64.length > 100) {
               try {
@@ -1219,7 +1231,6 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
                 const legacyText = xlsxToText(sheets)
                 const mdText = xlsxToMarkdownTables(sheets)
                 console.log(`[Generate-All] Parsed XLSX on-the-fly: legacy=${legacyText.length}ch, markdown=${mdText.length}ch, ${sheets.length} sheets`)
-                // Use Markdown for Claude, legacy for regex, pass base64
                 if (apiKey && apiKey.length >= 20) {
                   try {
                     const bestText = mdText.length > 200 ? mdText : legacyText
@@ -1244,13 +1255,13 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
               pmeData = _buildPmeInputDataFromDeliverable(result?.deliverables?.framework || {}, companyName, userCountry || "Côte d'Ivoire")
             }
           }
-          // Priority 3: Fallback to orchestration result
-          else {
+          // ═══ PRIORITY 3: Fallback to orchestration result ═══
+          else if (!usedStructuredParser) {
             const frameworkDelivData = result?.deliverables?.framework || {}
             pmeData = _buildPmeInputDataFromDeliverable(frameworkDelivData, companyName, userCountry || "Côte d'Ivoire")
           }
           
-          console.log(`[Generate-All] PmeInputData built: CA=[${pmeData.historique.caTotal.join(',')}], Activities=${pmeData.activities.length}`)
+          console.log(`[Generate-All] PmeInputData built: CA=[${pmeData!.historique.caTotal.join(',')}], Activities=${pmeData!.activities.length}`)
           
           // CORRECTION 3: Load BMC content for cross-analysis
           let bmcContent = ''
@@ -1655,15 +1666,43 @@ entrepreneurRoutes.get('/api/download/framework-excel', async (c) => {
     // Priority 1: Try to get stored PmeInputData from generation
     let pmeData: PmeInputData | null = null
     
-    const storedPmeData = await c.env.DB.prepare(
-      "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_pme_data' ORDER BY version DESC LIMIT 1"
+    // ═══ PRIORITY 0: Try structured INPUTS_ENTREPRENEURS parser from raw XLSX ═══
+    // This is the MOST RELIABLE method — reads real data from each cell
+    const inputsUploadForParser = await c.env.DB.prepare(
+      "SELECT filename, extracted_text FROM uploads WHERE user_id = ? AND category = 'inputs' ORDER BY uploaded_at DESC LIMIT 1"
     ).bind(payload.userId).first() as any
     
-    if (storedPmeData?.content) {
-      try {
-        pmeData = JSON.parse(storedPmeData.content) as PmeInputData
-        console.log('[Download Excel] Using stored PmeInputData')
-      } catch { /* parse failed, continue */ }
+    if (inputsUploadForParser?.extracted_text) {
+      const fullText = inputsUploadForParser.extracted_text || ''
+      // Extract base64 from stored text
+      let b64Part = ''
+      if (fullText.startsWith('base64:')) {
+        const b64End = fullText.indexOf('\n\n---')
+        b64Part = b64End > 7 ? fullText.substring(7, b64End) : fullText.substring(7).split('\n')[0]
+      }
+      
+      if (b64Part.length > 100) {
+        console.log('[Download Excel] Trying structured INPUTS_ENTREPRENEURS parser...')
+        const structuredResult = tryParseInputsEntrepreneur(b64Part)
+        if (structuredResult) {
+          pmeData = structuredResult
+          console.log(`[Download Excel] ✅ Structured parser SUCCESS: CA=[${pmeData.historique.caTotal.join(',')}], Growth=[${pmeData.hypotheses.croissanceCA.join(',')}]%`)
+        }
+      }
+    }
+    
+    // ═══ PRIORITY 1: Use stored PmeInputData (only if structured parser didn't work) ═══
+    if (!pmeData) {
+      const storedPmeData = await c.env.DB.prepare(
+        "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_pme_data' ORDER BY version DESC LIMIT 1"
+      ).bind(payload.userId).first() as any
+      
+      if (storedPmeData?.content) {
+        try {
+          pmeData = JSON.parse(storedPmeData.content) as PmeInputData
+          console.log('[Download Excel] Using stored PmeInputData (fallback)')
+        } catch { /* parse failed, continue */ }
+      }
     }
 
     // Priority 2: Build from uploaded inputs
