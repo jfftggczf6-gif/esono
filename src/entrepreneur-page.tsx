@@ -14,6 +14,8 @@ import { analyzePmeWithAI, analyzePme, generatePmePreviewHtml, generatePmeExcelX
 import { fillFrameworkExcel } from './framework-excel-filler'
 import { parseXlsx, xlsxToText, b64ToUint8 } from './xlsx-parser'
 import { buildPmeInputDataFromText, buildPmeInputDataGotche } from './pme-input-builder'
+import { buildPmeInputWithAI } from './pme-ai-extractor'
+import { crossAnalyzeBmcFinancials } from './pme-cross-analyzer'
 import type { KBContext } from './claude-api'
 
 type Bindings = {
@@ -1141,9 +1143,26 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
           let pmeData: PmeInputData
           
           // Priority 1: Parse from uploaded inputs text (extracted from XLSX)
+          // CORRECTION 1+2: Use hybrid Claude+regex extraction when API key available
           if (hasInputs && documentTexts.inputs && documentTexts.inputs !== `[Fichier binaire: ${uploadData.find(u => u.category === 'inputs')?.filename}]`) {
             console.log('[Generate-All] Building PmeInputData from extracted inputs text')
-            pmeData = buildPmeInputDataFromText(documentTexts.inputs, companyName, userCountry || "Côte d'Ivoire")
+            if (apiKey && apiKey.length >= 20) {
+              try {
+                console.log('[Generate-All] Using AI-powered hybrid extraction (Correction 1+2)')
+                const enriched = await buildPmeInputWithAI(
+                  documentTexts.inputs, apiKey, companyName,
+                  userCountry || "Cote d'Ivoire",
+                  (text: string, name: string, country: string) => buildPmeInputDataFromText(text, name, country)
+                )
+                pmeData = enriched.data
+                console.log(`[Generate-All] Hybrid extraction: source=${enriched.quality.source}, confidence=${enriched.quality.confiance}, estimations=${enriched.estimations.length}`)
+              } catch (aiErr: any) {
+                console.error('[Generate-All] AI extraction failed, falling back to regex:', aiErr.message)
+                pmeData = buildPmeInputDataFromText(documentTexts.inputs, companyName, userCountry || "Côte d'Ivoire")
+              }
+            } else {
+              pmeData = buildPmeInputDataFromText(documentTexts.inputs, companyName, userCountry || "Côte d'Ivoire")
+            }
           }
           // Priority 2: Check if the filename matches known patterns (GOTCHE)
           else if (hasInputs) {
@@ -1160,7 +1179,21 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
                   const sheets = parseXlsx(xlsxBytes)
                   const extractedText = xlsxToText(sheets)
                   console.log(`[Generate-All] Parsed XLSX on-the-fly: ${extractedText.length} chars, ${sheets.length} sheets`)
-                  pmeData = buildPmeInputDataFromText(extractedText, companyName, userCountry || "Côte d'Ivoire")
+                  // CORRECTION 1+2: Use hybrid extraction for XLSX text too
+                  if (apiKey && apiKey.length >= 20) {
+                    try {
+                      const enriched = await buildPmeInputWithAI(
+                        extractedText, apiKey, companyName,
+                        userCountry || "Cote d'Ivoire",
+                        (text: string, name: string, country: string) => buildPmeInputDataFromText(text, name, country)
+                      )
+                      pmeData = enriched.data
+                    } catch {
+                      pmeData = buildPmeInputDataFromText(extractedText, companyName, userCountry || "Côte d'Ivoire")
+                    }
+                  } else {
+                    pmeData = buildPmeInputDataFromText(extractedText, companyName, userCountry || "Côte d'Ivoire")
+                  }
                 } catch (parseErr: any) {
                   console.error('[Generate-All] XLSX parse error:', parseErr.message)
                   pmeData = _buildPmeInputDataFromDeliverable(result?.deliverables?.framework || {}, companyName, userCountry || "Côte d'Ivoire")
@@ -1178,7 +1211,29 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
           
           console.log(`[Generate-All] PmeInputData built: CA=[${pmeData.historique.caTotal.join(',')}], Activities=${pmeData.activities.length}`)
           
-          const pmeAnalysis = await analyzePmeWithAI(pmeData, apiKey, kbForEngines)
+          // CORRECTION 3: Load BMC content for cross-analysis
+          let bmcContent = ''
+          try {
+            const bmcDel = await c.env.DB.prepare(
+              "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_analysis_html' ORDER BY version DESC LIMIT 1"
+            ).bind(payload.userId).first<any>()
+            if (bmcDel?.content) bmcContent = bmcDel.content.slice(0, 6000)
+          } catch {}
+
+          // CORRECTION 3: Run cross-analysis BMC ↔ Financials
+          const baseAnalysis = analyzePme(pmeData)
+          let crossAnalysis
+          try {
+            crossAnalysis = await crossAnalyzeBmcFinancials(bmcContent, pmeData, baseAnalysis, apiKey)
+            if (crossAnalysis?.score_coherence >= 0) {
+              console.log(`[Generate-All] Cross-analysis: coherence=${crossAnalysis.score_coherence}`)
+            }
+          } catch (crossErr: any) {
+            console.error('[Generate-All] Cross-analysis error (non-fatal):', crossErr.message)
+          }
+
+          // CORRECTION 4+5: Full AI enrichment with cross-analysis context
+          const pmeAnalysis = await analyzePmeWithAI(pmeData, apiKey, kbForEngines, crossAnalysis)
           const frameworkHtml = generatePmePreviewHtml(pmeAnalysis, pmeData)
 
           await c.env.DB.prepare(
@@ -1621,9 +1676,24 @@ entrepreneurRoutes.get('/api/download/framework-excel', async (c) => {
 
     // Run analysis
     const apiKey = c.env.ANTHROPIC_API_KEY || ''
+    
+    // CORRECTION 3: Cross-analysis BMC ↔ Financial for download too
+    let bmcContent = ''
+    try {
+      const bmcDel = await c.env.DB.prepare(
+        "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_analysis_html' ORDER BY version DESC LIMIT 1"
+      ).bind(payload.userId).first<any>()
+      if (bmcDel?.content) bmcContent = bmcDel.content.slice(0, 6000)
+    } catch {}
+
     let analysis
     try {
-      analysis = await analyzePmeWithAI(pmeData, apiKey)
+      const baseAnalysis = analyzePme(pmeData)
+      let crossAnalysis
+      try {
+        crossAnalysis = await crossAnalyzeBmcFinancials(bmcContent, pmeData, baseAnalysis, apiKey)
+      } catch {}
+      analysis = await analyzePmeWithAI(pmeData, apiKey, undefined, crossAnalysis)
     } catch {
       analysis = analyzePme(pmeData)
     }

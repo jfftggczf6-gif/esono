@@ -32,7 +32,9 @@ import {
   INPUT_TAB_ORDER, INPUT_TAB_LABELS, TAB_COACHING, TAB_FIELDS, scoreTab,
   type InputTabKey, type InputsAnalysisResult
 } from './inputs-engine'
-import { analyzePme, generatePmeExcelXml, generatePmePreviewHtml, type PmeInputData } from './framework-pme-engine'
+import { analyzePme, analyzePmeWithAI, generatePmeExcelXml, generatePmePreviewHtml, type PmeInputData } from './framework-pme-engine'
+import { buildPmeInputWithAI, type EnrichedPmeInput } from './pme-ai-extractor'
+import { crossAnalyzeBmcFinancials } from './pme-cross-analyzer'
 
 type Bindings = {
   DB: D1Database
@@ -4610,8 +4612,27 @@ app.get('/api/pme/framework', async (c) => {
       companyName, userName
     )
 
-    // Run analysis
-    const analysis = analyzePme(pmeInput)
+    // CORRECTION 5: Use enriched pipeline with AI + cross-analysis
+    const apiKey = c.env.ANTHROPIC_API_KEY || ''
+    
+    // Step 3: Deterministic analysis first
+    // Step 4: BMC cross-check (load BMC deliverable if available)
+    let bmcContent = ''
+    try {
+      const bmcDel = await c.env.DB.prepare(
+        "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_analysis_html' ORDER BY version DESC LIMIT 1"
+      ).bind(payload.userId).first<any>()
+      if (bmcDel?.content) bmcContent = bmcDel.content.slice(0, 6000)
+    } catch {}
+
+    const baseAnalysis = analyzePme(pmeInput)
+    let crossAnalysis
+    try {
+      crossAnalysis = await crossAnalyzeBmcFinancials(bmcContent, pmeInput, baseAnalysis, apiKey)
+    } catch {}
+    
+    // Step 5: AI enrichment (Claude) with cross-analysis context
+    const analysis = await analyzePmeWithAI(pmeInput, apiKey, undefined, crossAnalysis)
 
     if (format === 'excel') {
       const xml = generatePmeExcelXml(pmeInput, analysis)
@@ -4686,7 +4707,25 @@ app.post('/api/pme/framework/refresh', async (c) => {
       companyName, userName
     )
 
-    const analysis = analyzePme(pmeInput)
+    // CORRECTION 5: Enriched pipeline for refresh
+    const apiKey = c.env.ANTHROPIC_API_KEY || ''
+    
+    // Load BMC for cross-check
+    let bmcContent = ''
+    try {
+      const bmcDel = await c.env.DB.prepare(
+        "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_analysis_html' ORDER BY version DESC LIMIT 1"
+      ).bind(payload.userId).first<any>()
+      if (bmcDel?.content) bmcContent = bmcDel.content.slice(0, 6000)
+    } catch {}
+
+    const baseAnalysis = analyzePme(pmeInput)
+    let crossAnalysis
+    try {
+      crossAnalysis = await crossAnalyzeBmcFinancials(bmcContent, pmeInput, baseAnalysis, apiKey)
+    } catch {}
+    
+    const analysis = await analyzePmeWithAI(pmeInput, apiKey, undefined, crossAnalysis)
 
     // Update progress with score
     const score = Math.round(

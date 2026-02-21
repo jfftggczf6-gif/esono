@@ -6,6 +6,8 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { callClaudeJSON, isValidApiKey, KBContext } from './claude-api'
+import type { CrossAnalysisResult } from './pme-cross-analyzer'
+import type { EstimationMeta } from './pme-ai-extractor'
 
 // ─── INPUT TYPES ───
 
@@ -181,6 +183,8 @@ export interface PmeAnalysisResult {
   phraseCleDirigeant: string
   aiSource?: 'claude' | 'fallback'
   aiExpertCommentary?: PmeAIExpertCommentary
+  // CORRECTION 3+4: enrichment context
+  enrichmentContext?: PmeEnrichmentContext
 }
 
 /** AI-enriched expert commentary from Claude */
@@ -196,6 +200,32 @@ export interface PmeAIExpertCommentary {
   phraseCleDirigeant: string
   scoreInvestissabilite: number // 0-100
   commentaireInvestisseur: string
+  // CORRECTION 4: Commentaires experts par feuille Excel
+  commentaires_par_feuille?: SheetComments
+}
+
+/** CORRECTION 4: Expert comments for each Excel sheet */
+export interface SheetComment {
+  verdict: string
+  alertes: string[]
+  phrase_cle: string
+}
+
+export interface SheetComments {
+  donnees_historiques?: SheetComment
+  analyse_marges?: SheetComment
+  structure_couts?: SheetComment
+  tresorerie_bfr?: SheetComment
+  hypotheses?: SheetComment
+  projections_5ans?: SheetComment
+  scenarios?: SheetComment
+}
+
+/** Cross-analysis results (CORRECTION 3) stored on the analysis */
+export interface PmeEnrichmentContext {
+  crossAnalysis?: CrossAnalysisResult
+  estimations?: EstimationMeta[]
+  extractionSource?: 'claude' | 'regex' | 'hybride'
 }
 
 // ─── HELPER FUNCTIONS ───
@@ -734,7 +764,32 @@ export function generatePmeExcelXml(data: PmeInputData, analysis: PmeAnalysisRes
     <Style ss:ID="SWOTGreen"><Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#006100"/><Interior ss:Color="#E2EFDA" ss:Pattern="Solid"/></Style>
     <Style ss:ID="SWOTRed"><Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#9C0006"/><Interior ss:Color="#FCE4EC" ss:Pattern="Solid"/></Style>
     <Style ss:ID="SWOTBlue"><Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#1565C0"/><Interior ss:Color="#E3F2FD" ss:Pattern="Solid"/></Style>
+    <Style ss:ID="VerdictAnalyste"><Font ss:FontName="Calibri" ss:Size="11" ss:Italic="1" ss:Color="#6B4C00"/><Interior ss:Color="#FFF9E6" ss:Pattern="Solid"/></Style>
+    <Style ss:ID="VerdictAlerte"><Font ss:FontName="Calibri" ss:Size="11" ss:Italic="1" ss:Color="#9A3412"/><Interior ss:Color="#FEF5E7" ss:Pattern="Solid"/></Style>
+    <Style ss:ID="EstimatedData"><Font ss:FontName="Calibri" ss:Size="11" ss:Italic="1" ss:Color="#6B21A8"/><Interior ss:Color="#F3E8FF" ss:Pattern="Solid"/></Style>
   </Styles>`
+
+  // CORRECTION 4: Helper to build verdict rows for each sheet
+  const sheetComments = analysis.aiExpertCommentary?.commentaires_par_feuille
+  
+  function buildVerdictRows(sheetKey: keyof NonNullable<typeof sheetComments>): string[] {
+    const comment = sheetComments?.[sheetKey]
+    if (!comment) return []
+    const rows: string[] = [emptyRow(), emptyRow()]
+    rows.push(row([cellStr('VERDICT ANALYSTE', 'SectionHeader')]))
+    if (comment.verdict) {
+      rows.push(row([cellStr(comment.verdict, 'VerdictAnalyste')]))
+    }
+    if (comment.alertes && comment.alertes.length > 0) {
+      for (const alerte of comment.alertes) {
+        rows.push(row([cellStr(`\u26A0\uFE0F ${alerte}`, 'VerdictAlerte')]))
+      }
+    }
+    if (comment.phrase_cle) {
+      rows.push(row([cellStr(`\uD83D\uDCA1 ${comment.phrase_cle}`, 'VerdictAnalyste')]))
+    }
+    return rows
+  }
 
   // ═══ FEUILLE 1: DONNÉES HISTORIQUES ═══
   const sheet1Rows = [
@@ -782,7 +837,9 @@ export function generatePmeExcelXml(data: PmeInputData, analysis: PmeAnalysisRes
     row([cellStr('TRÉSORERIE', 'SectionHeader')]),
     row([cellStr('Trésorerie début période'), cellFcfa(h.tresoDebut[0], 'Num'), cellFcfa(h.tresoDebut[1], 'Num'), cellFcfa(h.tresoDebut[2], 'Num'), cellStr(''), cellStr('')]),
     row([cellStr('Trésorerie fin période'), cellFcfa(h.tresoFin[0], 'Num'), cellFcfa(h.tresoFin[1], 'Num'), cellFcfa(h.tresoFin[2], 'Num'), cellStr(hc.tendances.tresorerie), cellStr('')]),
-    row([cellStr('Variation trésorerie'), cellFcfa(hc.variationTreso[0], hc.variationTreso[0] >= 0 ? 'Green' : 'Red'), cellFcfa(hc.variationTreso[1], hc.variationTreso[1] >= 0 ? 'Green' : 'Red'), cellFcfa(hc.variationTreso[2], hc.variationTreso[2] >= 0 ? 'Green' : 'Red'), cellStr(''), cellStr('')])
+    row([cellStr('Variation trésorerie'), cellFcfa(hc.variationTreso[0], hc.variationTreso[0] >= 0 ? 'Green' : 'Red'), cellFcfa(hc.variationTreso[1], hc.variationTreso[1] >= 0 ? 'Green' : 'Red'), cellFcfa(hc.variationTreso[2], hc.variationTreso[2] >= 0 ? 'Green' : 'Red'), cellStr(''), cellStr('')]),
+    // CORRECTION 4: AI verdict for this sheet
+    ...buildVerdictRows('donnees_historiques')
   ]
 
   // ═══ FEUILLE 2: ANALYSE MARGES ═══
@@ -808,7 +865,9 @@ export function generatePmeExcelXml(data: PmeInputData, analysis: PmeAnalysisRes
     row([cellStr('Activités à renforcer :', 'Bold'), cellStr(analysis.margesParActivite.filter(m => m.classification === 'renforcer').map(m => m.name).join(', ') || '—')]),
     row([cellStr('Activités à optimiser :', 'Bold'), cellStr(analysis.margesParActivite.filter(m => m.classification === 'optimiser').map(m => m.name).join(', ') || '—')]),
     row([cellStr('Activités à arbitrer :', 'Bold'), cellStr(analysis.margesParActivite.filter(m => m.classification === 'arbitrer').map(m => m.name).join(', ') || '—')]),
-    row([cellStr('Activités à arrêter :', 'Bold'), cellStr(analysis.margesParActivite.filter(m => m.classification === 'arreter').map(m => m.name).join(', ') || '—')])
+    row([cellStr('Activités à arrêter :', 'Bold'), cellStr(analysis.margesParActivite.filter(m => m.classification === 'arreter').map(m => m.name).join(', ') || '—')]),
+    // CORRECTION 4: AI verdict for this sheet
+    ...buildVerdictRows('analyse_marges')
   ]
 
   // ═══ FEUILLE 3: STRUCTURE COÛTS ═══
@@ -837,7 +896,9 @@ export function generatePmeExcelXml(data: PmeInputData, analysis: PmeAnalysisRes
     row([cellStr('DIAGNOSTIC COÛTS', 'SectionHeader')]),
     row([cellStr('Points forts :', 'Bold'), cellStr(analysis.forces.slice(0, 2).join(' · '))]),
     row([cellStr('Points faibles :', 'Bold'), cellStr(analysis.faiblesses.slice(0, 2).join(' · '))]),
-    row([cellStr('Actions recommandées :', 'Bold'), cellStr(analysis.recommandations.slice(0, 2).join(' · '))])
+    row([cellStr('Actions recommandées :', 'Bold'), cellStr(analysis.recommandations.slice(0, 2).join(' · '))]),
+    // CORRECTION 4: AI verdict for this sheet
+    ...buildVerdictRows('structure_couts')
   ]
 
   // ═══ FEUILLE 4: TRÉSORERIE & BFR ═══
@@ -864,7 +925,9 @@ export function generatePmeExcelXml(data: PmeInputData, analysis: PmeAnalysisRes
     row([cellStr('Dette court terme', 'Bold'), cellFcfa(h.detteCT[0], 'Num'), cellFcfa(h.detteCT[1], 'Num'), cellFcfa(h.detteCT[2], 'Num'), cellStr(''), cellStr('')]),
     row([cellStr('Dette long terme', 'Bold'), cellFcfa(h.detteLT[0], 'Num'), cellFcfa(h.detteLT[1], 'Num'), cellFcfa(h.detteLT[2], 'Num'), cellStr(''), cellStr('')]),
     row([cellStr('Total dettes', 'Bold'), cellFcfa(hc.totalDettes[0], 'BoldNum'), cellFcfa(hc.totalDettes[1], 'BoldNum'), cellFcfa(hc.totalDettes[2], 'BoldNum'), cellStr(''), cellStr('')]),
-    row([cellStr('Dette / EBITDA', 'Bold'), cellStr(hc.detteSurEbitda[0] >= 99 ? 'N/A' : hc.detteSurEbitda[0].toFixed(1) + 'x'), cellStr(hc.detteSurEbitda[1] >= 99 ? 'N/A' : hc.detteSurEbitda[1].toFixed(1) + 'x'), cellStr(hc.detteSurEbitda[2] >= 99 ? 'N/A' : hc.detteSurEbitda[2].toFixed(1) + 'x', hc.detteSurEbitda[2] <= 3 ? 'Green' : 'Red'), cellStr(''), cellStr('< 3x')])
+    row([cellStr('Dette / EBITDA', 'Bold'), cellStr(hc.detteSurEbitda[0] >= 99 ? 'N/A' : hc.detteSurEbitda[0].toFixed(1) + 'x'), cellStr(hc.detteSurEbitda[1] >= 99 ? 'N/A' : hc.detteSurEbitda[1].toFixed(1) + 'x'), cellStr(hc.detteSurEbitda[2] >= 99 ? 'N/A' : hc.detteSurEbitda[2].toFixed(1) + 'x', hc.detteSurEbitda[2] <= 3 ? 'Green' : 'Red'), cellStr(''), cellStr('< 3x')]),
+    // CORRECTION 4: AI verdict for this sheet
+    ...buildVerdictRows('tresorerie_bfr')
   ]
 
   // ═══ FEUILLE 5: HYPOTHÈSES PROJECTION ═══
@@ -899,7 +962,9 @@ export function generatePmeExcelXml(data: PmeInputData, analysis: PmeAnalysisRes
     ...(hyp.investissements ?? [{ description: 'CAPEX Global', montants: hyp.capex }]).map(inv =>
       row([cellStr(inv.description), ...inv.montants.map(v => cellFcfa(v, 'Num')), cellFcfa(inv.montants.reduce((s, v) => s + v, 0), 'BoldNum')])
     ),
-    row([cellStr('Total CAPEX', 'Bold'), ...hyp.capex.map(v => cellFcfa(v, 'BoldNum')), cellFcfa(hyp.capex.reduce((s, v) => s + v, 0), 'BoldNum')])
+    row([cellStr('Total CAPEX', 'Bold'), ...hyp.capex.map(v => cellFcfa(v, 'BoldNum')), cellFcfa(hyp.capex.reduce((s, v) => s + v, 0), 'BoldNum')]),
+    // CORRECTION 4: AI verdict for this sheet
+    ...buildVerdictRows('hypotheses')
   ]
 
   // ═══ FEUILLE 6: PROJECTION 5 ANS ═══
@@ -947,7 +1012,9 @@ export function generatePmeExcelXml(data: PmeInputData, analysis: PmeAnalysisRes
     row([cellStr('Mois pour atteindre point mort', 'Bold'), ...p.moisPointMort.map(v => cellStr(v.toFixed(1))), cellStr('')]),
     emptyRow(),
     row([cellStr('ANNOTATIONS ANALYSTE', 'SectionHeader')]),
-    ...analysis.alertes.map(a => row([cellStr(`${a.type === 'danger' ? '🔴' : a.type === 'warning' ? '🟠' : '🔵'} ${a.message}`, a.type === 'danger' ? 'AlertDanger' : a.type === 'warning' ? 'AlertWarning' : 'AlertInfo')]))
+    ...analysis.alertes.map(a => row([cellStr(`${a.type === 'danger' ? '🔴' : a.type === 'warning' ? '🟠' : '🔵'} ${a.message}`, a.type === 'danger' ? 'AlertDanger' : a.type === 'warning' ? 'AlertWarning' : 'AlertInfo')])),
+    // CORRECTION 4: AI verdict for this sheet
+    ...buildVerdictRows('projections_5ans')
   ]
 
   // ═══ FEUILLE 7: SCÉNARIOS ═══
@@ -978,7 +1045,9 @@ export function generatePmeExcelXml(data: PmeInputData, analysis: PmeAnalysisRes
     emptyRow(), emptyRow(),
     row([cellStr('RECOMMANDATION', 'SectionHeader')]),
     row([cellStr('Scénario recommandé :', 'Bold'), cellStr('Central — approche réaliste et prudente')]),
-    row([cellStr('Justification :', 'Bold'), cellStr('Équilibre entre ambition et réalisme. Hypothèses testées sur les benchmarks sectoriels.')])
+    row([cellStr('Justification :', 'Bold'), cellStr('Équilibre entre ambition et réalisme. Hypothèses testées sur les benchmarks sectoriels.')]),
+    // CORRECTION 4: AI verdict for this sheet
+    ...buildVerdictRows('scenarios')
   ]
 
   // ═══ FEUILLE 8: SYNTHÈSE EXÉCUTIVE ═══
@@ -1023,6 +1092,40 @@ export function generatePmeExcelXml(data: PmeInputData, analysis: PmeAnalysisRes
     row([cellStr(analysis.phraseCleDirigeant, 'Italic')]),
     row([cellStr('"Les chiffres ne servent pas à juger le passé, mais à décider le futur."', 'Italic')])
   ]
+
+  // CORRECTION 3+4: Add cross-analysis section to sheet 8 if available
+  const crossCtx = analysis.enrichmentContext
+  if (crossCtx?.crossAnalysis && crossCtx.crossAnalysis.score_coherence >= 0) {
+    const ca = crossCtx.crossAnalysis
+    sheet8Rows.push(emptyRow(), emptyRow())
+    sheet8Rows.push(row([cellStr('🔗 CROISEMENT BMC ↔ FINANCIERS', 'SectionHeader')]))
+    sheet8Rows.push(row([cellStr(`Score de cohérence : ${ca.score_coherence}/100`, ca.score_coherence >= 70 ? 'Green' : ca.score_coherence >= 50 ? 'Orange' : 'Red')]))
+    if (ca.resume) sheet8Rows.push(row([cellStr(ca.resume, 'Italic')]))
+    if (ca.incoherences?.length > 0) {
+      sheet8Rows.push(row([cellStr('Incohérences détectées :', 'Bold')]))
+      for (const inc of ca.incoherences) {
+        const sev = inc.severite === 'critique' ? '🔴' : inc.severite === 'haute' ? '🟠' : '🟡'
+        sheet8Rows.push(row([cellStr(`${sev} [${inc.severite}] ${inc.element_bmc} ↔ ${inc.element_financier} — ${inc.recommandation}`, inc.severite === 'critique' ? 'AlertDanger' : 'AlertWarning')]))
+      }
+    }
+    if (ca.donnees_manquantes_detectees?.length > 0) {
+      sheet8Rows.push(row([cellStr('Données manquantes détectées :', 'Bold')]))
+      for (const d of ca.donnees_manquantes_detectees) {
+        sheet8Rows.push(row([cellStr(`  ℹ️ ${d}`, 'AlertInfo')]))
+      }
+    }
+  }
+
+  // CORRECTION 2: Add estimation markers if available
+  if (crossCtx?.estimations && crossCtx.estimations.length > 0) {
+    sheet8Rows.push(emptyRow(), emptyRow())
+    sheet8Rows.push(row([cellStr('📊 DONNÉES ESTIMÉES (benchmarks sectoriels)', 'SectionHeader')]))
+    sheet8Rows.push(row([cellStr('Les valeurs suivantes ont été estimées par IA faute de données dans le document source :', 'Italic')]))
+    for (const est of crossCtx.estimations.slice(0, 10)) {
+      const conf = est.confiance === 'haute' ? '🟢' : est.confiance === 'moyenne' ? '🟡' : '🔴'
+      sheet8Rows.push(row([cellStr(`${conf} ${est.champ}: ${fmt(est.valeur)} FCFA — ${est.raisonnement}`, 'EstimatedData')]))
+    }
+  }
 
   // ═══ ASSEMBLE XML ═══
   const buildSheet = (name: string, rows: string[], colWidths: number[]) => {
@@ -1372,7 +1475,44 @@ ${kb}
   ],
   "phraseCleDirigeant": "<phrase motivante et r\u00e9aliste pour le dirigeant>",
   "scoreInvestissabilite": <0-100>,
-  "commentaireInvestisseur": "<ce qu'un investisseur penserait>"
+  "commentaireInvestisseur": "<ce qu'un investisseur penserait>",
+  "commentaires_par_feuille": {
+    "donnees_historiques": {
+      "verdict": "<verdict sur evolution CA 3 ans, structure couts, anomalies sectorielles>",
+      "alertes": ["<alerte specifique a cette feuille>"],
+      "phrase_cle": "<1 phrase de synthese pour un dirigeant>"
+    },
+    "analyse_marges": {
+      "verdict": "<verdict sur chaque activite, diversification, mix produit>",
+      "alertes": ["<ex: dependance excessive sur 1 activite>"],
+      "phrase_cle": "<1 phrase>"
+    },
+    "structure_couts": {
+      "verdict": "<comparaison chaque ratio avec benchmark sectoriel, postes sous-estimes>",
+      "alertes": ["<ex: masse salariale anormalement basse pour le secteur>"],
+      "phrase_cle": "<1 phrase>"
+    },
+    "tresorerie_bfr": {
+      "verdict": "<commentaire DSCR, BFR, sante tresorerie>",
+      "alertes": ["<ex: DSO incoherent avec vente directe B2C>"],
+      "phrase_cle": "<1 phrase>"
+    },
+    "hypotheses": {
+      "verdict": "<realisme de chaque hypothese de croissance vs moyennes sectorielles>",
+      "alertes": ["<ex: croissance 177% An1 ambitieuse sauf contrats signes>"],
+      "phrase_cle": "<1 phrase>"
+    },
+    "projections_5ans": {
+      "verdict": "<trajectoire, seuil rentabilite, viabilite 5 ans>",
+      "alertes": ["<ex: tresorerie negative en An2>"],
+      "phrase_cle": "<1 phrase>"
+    },
+    "scenarios": {
+      "verdict": "<quel scenario le plus probable et pourquoi>",
+      "alertes": ["<ex: scenario ambitieux depend de l'obtention du marche X>"],
+      "phrase_cle": "<1 phrase>"
+    }
+  }
 }`
 }
 
@@ -1433,21 +1573,47 @@ function buildPmeUserPrompt(analysis: PmeAnalysisResult, data: PmeInputData): st
   prompt += `\n## FAIBLESSES IDENTIFIEES\n`
   for (const f of analysis.faiblesses) prompt += `- ${f}\n`
 
-  prompt += `\n\nAnalyse ce framework financier et produis le diagnostic JSON expert.`
+  prompt += `\n\nAnalyse ce framework financier et produis le diagnostic JSON expert.
+IMPORTANT: Fournis des commentaires EXPERTS pour CHAQUE feuille (champ "commentaires_par_feuille").
+Chaque commentaire doit etre SPECIFIQUE avec des CHIFFRES, pas de generalites.`
   return prompt
 }
 
 /**
  * Enrich PME analysis with Claude AI expert commentary.
  * Always runs rule-based first, then overlays AI insights.
+ * CORRECTION 3+4: Accepts cross-analysis results and returns enriched per-sheet comments
  */
 export async function analyzePmeWithAI(
   data: PmeInputData,
   apiKey?: string,
-  kbContext?: KBContext
+  kbContext?: KBContext,
+  crossAnalysis?: CrossAnalysisResult,
+  estimations?: EstimationMeta[]
 ): Promise<PmeAnalysisResult> {
   // Always run rule-based analysis first
   const baseAnalysis = analyzePme(data)
+
+  // CORRECTION 3: Inject cross-analysis incoherences as alerts
+  if (crossAnalysis && crossAnalysis.score_coherence >= 0) {
+    baseAnalysis.enrichmentContext = {
+      crossAnalysis,
+      estimations,
+    }
+    // Add cross-analysis incoherences as alerts
+    for (const inc of crossAnalysis.incoherences || []) {
+      const type = inc.severite === 'critique' || inc.severite === 'haute' ? 'danger' as const : 'warning' as const
+      baseAnalysis.alertes.push({
+        type,
+        message: `[BMC\u2194Fin] ${inc.element_bmc} \u2014 ${inc.recommandation}`
+      })
+    }
+    // Add missing data alerts
+    for (const missing of crossAnalysis.donnees_manquantes_detectees || []) {
+      baseAnalysis.alertes.push({ type: 'info' as const, message: `[BMC\u2194Fin] ${missing}` })
+    }
+    console.log(`[Framework PME] Cross-analysis: coherence=${crossAnalysis.score_coherence}, incoherences=${crossAnalysis.incoherences?.length || 0}`)
+  }
 
   if (!isValidApiKey(apiKey)) {
     console.log('[Framework PME] No valid API key, using rule-based analysis only')
@@ -1457,14 +1623,33 @@ export async function analyzePmeWithAI(
 
   try {
     const systemPrompt = buildPmeSystemPrompt(kbContext)
-    const userPrompt = buildPmeUserPrompt(baseAnalysis, data)
+    let userPrompt = buildPmeUserPrompt(baseAnalysis, data)
 
+    // CORRECTION 3: Add cross-analysis context to the prompt
+    if (crossAnalysis && crossAnalysis.score_coherence >= 0) {
+      userPrompt += `\n\n## CROISEMENT BMC <-> FINANCIERS (score coherence: ${crossAnalysis.score_coherence}/100)\n`
+      userPrompt += `Resume: ${crossAnalysis.resume}\n`
+      if (crossAnalysis.incoherences?.length) {
+        userPrompt += `Incoherences detectees:\n`
+        for (const inc of crossAnalysis.incoherences) {
+          userPrompt += `- [${inc.severite}] ${inc.element_bmc} vs ${inc.element_financier}: ${inc.recommandation}\n`
+        }
+      }
+      if (crossAnalysis.donnees_manquantes_detectees?.length) {
+        userPrompt += `Donnees manquantes:\n`
+        for (const d of crossAnalysis.donnees_manquantes_detectees) {
+          userPrompt += `- ${d}\n`
+        }
+      }
+    }
+
+    // CORRECTION 4: Request more tokens for per-sheet comments
     const aiData = await callClaudeJSON<PmeAIExpertCommentary>({
       apiKey: apiKey!,
       systemPrompt,
       userPrompt,
-      maxTokens: 6144,
-      timeoutMs: 75_000,
+      maxTokens: 8192,  // Increased from 6144 for per-sheet comments
+      timeoutMs: 90_000, // Increased from 75s
       maxRetries: 2,
       label: 'Framework PME'
     })
@@ -1592,6 +1777,56 @@ function _renderPmeAISections(analysis: PmeAnalysisResult): string {
           <span style="font-size:11px;color:#7c3aed;font-weight:600;background:#f3e8ff;padding:2px 8px;border-radius:12px;">${b.instrument}</span>
         </div>
       </div>`).join('')}
+      </div>
+    </div>`
+  }
+
+  // CORRECTION 3: Cross-analysis BMC ↔ Financial
+  const crossCtx = analysis.enrichmentContext
+  if (crossCtx?.crossAnalysis && crossCtx.crossAnalysis.score_coherence >= 0) {
+    const ca = crossCtx.crossAnalysis
+    const csColor = ca.score_coherence >= 70 ? '#059669' : ca.score_coherence >= 50 ? '#d97706' : '#dc2626'
+    html += `<div class="card" style="border-left:4px solid ${csColor};">
+      <h2>\ud83d\udd17 Croisement BMC \u2194 Financiers</h2>
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
+        <div style="width:80px;height:80px;border-radius:50%;background:${csColor};display:flex;flex-direction:column;align-items:center;justify-content:center;color:white;">
+          <span style="font-size:22px;font-weight:800;">${ca.score_coherence}</span>
+          <span style="font-size:9px;opacity:0.8;">coh\u00e9rence</span>
+        </div>
+        <div style="flex:1;font-size:13px;color:#334155;">${ca.resume || ''}</div>
+      </div>
+      ${ca.incoherences?.length > 0 ? `<div style="margin-bottom:12px;">
+        <strong style="font-size:13px;color:#dc2626;">Incoh\u00e9rences d\u00e9tect\u00e9es (${ca.incoherences.length})</strong>
+        ${ca.incoherences.map(inc => {
+          const sevColor = inc.severite === 'critique' ? '#dc2626' : inc.severite === 'haute' ? '#d97706' : '#6b7280'
+          return `<div style="padding:8px 12px;border-left:3px solid ${sevColor};margin:6px 0;background:#f8fafc;border-radius:0 8px 8px 0;">
+            <span style="font-size:11px;font-weight:600;color:${sevColor};text-transform:uppercase;">${inc.severite}</span>
+            <span style="font-size:12px;color:#334155;"> ${inc.element_bmc} \u2194 ${inc.element_financier}</span>
+            <div style="font-size:11px;color:#64748b;margin-top:2px;">\u2192 ${inc.recommandation}</div>
+          </div>`
+        }).join('')}
+      </div>` : ''}
+      ${ca.donnees_manquantes_detectees?.length > 0 ? `<div>
+        <strong style="font-size:13px;color:#0284c7;">Donn\u00e9es manquantes d\u00e9tect\u00e9es</strong>
+        ${ca.donnees_manquantes_detectees.map(d => `<div style="font-size:12px;color:#64748b;padding:4px 0;">\u2022 ${d}</div>`).join('')}
+      </div>` : ''}
+    </div>`
+  }
+
+  // CORRECTION 2: Estimated data markers
+  if (crossCtx?.estimations && crossCtx.estimations.length > 0) {
+    html += `<div class="card" style="border-left:4px solid #7c3aed;">
+      <h2>\ud83d\udcca Donn\u00e9es Estim\u00e9es (Benchmarks sectoriels)</h2>
+      <div style="font-size:12px;color:#64748b;margin-bottom:12px;">Les valeurs suivantes ont \u00e9t\u00e9 estim\u00e9es par IA faute de donn\u00e9es dans le fichier source.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      ${crossCtx.estimations.slice(0, 8).map(est => {
+        const confColor = est.confiance === 'haute' ? '#059669' : est.confiance === 'moyenne' ? '#d97706' : '#dc2626'
+        return `<div style="padding:8px 12px;border-radius:8px;background:#faf5ff;border:1px solid #e9d5ff;">
+          <div style="font-size:12px;font-weight:600;color:#6b21a8;">${est.champ}</div>
+          <div style="font-size:13px;font-weight:700;">${fmt(est.valeur)} FCFA</div>
+          <div style="font-size:10px;color:${confColor};">\u25cf ${est.confiance} \u2014 ${est.raisonnement?.slice(0, 80) || ''}</div>
+        </div>`
+      }).join('')}
       </div>
     </div>`
   }
