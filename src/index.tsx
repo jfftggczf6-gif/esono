@@ -1159,11 +1159,11 @@ app.get('/register', (c) => {
                 </label>
               </div>
 
-              <div id="error-message" class="esono-alert esono-alert--danger hidden" role="alert"></div>
+              <div id="error-message" class="esono-alert esono-alert--danger" style="display:none" role="alert"></div>
 
               <button type="submit" class="esono-btn esono-btn--primary esono-btn--block">
                 <span id="submit-text">Créer mon compte</span>
-                <span id="submit-loading" class="hidden">
+                <span id="submit-loading" style="display:none">
                   <i class="fas fa-spinner fa-spin"></i>
                   Création en cours...
                 </span>
@@ -1222,11 +1222,11 @@ app.get('/login', (c) => {
                 />
               </div>
 
-              <div id="error-message" class="esono-alert esono-alert--danger hidden" role="alert"></div>
+              <div id="error-message" class="esono-alert esono-alert--danger" style="display:none" role="alert"></div>
 
               <button type="submit" class="esono-btn esono-btn--primary esono-btn--block">
                 <span id="submit-text">Se connecter</span>
-                <span id="submit-loading" class="hidden">
+                <span id="submit-loading" style="display:none">
                   <i class="fas fa-spinner fa-spin"></i>
                   Connexion...
                 </span>

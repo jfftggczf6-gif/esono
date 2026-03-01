@@ -1,14 +1,14 @@
-// Login form handler
+// Login form handler - robust cookie + localStorage + URL token
 (function() {
   'use strict';
   
   console.log('[Login] Script loaded');
   
   function initForm() {
-    const form = document.getElementById('loginForm');
-    const errorMessage = document.getElementById('error-message');
-    const submitText = document.getElementById('submit-text');
-    const submitLoading = document.getElementById('submit-loading');
+    var form = document.getElementById('loginForm');
+    var errorMessage = document.getElementById('error-message');
+    var submitText = document.getElementById('submit-text');
+    var submitLoading = document.getElementById('submit-loading');
     
     if (!form) {
       console.error('[Login] Form not found!');
@@ -17,53 +17,69 @@
     
     console.log('[Login] Form found, attaching event listener');
     
-    form.addEventListener('submit', async (e) => {
+    form.addEventListener('submit', function(e) {
       e.preventDefault();
       e.stopPropagation();
       
-      if (errorMessage) errorMessage.classList.add('hidden');
-      if (submitText) submitText.classList.add('hidden');
-      if (submitLoading) submitLoading.classList.remove('hidden');
+      if (errorMessage) errorMessage.style.display = 'none';
+      if (submitText) submitText.style.display = 'none';
+      if (submitLoading) submitLoading.style.display = 'inline-flex';
       
-      const formData = new FormData(form);
-      const data = {
+      var formData = new FormData(form);
+      var data = {
         email: formData.get('email'),
         password: formData.get('password')
       };
       
-      try {
-        const response = await fetch('/api/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(data)
+      fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(data)
+      })
+      .then(function(response) {
+        return response.json().then(function(result) {
+          return { ok: response.ok, result: result };
         });
-        
-        const result = await response.json();
-        
-        if (response.ok && result.success) {
-          // Store token in localStorage AND set cookie manually as backup
-          if (result.token) {
-            localStorage.setItem('auth_token', result.token);
-            document.cookie = 'auth_token=' + result.token + '; path=/; max-age=604800; SameSite=None; Secure';
+      })
+      .then(function(resp) {
+        if (resp.ok && resp.result.success) {
+          var token = resp.result.token || '';
+          
+          // Store in localStorage as primary persistence
+          if (token) {
+            try { localStorage.setItem('auth_token', token); } catch(e) {}
           }
-          window.location.href = '/entrepreneur?token=' + encodeURIComponent(result.token || '');
+          
+          // Set cookie manually as backup (multiple formats for compatibility)
+          if (token) {
+            document.cookie = 'auth_token=' + token + '; path=/; max-age=604800';
+            // Also try with SameSite for HTTPS contexts
+            try {
+              document.cookie = 'auth_token=' + token + '; path=/; max-age=604800; SameSite=None; Secure';
+            } catch(e) {}
+          }
+          
+          // Redirect with token in URL as ultimate fallback
+          window.location.href = '/entrepreneur?token=' + encodeURIComponent(token);
         } else {
           if (errorMessage) {
-            errorMessage.textContent = result.error || 'Une erreur est survenue';
-            errorMessage.classList.remove('hidden');
+            errorMessage.textContent = resp.result.error || 'Email ou mot de passe incorrect';
+            errorMessage.style.display = 'block';
           }
-          if (submitText) submitText.classList.remove('hidden');
-          if (submitLoading) submitLoading.classList.add('hidden');
+          if (submitText) submitText.style.display = 'inline-flex';
+          if (submitLoading) submitLoading.style.display = 'none';
         }
-      } catch (error) {
+      })
+      .catch(function(error) {
         if (errorMessage) {
-          errorMessage.textContent = 'Erreur de connexion au serveur: ' + error.message;
-          errorMessage.classList.remove('hidden');
+          errorMessage.textContent = 'Erreur de connexion au serveur. Veuillez réessayer.';
+          errorMessage.style.display = 'block';
         }
-        if (submitText) submitText.classList.remove('hidden');
-        if (submitLoading) submitLoading.classList.add('hidden');
-      }
+        if (submitText) submitText.style.display = 'inline-flex';
+        if (submitLoading) submitLoading.style.display = 'none';
+        console.error('[Login] Error:', error);
+      });
     });
     
     console.log('[Login] Event listener attached successfully');
