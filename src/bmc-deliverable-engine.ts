@@ -35,6 +35,7 @@ interface BmcBlocScore {
   label: string
   score: number      // 0-100
   comment: string
+  canvasSummary?: string[]  // Clean bullet points for Canvas display
 }
 
 interface BmcForce {
@@ -133,6 +134,76 @@ function extractBullets(text: string): string[] {
   return lines.slice(0, 8)
 }
 
+// ─── Helper: Clean raw answer text into presentable bullet points ───
+// Removes template questions, instructions, checkboxes, section headers
+// Produces concise, professional bullet points from raw DOCX content
+function cleanAnswerToBullets(text: string): string[] {
+  if (!text || text.length < 10) return []
+  
+  // Patterns to remove (template questions, instructions, headers, formatting noise)
+  const removePatterns = [
+    /^\d{1,2}\s*[-–.)\s]+\s*[A-ZÀÉÈÊËÏÎÔÙÛÜÇ][A-ZÀÉÈÊËÏÎÔÙÛÜÇ\s'']{3,}$/,  // Section headers like "1- SEGMENTS CLIENTS"
+    /^(À qui|Comment\s+(votre|vos|les|le|la)|Pourquoi|Quel(le)?s?\s+(est|sont)|Qui\s+(sont|est)|Ce que|Ce sans|Combien)/i,
+    /^(Règle|Phrase de synthèse|Nous aidons \[|Décris|Décrivez|Listez|Indiquez|Précisez|Expliquez|Définissez)/i,
+    /^☐\s/,                                                                
+    /^(Template|TEMPLATE|Business Model Canvas|Social Impact Canvas)$/i,    
+    /^\(.*\)$/,                                                            
+    /vendez-vous|vous choisit|vous découvre|vous interagissez|gagnez de l'argent|devez absolument|ne fonctionne pas|vous aide|votre entreprise/i,
+    /^(prioritaire|obligatoire|maximum|recommandé|optionnel|exemple)\s*$/i, 
+    /^\d{1,2}\s*\/\s*\d{1,2}$/,                                           
+    /^(Nombre|Note|Score)\s*:/i,                                           
+    /^(Type de relation|Mode de|Méthode de)\s*$/i,                         
+    /\?\s*$/,                                                              // Any line ending with ?
+    /^\[.*\]$/,                                                            // Placeholder brackets
+    /^_{2,}$/,                                                             // Underscores (form fields)
+  ]
+  
+  const lines = text.split(/[\n\r]+/).map(l => l.replace(/^[\s•\-–›☐☑✓✔\d.)\]]+\s*/, '').trim())
+  
+  const cleaned: string[] = []
+  for (const line of lines) {
+    if (line.length < 5) continue
+    if (removePatterns.some(p => p.test(line))) continue
+    // Skip pure labels without value
+    if (/^[^:]{3,30}:\s*$/.test(line)) continue
+    // Skip repeated section names
+    if (/^(segments?\s+clients?|proposition\s+de\s+valeur|canaux|relations?\s+clients?|flux\s+de\s+revenus?|ressources?\s+cl[ée]s?|activit[ée]s?\s+cl[ée]s?|partenaires?\s+cl[ée]s?|structure\s+(de\s+)?co[uû]ts?)\s*$/i.test(line)) continue
+    
+    // Extract value after colon if present (e.g. "Client principal : les boutiquiers" → "Les boutiquiers")
+    const colonMatch = line.match(/^([^:]{3,40}):\s+(.+)$/)
+    if (colonMatch && colonMatch[2].length > 3) {
+      // Keep label:value format for short labels, capitalize value
+      const label = colonMatch[1].trim()
+      const value = colonMatch[2].trim()
+      // If the label is informative (not just "Réponse" or "Type"), include it
+      if (label.length > 15 || /^(produit|service|prix|client|canal|activit|ressourc)/i.test(label)) {
+        const capitalized = value.charAt(0).toUpperCase() + value.slice(1)
+        cleaned.push(capitalized)
+      } else {
+        cleaned.push(`${label} : ${value}`)
+      }
+    } else if (line.length > 8 && !line.endsWith('…')) {
+      // Capitalize first letter for consistency
+      const capitalized = line.charAt(0).toUpperCase() + line.slice(1)
+      cleaned.push(capitalized)
+    }
+  }
+  
+  // Deduplicate (case-insensitive), limit to 5 concise bullets
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const item of cleaned) {
+    const key = item.toLowerCase().replace(/\s+/g, ' ')
+    if (!seen.has(key)) {
+      seen.add(key)
+      // Truncate very long bullets to keep canvas clean
+      unique.push(item.length > 100 ? item.slice(0, 97) + '…' : item)
+    }
+    if (unique.length >= 5) break
+  }
+  return unique
+}
+
 // ═══════════════════════════════════════════════════════════════
 // CLAUDE AI — Prompt système pour génération complète du livrable BMC
 // ═══════════════════════════════════════════════════════════════
@@ -221,7 +292,8 @@ Génère le JSON complet du diagnostic livrable avec EXACTEMENT cette structure 
       "key": "<segments_clients|proposition_valeur|canaux|relations_clients|flux_revenus|ressources_cles|activites_cles|partenaires_cles|structure_couts>",
       "label": "<nom du bloc>",
       "score": <number 0-100>,
-      "comment": "<commentaire expert spécifique 1-2 phrases, basé sur le contenu>"
+      "comment": "<commentaire expert spécifique 1-2 phrases, basé sur le contenu>",
+      "canvasSummary": ["<bullet point 1 synthétisé: phrase courte et claire résumant un élément clé>", "<bullet point 2>", "<bullet point 3>"]
     }
   ],
   "forces": [
@@ -264,6 +336,7 @@ Génère le JSON complet du diagnostic livrable avec EXACTEMENT cette structure 
 
 CONTRAINTES :
 - blocScores : EXACTEMENT 9 blocs, triés par score décroissant
+- canvasSummary : OBLIGATOIRE pour chaque bloc. 3-5 bullet points par bloc. Chaque bullet doit être une PHRASE COURTE, REFORMULÉE et PROFESSIONNELLE résumant CE QUE L'ENTREPRENEUR A RÉPONDU (pas les questions du template). Tu dois SYNTHÉTISER et REFORMULER les réponses brutes en phrases claires de type consultant. Exemples de BON format : "Boutiquiers détaillants à Bouaflé et Gagnoa", "Livraison d'œufs frais garantie sous 72h", "CA mensuel estimé à 40 000 FCFA par client", "Intégration verticale : production de maïs → aliments → œufs". NE JAMAIS inclure : questions du formulaire, instructions, cases à cocher, texte entre crochets, ou le mot "Réponse".
 - forces : 3 à 5 forces SPÉCIFIQUES aux réponses
 - vigilances : 3 à 5 risques avec actions concrètes
 - swot : 5 éléments par quadrant
@@ -361,7 +434,11 @@ async function callClaudeForDeliverable(
         }
       }
 
-      return normalizeBmcAnalysis(parsed)
+      const result = normalizeBmcAnalysis(parsed)
+      // Log canvasSummary extraction for debugging
+      const summaryCount = result.blocScores.filter(b => b.canvasSummary && b.canvasSummary.length > 0).length
+      console.log(`[BMC Deliverable] canvasSummary extracted for ${summaryCount}/9 blocs`)
+      return result
 
     } catch (err: any) {
       clearTimeout(timeoutId)
@@ -386,13 +463,16 @@ function normalizeBmcAnalysis(raw: any): BmcAnalysis {
     ? Math.max(0, Math.min(100, Math.round(raw.globalScore)))
     : 50
 
-  // Bloc scores
+  // Bloc scores — with canvasSummary from Claude
   const blocScores: BmcBlocScore[] = Array.isArray(raw.blocScores)
     ? raw.blocScores.map((b: any) => ({
         key: typeof b.key === 'string' ? b.key : 'unknown',
         label: typeof b.label === 'string' ? b.label : 'Bloc',
         score: typeof b.score === 'number' ? Math.max(0, Math.min(100, Math.round(b.score))) : 50,
-        comment: typeof b.comment === 'string' ? b.comment : ''
+        comment: typeof b.comment === 'string' ? b.comment : '',
+        canvasSummary: Array.isArray(b.canvasSummary)
+          ? b.canvasSummary.filter((s: any) => typeof s === 'string' && s.trim().length > 3).slice(0, 5)
+          : undefined
       }))
     : []
 
@@ -525,7 +605,10 @@ function analyzeBmcFallback(answers: Map<number, string>): BmcAnalysis {
     if (qId === 3 && quality >= 40) comment = 'Fonctionnels, manque de digital'
     if (qId === 9 && quality >= 40) comment = 'Exposée aux matières premières'
 
-    blocScores.push({ key: sec.key, label: sec.label, score: quality, comment })
+    // Generate clean canvasSummary from raw answer text (remove template questions/instructions)
+    const cleanBullets = cleanAnswerToBullets(answer)
+    
+    blocScores.push({ key: sec.key, label: sec.label, score: quality, comment, canvasSummary: cleanBullets })
   }
 
   blocScores.sort((a, b) => b.score - a.score)
@@ -933,7 +1016,10 @@ function renderBmcDeliverableHtml(analysis: BmcAnalysis, data: BmcDeliverableDat
         ${CANVAS_LAYOUT.map(cell => {
           const sec = BMC_SECTIONS[cell.qId]
           const answer = answers.get(cell.qId) ?? ''
-          const bullets = extractBullets(answer)
+          // Prefer Claude's clean canvasSummary over raw text bullets
+          const blocData = analysis.blocScores.find(b => b.key === sec.key)
+          const aiBullets = blocData?.canvasSummary?.filter(s => s && s.length > 3) || []
+          const bullets = aiBullets.length > 0 ? aiBullets : cleanAnswerToBullets(answer)
           const headerColor = cell.qId === 2 ? COLORS.primary :
             [7, 6].includes(cell.qId) ? COLORS.accent :
             [4, 3].includes(cell.qId) ? '#7c3aed' :
