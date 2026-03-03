@@ -3736,23 +3736,25 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
     ).bind(payload.userId).first() as any
     if (diagHtmlRow?.content && diagHtmlRow.content.length > 200) {
       diagnosticClaudeHtml = diagHtmlRow.content
-    } else {
-      // Fallback: try diagnostic_analyses (new Diagnostic Expert system)
-      try {
-        const pmeId = `pme_${payload.userId}`
-        const diagAnalysisRow = await c.env.DB.prepare(
-          "SELECT html_content, analysis_json, score, version FROM diagnostic_analyses WHERE user_id = ? AND pme_id = ? AND status IN ('analyzed','generated','partial') ORDER BY created_at DESC LIMIT 1"
-        ).bind(payload.userId, pmeId).first() as any
-        if (diagAnalysisRow?.html_content && diagAnalysisRow.html_content.length > 200) {
-          diagnosticClaudeHtml = diagAnalysisRow.html_content
-          console.log('[Entrepreneur Page] Loaded Diagnostic HTML from diagnostic_analyses (' + diagAnalysisRow.html_content.length + ' chars, score=' + diagAnalysisRow.score + ')')
-        }
-        if (diagAnalysisRow?.analysis_json) {
-          try { diagnosticAnalysisJson = JSON.parse(diagAnalysisRow.analysis_json) } catch { /* ignore */ }
-        }
-      } catch (e) {
-        console.error('[Entrepreneur Page] Error loading diagnostic_analyses:', e)
+    }
+
+    // ALWAYS load analysis_json from diagnostic_analyses (needed for new-format rendering + fallback HTML)
+    try {
+      const pmeId = `pme_${payload.userId}`
+      const diagAnalysisRow = await c.env.DB.prepare(
+        "SELECT html_content, analysis_json, score, version FROM diagnostic_analyses WHERE user_id = ? AND pme_id = ? AND status IN ('analyzed','generated','partial') ORDER BY created_at DESC LIMIT 1"
+      ).bind(payload.userId, pmeId).first() as any
+      // If no diagnostic_html from deliverables, try html_content from diagnostic_analyses
+      if (!diagnosticClaudeHtml && diagAnalysisRow?.html_content && diagAnalysisRow.html_content.length > 200) {
+        diagnosticClaudeHtml = diagAnalysisRow.html_content
+        console.log('[Entrepreneur Page] Loaded Diagnostic HTML from diagnostic_analyses (' + diagAnalysisRow.html_content.length + ' chars, score=' + diagAnalysisRow.score + ')')
       }
+      // Always load analysis_json for new-format client rendering
+      if (diagAnalysisRow?.analysis_json) {
+        try { diagnosticAnalysisJson = JSON.parse(diagAnalysisRow.analysis_json) } catch { /* ignore */ }
+      }
+    } catch (e) {
+      console.error('[Entrepreneur Page] Error loading diagnostic_analyses:', e)
     }
 
     // Load pre-stored SIC HTML from database (instant display)
@@ -4376,7 +4378,15 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         diagIframe.onload = function() { try { diagIframe.style.height = diagIframe.contentDocument.body.scrollHeight + 40 + 'px'; } catch(e) {} };
         el.appendChild(diagIframe);
       } else if (type === 'diagnostic') {
-        el.innerHTML = renderDiagHTML(content, scoresDim, score, sColor);
+        // Merge DIAGNOSTIC_ANALYSIS_JSON into content if content lacks new-format fields
+        var diagContent = content;
+        if (DIAGNOSTIC_ANALYSIS_JSON && (!content.scores_dimensions && !content.score_global)) {
+          diagContent = Object.assign({}, content, DIAGNOSTIC_ANALYSIS_JSON);
+        } else if (DIAGNOSTIC_ANALYSIS_JSON) {
+          // Even when content has new format, prefer DIAGNOSTIC_ANALYSIS_JSON for completeness
+          diagContent = Object.assign({}, content, DIAGNOSTIC_ANALYSIS_JSON);
+        }
+        el.innerHTML = renderDiagHTML(diagContent, scoresDim, score, sColor);
       } else if (type === 'bmc_analysis' && BMC_HTML_TEMPLATE && BMC_HTML_TEMPLATE.length > 100) {
         el.innerHTML = '';
         // ── Download bar above iframe ──

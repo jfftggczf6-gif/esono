@@ -2309,23 +2309,50 @@ function renderDiagnosticModulePage(opts: {
   const urgencyBadge = (u: string) => { const ul = (u||'').toLowerCase(); if (ul.includes('imm') || ul.includes('critique') || ul.includes('court')) return '\u{1F534} Critique'; if (ul.includes('important') || ul.includes('moyen')) return '\u{1F7E0} Important'; return '\u{1F7E1} Recommandé' }
   const urgencyBorder = (u: string) => { const ul = (u||'').toLowerCase(); if (ul.includes('imm') || ul.includes('critique') || ul.includes('court')) return '#ef4444'; if (ul.includes('important') || ul.includes('moyen')) return '#f97316'; return '#eab308' }
 
-  // Extract data from analysis
+  // Extract data from analysis — supports BOTH old format (dimensions[], scoreGlobal) and new format (scores_dimensions, score_global)
   const a = analysis || {} as any
-  const scoreGlobal = a.score_global ?? diagScore ?? 0
-  const palier = a.palier ?? ''
-  const label = a.label ?? ''
-  const couleur = a.couleur ?? ''
-  const sd = a.scores_dimensions || {}
-  const vigilance = Array.isArray(a.points_vigilance) ? a.points_vigilance : []
-  const incoherences = Array.isArray(a.incoherences) ? a.incoherences : []
+  const isOldFormat = !a.scores_dimensions && !a.score_global && (Array.isArray(a.dimensions) || a.scoreGlobal !== undefined)
+
+  // Normalize old format → new format fields
+  const scoreGlobal = a.score_global ?? a.scoreGlobal ?? diagScore ?? 0
+  const palier = a.palier ?? a.verdict ?? ''
+  const label = a.label ?? a.verdict ?? (scoreGlobal >= 71 ? 'Projet solide' : scoreGlobal >= 51 ? 'Projet en développement' : scoreGlobal >= 31 ? 'À consolider' : scoreGlobal > 0 ? 'À renforcer' : 'En attente')
+  const couleur = a.couleur ?? a.verdictColor ?? ''
+
+  // Convert old dimensions[] to scores_dimensions{}
+  let sd = a.scores_dimensions || {}
+  if (isOldFormat && Array.isArray(a.dimensions) && a.dimensions.length > 0 && Object.keys(sd).length === 0) {
+    const codeMapping: Record<string, string> = {
+      'modele_economique': 'coherence',
+      'viabilite_financiere': 'viabilite',
+      'impact_social': 'realisme',
+      'equipe_gouvernance': 'completude_couts',
+      'marche_positionnement': 'capacite_remboursement',
+    }
+    for (const dim of a.dimensions) {
+      const key = codeMapping[dim.code] || dim.code || dim.name?.toLowerCase().replace(/[^a-z]/g, '_')
+      sd[key] = {
+        score: dim.score || 0,
+        label: dim.name || key,
+        commentaire: dim.analysis || '',
+        verdict: dim.verdict || '',
+        incoherences_detectees: [],
+        red_flags: [],
+        postes_manquants: [],
+      }
+    }
+  }
+
+  const vigilance = Array.isArray(a.points_vigilance) ? a.points_vigilance : (Array.isArray(a.risks) ? a.risks.map((r: any) => ({ titre: r.title || r.titre || r, description: r.description || '', niveau: r.level || 'moyen', categorie: r.category || 'general', probabilite: '', impact_financier: '', action_recommandee: r.mitigation || '' })) : [])
+  const incoherences = Array.isArray(a.incoherences) ? a.incoherences : (Array.isArray(a.coherenceIssues) ? a.coherenceIssues.map((ci: any) => ({ type: 'Incohérence', description: typeof ci === 'string' ? ci : ci.description || '' })) : [])
   const risquesCtx = Array.isArray(a.risques_contextuels) ? a.risques_contextuels : []
-  const forces = Array.isArray(a.forces) ? a.forces : []
-  const opps = Array.isArray(a.opportunites_amelioration) ? a.opportunites_amelioration : []
-  const recs = Array.isArray(a.recommandations) ? a.recommandations : []
+  const forces = Array.isArray(a.forces) ? a.forces : (Array.isArray(a.strengths) ? a.strengths.map((s: any) => typeof s === 'string' ? { titre: s } : s) : [])
+  const opps = Array.isArray(a.opportunites_amelioration) ? a.opportunites_amelioration : (Array.isArray(a.weaknesses) ? a.weaknesses.map((w: any) => typeof w === 'string' ? { titre: w } : w) : [])
+  const recs = Array.isArray(a.recommandations) ? a.recommandations : (Array.isArray(a.actionPlan) ? a.actionPlan.map((ap: any) => typeof ap === 'string' ? { titre: ap, detail: '' } : { titre: ap.title || ap.titre || '', detail: ap.description || ap.detail || '', urgence: ap.priority || '' }) : [])
   const benchmarks = a.benchmarks || {}
-  const resumeExec = a.resume_executif || ''
+  const resumeExec = a.resume_executif || a.executiveSummary || ''
   const pap = Array.isArray(a.points_attention_prioritaires) ? a.points_attention_prioritaires : []
-  const livrables = a.livrables_analyses || {}
+  const livrables = a.livrables_analyses || a.sources || {}
   const contexte = a.contexte_pays || {}
   const donneesCompletes = a.donnees_completes !== false
   const messageIncomplet = a.message_incomplet || ''
@@ -2334,13 +2361,19 @@ function renderDiagnosticModulePage(opts: {
   const sector = contexte.secteur || ''
   const genDate = createdAt ? new Date(createdAt + (createdAt.includes('T') ? '' : 'T00:00:00')).toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' }) : new Date().toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' })
 
-  // Dimension display config
+  // Dimension display config (includes both new and old format codes)
   const dimConfig: Record<string, {icon:string; label:string; color:string}> = {
     coherence: { icon: 'fa-link', label: 'Cohérence financière', color: '#3b82f6' },
     viabilite: { icon: 'fa-chart-line', label: 'Viabilité économique', color: '#8b5cf6' },
     realisme: { icon: 'fa-bullseye', label: 'Réalisme des projections', color: '#06b6d4' },
     completude_couts: { icon: 'fa-list-check', label: 'Complétude des coûts', color: '#f59e0b' },
     capacite_remboursement: { icon: 'fa-hand-holding-dollar', label: 'Capacité de remboursement', color: '#10b981' },
+    // Old format dimension codes (mapped from codeMapping)
+    modele_economique: { icon: 'fa-diagram-project', label: 'Modèle Économique', color: '#3b82f6' },
+    impact_social: { icon: 'fa-hand-holding-heart', label: 'Impact Social & ODD', color: '#8b5cf6' },
+    viabilite_financiere: { icon: 'fa-chart-line', label: 'Viabilité Financière', color: '#06b6d4' },
+    equipe_gouvernance: { icon: 'fa-users', label: 'Équipe & Gouvernance', color: '#f59e0b' },
+    marche_positionnement: { icon: 'fa-bullseye', label: 'Marché & Positionnement', color: '#10b981' },
   }
 
   // Check if we have a generated diagnostic to render
@@ -2404,8 +2437,9 @@ function renderDiagnosticModulePage(opts: {
       </ul>
     </div>` : ''
 
-  // Dimensions cards
-  const dimKeys = ['coherence', 'viabilite', 'realisme', 'completude_couts', 'capacite_remboursement']
+  // Dimensions cards — use keys from actual data
+  const defaultDimKeys = ['coherence', 'viabilite', 'realisme', 'completude_couts', 'capacite_remboursement']
+  const dimKeys = Object.keys(sd).length > 0 ? Object.keys(sd) : defaultDimKeys
   const dimsHtml = hasAnalysis ? dimKeys.map(key => {
     const dim = sd[key] || {}
     const cfg = dimConfig[key] || { icon:'fa-circle', label:key, color:'#64748b' }
