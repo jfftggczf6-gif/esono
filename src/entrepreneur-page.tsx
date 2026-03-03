@@ -4222,7 +4222,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
           '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
           '<button data-download="html" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#1e3a5f;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-code"></i> HTML</button>' +
           '<button data-download="pdf" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>' +
-          '<a href="/deliverable/diagnostic" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e3a5f;border:1px solid #a3b8d8;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=\'#f0f4ff\'" onmouseout="this.style.background=\'white\'"><i class="fas fa-expand"></i> Pleine page</a>' +
+          '<a href="/deliverable/diagnostic" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e3a5f;border:1px solid #a3b8d8;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#f0f4ff&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>' +
           '</div>';
         el.appendChild(diagBar);
         // ── Iframe ──
@@ -4242,7 +4242,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
           '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
           '<button data-download="docx" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#2563eb;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-word"></i> Word (.docx)</button>' +
           '<button data-download="pdf" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>' +
-          '<a href="/deliverable/bmc_analysis" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e40af;border:1px solid #93c5fd;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=\'#eff6ff\'" onmouseout="this.style.background=\'white\'"><i class="fas fa-expand"></i> Pleine page</a>' +
+          '<a href="/deliverable/bmc_analysis" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e40af;border:1px solid #93c5fd;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#eff6ff&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>' +
           '</div>';
         el.appendChild(bmcBar);
         // ── Iframe ──
@@ -4262,7 +4262,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
           '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
           '<button data-download="docx" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#2563eb;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-word"></i> Word (.docx)</button>' +
           '<button data-download="pdf" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>' +
-          '<a href="/deliverable/sic_analysis" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e40af;border:1px solid #93c5fd;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=\'#eff6ff\'" onmouseout="this.style.background=\'white\'"><i class="fas fa-expand"></i> Pleine page</a>' +
+          '<a href="/deliverable/sic_analysis" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e40af;border:1px solid #93c5fd;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#eff6ff&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>' +
           '</div>';
         el.appendChild(sicBar);
         // ── Iframe ──
@@ -4283,7 +4283,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         fwBar.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-excel" style="font-size:24px;color:#059669"></i><div><div style="font-size:14px;font-weight:700;color:#065f46">📊 Plan Financier Intermédiaire</div><div style="font-size:12px;color:#047857">Framework Analyse PME rempli avec vos données</div></div></div>' +
           '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
           '<button id="btn-fw-excel-top" onclick="downloadFrameworkExcelInline()" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#059669;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(5,150,105,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-download"></i> Télécharger Excel (.xlsx)</button>' +
-          '<a href="/deliverable/framework" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#065f46;border:1px solid #bbf7d0;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=\'#f0fdf4\'" onmouseout="this.style.background=\'white\'"><i class="fas fa-expand"></i> Pleine page</a>' +
+          '<a href="/deliverable/framework" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#065f46;border:1px solid #bbf7d0;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#f0fdf4&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>' +
           '</div>';
         el.appendChild(fwBar);
         // ── Iframe ──
