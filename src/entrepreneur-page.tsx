@@ -3757,14 +3757,20 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
       }
     }
 
-    // ═══ Fetch Plan OVO ID for direct download from main page ═══
+    // ═══ Fetch Plan OVO ID + extraction data for preview and direct download ═══
     let mainPlanOvoId: string | null = null
+    let mainPlanOvoExtraction: any = null
     try {
       const pmeId = `pme_${payload.userId}`
       const planRow = await c.env.DB.prepare(
-        "SELECT id FROM plan_ovo_analyses WHERE user_id = ? AND pme_id = ? AND status = 'filled' ORDER BY created_at DESC LIMIT 1"
+        "SELECT id, extraction_json FROM plan_ovo_analyses WHERE user_id = ? AND pme_id = ? AND status = 'filled' ORDER BY created_at DESC LIMIT 1"
       ).bind(payload.userId, pmeId).first() as any
-      if (planRow?.id) mainPlanOvoId = planRow.id
+      if (planRow?.id) {
+        mainPlanOvoId = planRow.id
+        if (planRow.extraction_json) {
+          try { mainPlanOvoExtraction = JSON.parse(planRow.extraction_json) } catch { /* ignore */ }
+        }
+      }
     } catch { /* ignore */ }
 
     // Fetch chat messages
@@ -3831,6 +3837,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Inter', 'IBM Plex Sans', sans-serif; background: #f9fafb; color: #374151; min-height: 100vh; overflow-x: hidden; }
@@ -4186,6 +4193,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
     const SIC_HTML_TEMPLATE = ${JSON.stringify(sicClaudeHtml)};
     const sources = ${JSON.stringify(allUploads.map((u: any) => ({ id: u.id, filename: u.filename, category: u.category })))};
     const PLAN_OVO_ID = ${JSON.stringify(mainPlanOvoId)};
+    const PLAN_OVO_EXTRACTION = ${JSON.stringify(mainPlanOvoExtraction)};
 
     // ── Mobile sidebar toggle ──
     function toggleSidebar() {
@@ -4363,6 +4371,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         el.innerHTML = renderSICHTML(content, score, sColor);
       } else if (type === 'plan_ovo') {
         el.innerHTML = renderOVOHTML(content, score, sColor);
+        if (window.__ovoChartInit) setTimeout(window.__ovoChartInit, 300);
       } else if (type === 'framework' && FRAMEWORK_HTML_TEMPLATE && FRAMEWORK_HTML_TEMPLATE.length > 100) {
         el.innerHTML = '';
         // ── Download bar above iframe ──
@@ -4582,26 +4591,429 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
     function renderOVOHTML(c, score, col) {
       let html = '<div class="ev2-deliv-view">';
       
-      // ═══ BARRE VERTE — Plan OVO: Excel uniquement ═══
+      // ═══ BARRE VERTE — Plan OVO: Download bar ═══
       html += '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border:1px solid #bbf7d0;border-radius:12px;margin-bottom:20px">';
-      html += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-excel" style="font-size:24px;color:#059669"></i><div><div style="font-size:14px;font-weight:700;color:#065f46">💰 Plan Financier OVO</div><div style="font-size:12px;color:#047857">Fichier Excel avec projections financières</div></div></div>';
+      html += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-excel" style="font-size:24px;color:#059669"></i><div><div style="font-size:14px;font-weight:700;color:#065f46">Plan Financier OVO</div><div style="font-size:12px;color:#047857">Projections financières sur 5 ans</div></div></div>';
       html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
       if (PLAN_OVO_ID) {
-        html += '<button onclick="downloadPlanOVOExcelDirect()" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#059669;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(5,150,105,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-download"></i> T\u00e9l\u00e9charger Excel (.xlsm)</button>';
-      } else {
-        html += '<button data-download="xlsx" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#059669;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(5,150,105,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-download"></i> Excel (.xlsm)</button>';
+        html += '<button onclick="downloadPlanOVOExcelDirect()" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#059669;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(5,150,105,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-download"></i> Télécharger Excel (.xlsm)</button>';
       }
       html += '<a href="/module/plan-ovo" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:#ea580c;color:white;border:1px solid #ea580c;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-wand-magic-sparkles"></i> Module OVO</a>';
-      html += '<a href="/deliverable/plan_ovo" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#065f46;border:1px solid #bbf7d0;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#f0fdf4&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>';
       html += '</div></div>';
-      
-      html += '<div class="ev2-deliv-view__score"><div class="ev2-deliv-view__score-num" style="color:' + col + '">' + score + '/100</div></div>';
-      html += '<div class="ev2-deliv-view__section"><h3>Analyse</h3><p>' + esc(c.analysis||'Projections à générer') + '</p></div>';
-      const proj = c.projections || {};
-      for (const [key, val] of Object.entries(proj)) {
-        html += '<div class="ev2-deliv-view__block"><h4>' + esc(key) + '</h4><p>' + esc(JSON.stringify(val)) + '</p></div>';
+
+      // ═══ CHECK IF WE HAVE EXTRACTION DATA ═══
+      const ext = PLAN_OVO_EXTRACTION;
+      if (!ext || !ext.produits) {
+        html += '<div style="text-align:center;padding:40px;color:#6b7280"><i class="fas fa-chart-line" style="font-size:48px;color:#d1d5db;margin-bottom:16px;display:block"></i><p>Aperçu non disponible — lancez la génération du plan OVO.</p></div>';
+        html += '</div>';
+        return html;
       }
+
+      const hyp = ext.hypotheses || {};
+      const baseYear = hyp.base_year || 2025;
+      const currency = hyp.currency || 'CFA';
+      const yearKeys = ['YEAR_MINUS_2','YEAR_MINUS_1','CURRENT_YEAR','YEAR2','YEAR3','YEAR4','YEAR5'];
+      const yearLabels = [baseYear-2, baseYear-1, baseYear, baseYear+1, baseYear+2, baseYear+3, baseYear+4].map(String);
+
+      // ── COMPUTE PROJECTIONS ──
+      function sumByYear(items, field) {
+        const r = {};
+        yearKeys.forEach(k => { r[k] = 0; });
+        (items || []).forEach(item => {
+          const vals = item[field] || item.montants || {};
+          yearKeys.forEach(k => { r[k] += (vals[k] || 0); });
+        });
+        return r;
+      }
+
+      // CA = sum(prix_unitaire * volume) per product
+      const caByYear = {};
+      const cogsByYear = {};
+      yearKeys.forEach(k => { caByYear[k] = 0; cogsByYear[k] = 0; });
+      (ext.produits || []).forEach(p => {
+        yearKeys.forEach(k => {
+          caByYear[k] += (p.prix_unitaire?.[k] || 0) * (p.volume?.[k] || 0);
+          cogsByYear[k] += (p.cout_unitaire?.[k] || 0) * (p.volume?.[k] || 0);
+        });
+      });
+
+      // Masse salariale
+      const salByYear = {};
+      yearKeys.forEach(k => { salByYear[k] = 0; });
+      (ext.personnel || []).forEach(p => {
+        yearKeys.forEach(k => {
+          const eff = p.effectif?.[k] || 0;
+          const sal = p.salaire_brut_mensuel?.[k] || 0;
+          const cs = p.charges_sociales_pct || 0.1645;
+          salByYear[k] += eff * sal * 12 * (1 + cs);
+        });
+      });
+
+      // Charges opex
+      const cr = ext.compte_resultat || {};
+      const opexByYear = {};
+      yearKeys.forEach(k => { opexByYear[k] = 0; });
+      ['marketing','frais_bureau','autres_depenses','assurances','entretien','tiers'].forEach(cat => {
+        const items = cr[cat]?.items || [];
+        items.forEach(item => {
+          yearKeys.forEach(k => { opexByYear[k] += (item.montants?.[k] || 0); });
+        });
+      });
+      if (cr.voyage_transport?.montant_annuel) {
+        yearKeys.forEach(k => { opexByYear[k] += (cr.voyage_transport.montant_annuel[k] || 0); });
+      }
+
+      // Amortissements
+      const amortByYear = {};
+      yearKeys.forEach((k, i) => {
+        const yr = baseYear - 2 + i;
+        let totalAmort = 0;
+        (ext.investissements || []).forEach(inv => {
+          if (inv.annee_acquisition <= yr) {
+            totalAmort += (inv.valeur_acquisition || 0) * (inv.taux_amortissement || 0.1);
+          }
+        });
+        amortByYear[k] = totalAmort;
+      });
+
+      // Emprunts — annuités
+      const fin = ext.financement || {};
+      const prets = [fin.pret_ovo, fin.pret_famille, fin.pret_banque].filter(Boolean);
+      const annuiteByYear = {};
+      yearKeys.forEach((k, i) => {
+        let totalAnnuite = 0;
+        prets.forEach(p => {
+          if (p.montant && p.duree && p.taux) {
+            const r = p.taux;
+            const n = p.duree;
+            const annuite = p.montant * r * Math.pow(1+r,n) / (Math.pow(1+r,n) - 1);
+            if (i < n) totalAnnuite += annuite;
+          }
+        });
+        annuiteByYear[k] = totalAnnuite;
+      });
+
+      // P&L
+      const margeByYear = {};
+      const ebitdaByYear = {};
+      const ebitByYear = {};
+      const rnByYear = {};
+      const taxRate = hyp.corporate_tax_rate || 0.25;
+      yearKeys.forEach(k => {
+        margeByYear[k] = caByYear[k] - cogsByYear[k];
+        ebitdaByYear[k] = margeByYear[k] - salByYear[k] - opexByYear[k];
+        ebitByYear[k] = ebitdaByYear[k] - amortByYear[k];
+        const taxable = Math.max(0, ebitByYear[k] - annuiteByYear[k] * 0.3); // interets ~30% de l'annuité
+        const impot = taxable > 0 ? taxable * taxRate : 0;
+        rnByYear[k] = ebitByYear[k] - impot;
+      });
+
+      // Trésorerie cumulée (simplifiée)
+      const tresoByYear = {};
+      let tresoCum = ext.tresorerie_mensuelle?.position_initiale || 0;
+      const totalApports = {};
+      yearKeys.forEach((k, i) => {
+        let apport = 0;
+        if (i === 0) apport += (fin.capital_initial || 0);
+        prets.forEach(p => { if (i === 0) apport += (p.montant || 0); });
+        const yr = 'YEAR' + (i <= 2 ? '' : (i));
+        if (fin.apport_nouveaux_actionnaires?.[k]) apport += fin.apport_nouveaux_actionnaires[k];
+        totalApports[k] = apport;
+        const investYr = (ext.investissements || []).filter(inv => inv.annee_acquisition === baseYear - 2 + i).reduce((s, inv) => s + (inv.valeur_acquisition || 0), 0);
+        tresoCum += rnByYear[k] + amortByYear[k] - annuiteByYear[k] + apport - investYr;
+        tresoByYear[k] = tresoCum;
+      });
+
+      function fmt(v) {
+        if (v === undefined || v === null || isNaN(v)) return '—';
+        const abs = Math.abs(v);
+        if (abs >= 1e9) return (v/1e9).toFixed(1) + ' Md';
+        if (abs >= 1e6) return (v/1e6).toFixed(1) + ' M';
+        if (abs >= 1e3) return (v/1e3).toFixed(0) + ' k';
+        return v.toLocaleString('fr-FR');
+      }
+      function fmtFull(v) {
+        if (v === undefined || v === null || isNaN(v)) return '—';
+        return Math.round(v).toLocaleString('fr-FR');
+      }
+      function valColor(v) { return v >= 0 ? '#059669' : '#dc2626'; }
+      function bgColor(v) { return v >= 0 ? '#f0fdf4' : '#fef2f2'; }
+
+      // ════════════════════════════════════════════════
+      // SECTION 1 — RÉSUMÉ PROJECTIONS (tableau)
+      // ════════════════════════════════════════════════
+      html += '<div style="margin-bottom:28px">';
+      html += '<h3 style="font-size:16px;font-weight:700;color:#1f2937;margin:0 0 12px 0;display:flex;align-items:center;gap:8px"><i class="fas fa-table" style="color:#2563eb"></i> Résumé des Projections</h3>';
+      html += '<div style="overflow-x:auto;border-radius:12px;border:1px solid #e5e7eb">';
+      html += '<table style="width:100%;border-collapse:collapse;font-size:13px">';
+      html += '<thead><tr style="background:#f8fafc">';
+      html += '<th style="padding:10px 14px;text-align:left;font-weight:600;color:#374151;border-bottom:2px solid #e5e7eb;white-space:nowrap">Indicateur</th>';
+      yearLabels.forEach(y => {
+        html += '<th style="padding:10px 12px;text-align:right;font-weight:600;color:#374151;border-bottom:2px solid #e5e7eb;white-space:nowrap">' + y + '</th>';
+      });
+      html += '</tr></thead><tbody>';
+
+      const rows = [
+        { label: 'Chiffre d\\'affaires HT', data: caByYear, icon: 'fa-coins', bold: true },
+        { label: 'Coût des ventes (COGS)', data: cogsByYear, icon: 'fa-boxes-stacked', neg: true },
+        { label: 'Marge brute', data: margeByYear, icon: 'fa-arrow-trend-up' },
+        { label: 'Masse salariale', data: salByYear, icon: 'fa-users', neg: true },
+        { label: 'Charges d\\'exploitation', data: opexByYear, icon: 'fa-receipt', neg: true },
+        { label: 'EBITDA', data: ebitdaByYear, icon: 'fa-chart-line', bold: true },
+        { label: 'Amortissements', data: amortByYear, icon: 'fa-building', neg: true },
+        { label: 'Résultat Net', data: rnByYear, icon: 'fa-sack-dollar', bold: true, highlight: true },
+        { label: 'Trésorerie', data: tresoByYear, icon: 'fa-vault', bold: true, highlight: true },
+      ];
+
+      rows.forEach((row, ri) => {
+        const bg = ri % 2 === 0 ? 'white' : '#f9fafb';
+        html += '<tr style="background:' + bg + '">';
+        html += '<td style="padding:8px 14px;font-weight:' + (row.bold ? '600' : '400') + ';color:#374151;border-bottom:1px solid #f3f4f6;white-space:nowrap"><i class="fas ' + row.icon + '" style="width:18px;color:#6b7280;margin-right:6px;font-size:11px"></i>' + row.label + '</td>';
+        yearKeys.forEach(k => {
+          const v = row.data[k] || 0;
+          const color = row.highlight ? valColor(v) : (row.neg ? '#6b7280' : '#374151');
+          const cellBg = row.highlight ? bgColor(v) : 'transparent';
+          html += '<td style="padding:8px 12px;text-align:right;font-weight:' + (row.bold ? '600' : '400') + ';color:' + color + ';border-bottom:1px solid #f3f4f6;background:' + cellBg + ';white-space:nowrap;font-variant-numeric:tabular-nums">' + fmt(v) + '</td>';
+        });
+        html += '</tr>';
+      });
+
+      html += '</tbody></table></div>';
+      html += '<div style="font-size:11px;color:#9ca3af;margin-top:6px;text-align:right">Montants en ' + currency + '</div>';
       html += '</div>';
+
+      // ════════════════════════════════════════════════
+      // SECTION 2 — GRAPHIQUE ÉVOLUTION CA (barres)
+      // ════════════════════════════════════════════════
+      html += '<div style="margin-bottom:28px">';
+      html += '<h3 style="font-size:16px;font-weight:700;color:#1f2937;margin:0 0 12px 0;display:flex;align-items:center;gap:8px"><i class="fas fa-chart-bar" style="color:#2563eb"></i> Évolution du Chiffre d\\'Affaires</h3>';
+      html += '<div style="background:white;border:1px solid #e5e7eb;border-radius:12px;padding:20px">';
+      html += '<canvas id="ovo-ca-chart" style="width:100%;max-height:320px"></canvas>';
+      html += '</div></div>';
+
+      // ════════════════════════════════════════════════
+      // SECTION 3 — INDICATEURS CLÉS (4 cartes)
+      // ════════════════════════════════════════════════
+      // Calcul TRI (IRR simplifié)
+      const totalInvest = (ext.investissements || []).reduce((s, inv) => s + (inv.valeur_acquisition || 0), 0);
+      const cashflows = yearKeys.map(k => rnByYear[k] + amortByYear[k] - annuiteByYear[k]);
+      function computeIRR(cf, invest) {
+        let irr = 0.1;
+        for (let iter = 0; iter < 100; iter++) {
+          let npv = -invest;
+          let dnpv = 0;
+          cf.forEach((c, i) => {
+            npv += c / Math.pow(1 + irr, i + 1);
+            dnpv -= (i + 1) * c / Math.pow(1 + irr, i + 2);
+          });
+          if (Math.abs(npv) < 1000) break;
+          irr = irr - npv / (dnpv || 1);
+          if (irr < -0.99) irr = -0.5;
+          if (irr > 10) irr = 5;
+        }
+        return irr;
+      }
+      const tri = computeIRR(cashflows, totalInvest);
+      const triPct = (tri * 100).toFixed(1);
+
+      // VAN
+      const discount = 0.10;
+      let van = -totalInvest;
+      cashflows.forEach((cf, i) => { van += cf / Math.pow(1 + discount, i + 1); });
+
+      // Seuil de rentabilité (mois)
+      let seuilMois = 0;
+      let cumRn = 0;
+      for (let i = 0; i < yearKeys.length; i++) {
+        const rnAnnuel = rnByYear[yearKeys[i]];
+        if (cumRn + rnAnnuel >= 0 && cumRn < 0) {
+          seuilMois += Math.ceil((-cumRn / rnAnnuel) * 12);
+          break;
+        }
+        cumRn += rnAnnuel;
+        seuilMois += 12;
+        if (cumRn >= 0 && i > 0) { seuilMois -= Math.floor((cumRn / rnAnnuel) * 12); break; }
+      }
+      if (seuilMois <= 0 || seuilMois > 84) seuilMois = rnByYear[yearKeys[2]] > 0 ? 24 : 48;
+
+      // DSCR moyen (Debt Service Coverage Ratio)
+      let dscrSum = 0; let dscrCount = 0;
+      yearKeys.slice(2).forEach(k => {
+        if (annuiteByYear[k] > 0) {
+          dscrSum += ebitdaByYear[k] / annuiteByYear[k];
+          dscrCount++;
+        }
+      });
+      const dscrAvg = dscrCount > 0 ? (dscrSum / dscrCount) : 0;
+
+      html += '<div style="margin-bottom:28px">';
+      html += '<h3 style="font-size:16px;font-weight:700;color:#1f2937;margin:0 0 12px 0;display:flex;align-items:center;gap:8px"><i class="fas fa-gauge-high" style="color:#2563eb"></i> Indicateurs Clés</h3>';
+      html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px">';
+
+      // TRI card with gauge
+      const triColor = tri > 0.15 ? '#059669' : tri > 0.05 ? '#d97706' : '#dc2626';
+      const triDeg = Math.min(Math.max(tri * 100, -50), 100) / 100 * 180;
+      html += '<div style="background:white;border:1px solid #e5e7eb;border-radius:12px;padding:20px;text-align:center">';
+      html += '<div style="font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px">TRI (Taux de Rendement)</div>';
+      html += '<svg width="120" height="70" viewBox="0 0 120 70" style="display:block;margin:0 auto 8px">';
+      html += '<path d="M 10 65 A 50 50 0 0 1 110 65" fill="none" stroke="#e5e7eb" stroke-width="8" stroke-linecap="round"/>';
+      const angle = Math.PI - (Math.max(0, Math.min(triDeg, 180)) / 180 * Math.PI);
+      const x = 60 + 50 * Math.cos(angle);
+      const y = 65 - 50 * Math.sin(angle);
+      html += '<path d="M 10 65 A 50 50 0 ' + (triDeg > 90 ? '0' : '0') + ' 1 ' + x.toFixed(1) + ' ' + y.toFixed(1) + '" fill="none" stroke="' + triColor + '" stroke-width="8" stroke-linecap="round"/>';
+      html += '</svg>';
+      html += '<div style="font-size:28px;font-weight:800;color:' + triColor + '">' + triPct + '%</div>';
+      html += '</div>';
+
+      // VAN card
+      const vanColor = van >= 0 ? '#059669' : '#dc2626';
+      const vanBg = van >= 0 ? 'linear-gradient(135deg,#f0fdf4,#ecfdf5)' : 'linear-gradient(135deg,#fef2f2,#fee2e2)';
+      html += '<div style="background:' + vanBg + ';border:1px solid ' + (van >= 0 ? '#bbf7d0' : '#fecaca') + ';border-radius:12px;padding:20px;text-align:center">';
+      html += '<div style="font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px">VAN (Valeur Actuelle Nette)</div>';
+      html += '<div style="font-size:24px;font-weight:800;color:' + vanColor + '">' + fmt(van) + '</div>';
+      html += '<div style="font-size:11px;color:#9ca3af;margin-top:4px">' + currency + ' (taux ' + (discount*100) + '%)</div>';
+      html += '</div>';
+
+      // Seuil rentabilité card
+      const seuilColor = seuilMois <= 24 ? '#059669' : seuilMois <= 36 ? '#d97706' : '#dc2626';
+      html += '<div style="background:white;border:1px solid #e5e7eb;border-radius:12px;padding:20px;text-align:center">';
+      html += '<div style="font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px">Seuil de Rentabilité</div>';
+      html += '<div style="font-size:28px;font-weight:800;color:' + seuilColor + '">' + seuilMois + '</div>';
+      html += '<div style="font-size:13px;color:#6b7280;margin-top:2px">mois</div>';
+      html += '</div>';
+
+      // DSCR card
+      const dscrColor = dscrAvg >= 1.5 ? '#059669' : dscrAvg >= 1.0 ? '#d97706' : '#dc2626';
+      html += '<div style="background:white;border:1px solid #e5e7eb;border-radius:12px;padding:20px;text-align:center">';
+      html += '<div style="font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px">DSCR Moyen</div>';
+      html += '<div style="font-size:28px;font-weight:800;color:' + dscrColor + '">' + dscrAvg.toFixed(2) + 'x</div>';
+      html += '<div style="font-size:11px;color:#9ca3af;margin-top:4px">Couverture service dette</div>';
+      html += '</div>';
+
+      html += '</div></div>';
+
+      // ════════════════════════════════════════════════
+      // SECTION 4 — PLAN DE FINANCEMENT (tableau)
+      // ════════════════════════════════════════════════
+      const fondsP = fin.capital_initial || 0;
+      const apportNouv = Object.values(fin.apport_nouveaux_actionnaires || {}).reduce((s, v) => s + (v || 0), 0);
+      const empruntOvo = fin.pret_ovo?.montant || 0;
+      const empruntFam = fin.pret_famille?.montant || 0;
+      const empruntBanque = fin.pret_banque?.montant || 0;
+      const totalEmprunts = empruntOvo + empruntFam + empruntBanque;
+      const totalSources = fondsP + apportNouv + totalEmprunts;
+
+      const capex = totalInvest;
+      const bfrInitial = Math.round(caByYear[yearKeys[2]] * 0.15); // ~15% du CA
+      const fraisEtab = Math.round(totalInvest * 0.02);
+      const totalEmplois = capex + bfrInitial + fraisEtab;
+      const equilibre = Math.abs(totalSources - totalEmplois) < totalSources * 0.05;
+
+      html += '<div style="margin-bottom:28px">';
+      html += '<h3 style="font-size:16px;font-weight:700;color:#1f2937;margin:0 0 12px 0;display:flex;align-items:center;gap:8px"><i class="fas fa-scale-balanced" style="color:#2563eb"></i> Plan de Financement</h3>';
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border-radius:12px;border:1px solid #e5e7eb;overflow:hidden">';
+
+      // SOURCES column
+      html += '<div style="background:linear-gradient(135deg,#f0f9ff,#e0f2fe);padding:16px 20px;border-right:1px solid #e5e7eb">';
+      html += '<div style="font-size:13px;font-weight:700;color:#0369a1;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px"><i class="fas fa-arrow-right-to-bracket" style="margin-right:6px"></i> Sources</div>';
+      html += '<div style="display:flex;flex-direction:column;gap:8px">';
+      html += '<div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#374151">Fonds propres</span><span style="font-weight:600;color:#1e40af">' + fmt(fondsP) + '</span></div>';
+      if (apportNouv > 0) html += '<div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#374151">Apports actionnaires</span><span style="font-weight:600;color:#1e40af">' + fmt(apportNouv) + '</span></div>';
+      if (empruntOvo > 0) html += '<div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#374151">Prêt OVO</span><span style="font-weight:600;color:#1e40af">' + fmt(empruntOvo) + '</span></div>';
+      if (empruntFam > 0) html += '<div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#374151">Prêt famille</span><span style="font-weight:600;color:#1e40af">' + fmt(empruntFam) + '</span></div>';
+      if (empruntBanque > 0) html += '<div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#374151">Emprunt bancaire</span><span style="font-weight:600;color:#1e40af">' + fmt(empruntBanque) + '</span></div>';
+      html += '<div style="border-top:2px solid #0369a1;padding-top:8px;margin-top:4px;display:flex;justify-content:space-between;font-size:14px;font-weight:700"><span style="color:#0369a1">TOTAL SOURCES</span><span style="color:#0369a1">' + fmt(totalSources) + '</span></div>';
+      html += '</div></div>';
+
+      // EMPLOIS column
+      html += '<div style="background:linear-gradient(135deg,#fef9f0,#fef3c7);padding:16px 20px">';
+      html += '<div style="font-size:13px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px"><i class="fas fa-arrow-right-from-bracket" style="margin-right:6px"></i> Emplois</div>';
+      html += '<div style="display:flex;flex-direction:column;gap:8px">';
+      html += '<div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#374151">CAPEX (investissements)</span><span style="font-weight:600;color:#92400e">' + fmt(capex) + '</span></div>';
+      html += '<div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#374151">BFR initial</span><span style="font-weight:600;color:#92400e">' + fmt(bfrInitial) + '</span></div>';
+      html += '<div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#374151">Frais d\\'établissement</span><span style="font-weight:600;color:#92400e">' + fmt(fraisEtab) + '</span></div>';
+      html += '<div style="border-top:2px solid #92400e;padding-top:8px;margin-top:4px;display:flex;justify-content:space-between;font-size:14px;font-weight:700"><span style="color:#92400e">TOTAL EMPLOIS</span><span style="color:#92400e">' + fmt(totalEmplois) + '</span></div>';
+      html += '</div></div>';
+
+      html += '</div>';
+      // Equilibre badge
+      html += '<div style="margin-top:8px;text-align:center">';
+      if (equilibre) {
+        html += '<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 16px;border-radius:20px;background:#f0fdf4;color:#059669;font-size:12px;font-weight:600;border:1px solid #bbf7d0"><i class="fas fa-check-circle"></i> Plan équilibré</span>';
+      } else {
+        const ecart = totalSources - totalEmplois;
+        html += '<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 16px;border-radius:20px;background:#fef2f2;color:#dc2626;font-size:12px;font-weight:600;border:1px solid #fecaca"><i class="fas fa-exclamation-triangle"></i> Écart : ' + fmt(ecart) + ' ' + currency + '</span>';
+      }
+      html += '</div></div>';
+
+      // ═══ COMPANY INFO BAR ═══
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:12px 16px;background:#f9fafb;border-radius:10px;border:1px solid #e5e7eb;font-size:12px;color:#6b7280">';
+      html += '<span><i class="fas fa-building" style="margin-right:4px"></i> ' + esc(hyp.company_name || '') + '</span>';
+      html += '<span><i class="fas fa-globe" style="margin-right:4px"></i> ' + esc(hyp.country || '') + '</span>';
+      html += '<span><i class="fas fa-industry" style="margin-right:4px"></i> ' + esc(hyp.sector || '') + '</span>';
+      html += '<span><i class="fas fa-calendar" style="margin-right:4px"></i> Base ' + baseYear + '</span>';
+      html += '</div>';
+
+      html += '</div>';
+
+      // ═══ STORE CHART INIT FUNCTION (called after innerHTML is set) ═══
+      var caArr = yearKeys.map(function(k) { return Math.round(caByYear[k]); });
+      var rnArr = yearKeys.map(function(k) { return Math.round(rnByYear[k]); });
+      window.__ovoChartInit = function() {
+        var canvas = document.getElementById('ovo-ca-chart');
+        if (!canvas || !window.Chart) return;
+        // Destroy existing chart if any
+        if (canvas.__chartInstance) { canvas.__chartInstance.destroy(); }
+        var chart = new Chart(canvas, {
+          type: 'bar',
+          data: {
+            labels: yearLabels,
+            datasets: [{
+              label: 'CA HT (' + currency + ')',
+              data: caArr,
+              backgroundColor: '#2563eb',
+              borderRadius: 6,
+              barPercentage: 0.6
+            }, {
+              label: 'Résultat Net',
+              data: rnArr,
+              backgroundColor: rnArr.map(function(v) { return v >= 0 ? '#059669' : '#dc2626'; }),
+              borderRadius: 6,
+              barPercentage: 0.6
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+              legend: { position: 'top' },
+              tooltip: {
+                callbacks: {
+                  label: function(ctx) {
+                    var v = ctx.raw;
+                    if (Math.abs(v) >= 1e9) return ctx.dataset.label + ': ' + (v/1e9).toFixed(1) + ' Md ' + currency;
+                    if (Math.abs(v) >= 1e6) return ctx.dataset.label + ': ' + (v/1e6).toFixed(1) + ' M ' + currency;
+                    return ctx.dataset.label + ': ' + (v/1e3).toFixed(0) + ' k ' + currency;
+                  }
+                }
+              }
+            },
+            scales: {
+              y: {
+                ticks: {
+                  callback: function(v) {
+                    if (Math.abs(v) >= 1e9) return (v/1e9).toFixed(0) + ' Md';
+                    if (Math.abs(v) >= 1e6) return (v/1e6).toFixed(0) + ' M';
+                    return (v/1e3).toFixed(0) + 'k';
+                  }
+                }
+              }
+            }
+          }
+        });
+        canvas.__chartInstance = chart;
+      };
+
       return html;
     }
 
