@@ -2082,7 +2082,7 @@ function renderPlanOvoModulePage(opts: {
           ${!hasPlan || (planStatus !== 'generated' && planStatus !== 'filled') ? 'disabled title="Plan non encore g\u00E9n\u00E9r\u00E9"' : ''}
           onclick="downloadPlanOVO()">
           <i class="fas fa-download"></i>
-          T\u00E9l\u00E9charger Excel (.xlsx)
+          T\u00E9l\u00E9charger Excel (.xlsm)
         </button>
 
         ${hasPlan && planStatus === 'generated' ? `
@@ -2259,7 +2259,7 @@ function renderPlanOvoModulePage(opts: {
         // Get filename from Content-Disposition header
         const cd = resp.headers.get('Content-Disposition') || '';
         const fnMatch = cd.match(/filename="([^"]+)"/);
-        const filename = fnMatch ? fnMatch[1] : 'Plan_OVO.xlsx';
+        const filename = fnMatch ? fnMatch[1] : 'Plan_OVO.xlsm';
 
         // Create download link
         const blob = await resp.blob();
@@ -7330,7 +7330,7 @@ app.get('/api/plan-ovo/download/:id', async (c) => {
 
     // ═══════════════════════════════════════════════════
     // Step 4: Build filename and return response
-    // Format: Plan_OVO_{COMPANY_NAME}_{YYYYMMDD}.xlsx
+    // Format: Plan_OVO_{COMPANY_NAME}_{YYYYMMDD}.xlsm
     // ═══════════════════════════════════════════════════
     const today = new Date().toISOString().slice(0, 10).replace(/-/g, '')
 
@@ -7348,13 +7348,11 @@ app.get('/api/plan-ovo/download/:id', async (c) => {
       .replace(/^_|_$/g, '')                               // Trim _
       .slice(0, 50)                                        // Max 50 chars
 
-    const filename = `Plan_OVO_${sanitizedName}_${today}.xlsx`
+    const filename = `Plan_OVO_${sanitizedName}_${today}.xlsm`
     console.log(`[Plan OVO Download] Serving file: ${filename} (${excelBytes.length} bytes)`)
 
-    // Determine Content-Type based on actual file content
     // The template is .xlsm (macro-enabled), use the correct MIME type
-    // Browsers & Excel handle both .xlsx and .xlsm via this MIME
-    const contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    const contentType = 'application/vnd.ms-excel.sheet.macroEnabled.12'
 
     return new Response(excelBytes, {
       status: 200,

@@ -3098,7 +3098,12 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
                 { label: '📄 Télécharger HTML', icon: 'fa-file-code', color: '#1e3a5f', onclick: "downloadDeliverable('html')", id: 'btn-download-html' },
                 { label: '📕 Télécharger PDF', icon: 'fa-file-pdf', color: '#7c2d12', onclick: "downloadDeliverable('pdf')", id: 'btn-download-pdf' }
               )
-            } else if (dtype === 'framework' || dtype === 'plan_ovo' || dtype === 'odd') {
+            } else if (dtype === 'plan_ovo') {
+              // Plan OVO → .xlsm (macro-enabled template)
+              downloadButtons.push(
+                { label: '📊 Télécharger Excel (.xlsm)', icon: 'fa-file-excel', color: '#059669', onclick: "downloadDeliverable('xlsx')", id: 'btn-download' }
+              )
+            } else if (dtype === 'framework' || dtype === 'odd') {
               // Excel-type → Excel uniquement
               downloadButtons.push(
                 { label: '📊 Télécharger Excel (.xlsx)', icon: 'fa-file-excel', color: '#059669', onclick: "downloadDeliverable('xlsx')", id: 'btn-download' }
@@ -3264,7 +3269,7 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
         a.href = url;
         const cd = resp.headers.get('Content-Disposition');
         const fnMatch = cd && cd.match(/filename="?([^"]+)"?/);
-        a.download = fnMatch ? fnMatch[1] : 'Plan_OVO_' + USER_NAME.replace(/\\s+/g, '_') + '_' + new Date().toISOString().slice(0,10) + '.xlsx';
+        a.download = fnMatch ? fnMatch[1] : 'Plan_OVO_' + USER_NAME.replace(/\\s+/g, '_') + '_' + new Date().toISOString().slice(0,10) + '.xlsm';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
