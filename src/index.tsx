@@ -8031,6 +8031,33 @@ POINTS DE VIGILANCE (minimum 2) : Catégorie (financier|operationnel|strategique
 
 DÉTECTION DES INCOHÉRENCES entre livrables (BMC↔Framework, BMC↔SIC, Framework↔Plan OVO, SIC↔ODD). Cherche les écarts de CA, de marges, d'effectifs, de segments entre les différents documents. Détaille chaque incohérence trouvée.
 
+RISQUES CONTEXTUELS (par secteur/pays/taille) :
+IDENTIFIE les risques spécifiques au CONTEXTE de l'entreprise en te basant sur kbContext.risques_sectoriels (prioritaire) OU sur la liste générique ci-dessous.
+
+Si kbContext.risques_sectoriels est disponible et non vide → UTILISE cette liste KB (plus précise, spécifique au pays/secteur).
+Si kbContext.risques_sectoriels est vide → utilise la liste générique ci-dessous comme fallback.
+
+1. RISQUES SECTORIELS (selon secteur BMC/Framework) :
+   AGRICULTURE/ÉLEVAGE : saisonnalité (récolte 1x/an), risque climatique, prix matières volatiles, risque sanitaire, dépendance intrants importés, stockage (pertes post-récolte)
+   COMMERCE/DISTRIBUTION : dépendance fournisseur unique, rupture de stock (BFR sous-estimé), concurrence informelle, risque change (importations), saisonnalité
+   SERVICES/CONSULTING : concentration clients, absence récurrence, risque non-paiement, pas de barrières à l'entrée
+   MANUFACTURE/TRANSFORMATION : dépendance énergétique, risque qualité (rebuts), maintenance non provisionnée, approvisionnement matières
+   TECH/DIGITAL : obsolescence rapide (amortissement < 3 ans), dépendance infrastructure, concurrence internationale, coûts R&D non provisionnés
+
+2. RISQUES GÉOGRAPHIQUES (selon pays + zone urbain/rural) :
+   CÔTE D'IVOIRE : risque politique, change XOF, infrastructure routière, coupures électricité fréquentes, coûts logistiques. Rural: internet limité, main-d'œuvre qualifiée rare. Urbain: concurrence intense, coûts immobiliers.
+   SÉNÉGAL : saisonnalité pluviométrie, accès financement rural limité. Rural: internet limité, transport coûteux. Urbain: concurrence Dakar, coûts élevés.
+   BURKINA FASO : insécurité zones rurales, accès internet limité, accès financement difficile. Rural: risques sécuritaires, transport limité.
+   MALI : instabilité politique, accès financement difficile. Rural: risques sécuritaires, accès limité.
+   AUTRES UEMOA : risques génériques Afrique de l'Ouest. Rural: internet/électricité irrégulier. Urbain: concurrence, coûts élevés.
+
+3. RISQUES PAR TAILLE (selon CA projeté) :
+   MICRO (<50M XOF) : dépendance entrepreneur (clé de voûte), pas de trésorerie sécurité, accès financement limité, pas de diversification
+   PETITE PME (50-200M XOF) : structure coûts rigide, croissance limitée par capacité, besoin formalisation
+   MOYENNE PME (>200M XOF) : complexité opérationnelle, besoin management intermédiaire, risque désorganisation croissance
+
+Pour CHAQUE risque contextuel identifié, ajoute-le dans le tableau "risques_contextuels" du JSON avec : categorie ("contextuel_secteur"|"contextuel_geographique"|"contextuel_taille"), pays, zone, gravite ("critique"|"elevee"|"moyenne"|"faible"), probabilite, titre, description (détaillée avec chiffres si possible), impact_financier, mitigation (spécifique au contexte). Minimum 3 risques contextuels.
+
 FORCES (3-7) et OPPORTUNITÉS D'AMÉLIORATION (toutes) avec justification pédagogique.
 
 RECOMMANDATIONS TOP 5-7 classées par impact sur la viabilité (PAS sur le score). Chaque recommandation doit avoir un message encourageant.
@@ -8057,6 +8084,7 @@ RÉPONDS UNIQUEMENT EN JSON avec cette structure EXACTE :
   },
   "points_vigilance": [{ "categorie": string, "niveau": string, "probabilite": string, "titre": string, "description": string, "impact_financier": string, "action_recommandee": string }],
   "incoherences": [{ "type": string, "champ": string, "valeur_bmc": string, "valeur_framework": string, "ecart": string, "explication": string }],
+  "risques_contextuels": [{ "categorie": "contextuel_secteur"|"contextuel_geographique"|"contextuel_taille", "pays": string, "zone": string, "gravite": "critique"|"elevee"|"moyenne"|"faible", "probabilite": "elevee"|"moyenne"|"faible", "titre": string, "description": string, "impact_financier": string, "mitigation": string }],
   "forces": [{ "titre": string, "justification": string }],
   "opportunites_amelioration": [{ "titre": string, "justification": string, "priorite": string }],
   "recommandations": [{ "priorite": number, "titre": string, "detail": string, "impact_viabilite": string, "urgence": string, "action_concrete": string, "message_encourageant": string }],
@@ -8104,9 +8132,9 @@ ${JSON.stringify(kbContext, null, 1).slice(0, 3000)}
 LIVRABLES MANQUANTS : ${missingList.length > 0 ? missingList.join(', ') : 'Aucun (tous disponibles)'}
 ${isPartial ? '\n⚠️ DIAGNOSTIC PARTIEL : Certains livrables manquent. Indique les limites dans ton analyse et ce que les données manquantes auraient apporté.' : ''}
 
-Produis le diagnostic complet en JSON. Sois bienveillant et pédagogique. Score discret. Minimum 2 points_vigilance, 3 forces, 5 recommandations.`
+Produis le diagnostic complet en JSON. Sois bienveillant et pédagogique. Score discret. Minimum 2 points_vigilance, 3 forces, 5 recommandations, 3 risques_contextuels (utilise kbContext.risques_sectoriels si disponible).`
 
-    console.log(`[Diagnostic] ÉTAPE B — Claude call: ${delivParts.length} deliverables, prompt ${userPrompt.length} chars, temp=0.3, maxTokens=6000`)
+    console.log(`[Diagnostic] ÉTAPE B — Claude call: ${delivParts.length} deliverables, prompt ${userPrompt.length} chars, temp=0.3, maxTokens=7000`)
 
     let claudeResult: any
     try {
@@ -8114,7 +8142,7 @@ Produis le diagnostic complet en JSON. Sois bienveillant et pédagogique. Score 
         apiKey,
         systemPrompt,
         userPrompt,
-        maxTokens: 6000,
+        maxTokens: 7000,
         temperature: 0.3,
         timeoutMs: 120_000,
         maxRetries: 2,
@@ -8189,6 +8217,73 @@ Produis le diagnostic complet en JSON. Sois bienveillant et pédagogique. Score 
     if (!claudeResult.recommandations || claudeResult.recommandations.length < 1) {
       claudeResult.recommandations = [{ priorite: 1, titre: 'Compléter les livrables manquants', detail: 'Finalisez les modules restants pour obtenir un diagnostic plus complet.', impact_viabilite: 'Élevé', urgence: 'Court terme', action_concrete: 'Retournez sur le tableau de bord et complétez les modules en attente.', message_encourageant: 'Vous avez déjà fait un excellent travail en arrivant jusqu\'ici !' }]
     }
+
+    // Ensure risques_contextuels — at minimum 1 contextual risk when sector/zone is identifiable
+    if (!claudeResult.risques_contextuels || !Array.isArray(claudeResult.risques_contextuels) || claudeResult.risques_contextuels.length < 1) {
+      claudeResult.risques_contextuels = []
+      // Add default sector risk
+      if (sector && sector !== 'Non défini') {
+        claudeResult.risques_contextuels.push({
+          categorie: 'contextuel_secteur',
+          pays: fiscal.country,
+          zone: zone,
+          gravite: 'moyenne',
+          probabilite: 'moyenne',
+          titre: `Risques sectoriels ${sector}`,
+          description: `Le secteur ${sector} en ${fiscal.country} présente des risques typiques liés à la concurrence, à la saisonnalité et à l'évolution réglementaire.`,
+          impact_financier: 'Impact modéré sur la trésorerie et les marges',
+          mitigation: `Diversifier les sources de revenus et mettre en place une veille sectorielle active pour le secteur ${sector}.`
+        })
+      }
+      // Add default geographic risk
+      claudeResult.risques_contextuels.push({
+        categorie: 'contextuel_geographique',
+        pays: fiscal.country,
+        zone: zone,
+        gravite: 'moyenne',
+        probabilite: 'moyenne',
+        titre: `Risques géographiques ${fiscal.country}`,
+        description: `L'environnement économique en ${fiscal.country} (zone ${zone}) comporte des risques liés à l'infrastructure, aux coupures d'énergie et à l'accès au financement.`,
+        impact_financier: 'Impact variable selon la zone et le secteur',
+        mitigation: `Prévoir des solutions d'alimentation de secours et diversifier les canaux d'accès au financement en ${fiscal.country}.`
+      })
+      // Add default size risk based on CA
+      const pmeForSize = allDeliverables.framework_pme_data || {}
+      const caHist = pmeForSize.historique?.caTotal || pmeForSize.historique?.ca_total || []
+      const caEstimate = caHist.length > 0 ? caHist[caHist.length - 1] : 0
+      const tailleLabel = caEstimate < 50_000_000 ? 'micro-entreprise' : caEstimate < 200_000_000 ? 'petite PME' : 'moyenne PME'
+      claudeResult.risques_contextuels.push({
+        categorie: 'contextuel_taille',
+        pays: fiscal.country,
+        zone: zone,
+        gravite: 'moyenne',
+        probabilite: 'moyenne',
+        titre: `Risques liés à la taille (${tailleLabel})`,
+        description: caEstimate < 50_000_000
+          ? 'En tant que micro-entreprise, la dépendance à l\'entrepreneur est forte. L\'absence de trésorerie de sécurité et l\'accès limité au financement sont des défis courants.'
+          : caEstimate < 200_000_000
+          ? 'En tant que petite PME, la structure de coûts peut devenir rigide. La croissance est souvent limitée par la capacité opérationnelle.'
+          : 'En tant que moyenne PME, la complexité opérationnelle augmente. Le besoin de management intermédiaire et le risque de désorganisation liée à la croissance sont à surveiller.',
+        impact_financier: caEstimate < 50_000_000 ? 'Risque de cessation en cas d\'absence prolongée du dirigeant' : 'Pression sur les marges en phase de croissance',
+        mitigation: caEstimate < 50_000_000
+          ? 'Constituer progressivement une trésorerie de sécurité de 3 mois de charges et documenter les processus clés.'
+          : caEstimate < 200_000_000
+          ? 'Formaliser les processus clés et planifier les recrutements en anticipation de la croissance.'
+          : 'Recruter un management intermédiaire et mettre en place des outils de pilotage adaptés.'
+      })
+    }
+    // Validate each contextual risk has required fields
+    claudeResult.risques_contextuels = claudeResult.risques_contextuels.map((r: any) => ({
+      categorie: r.categorie || 'contextuel_secteur',
+      pays: r.pays || fiscal.country,
+      zone: r.zone || zone,
+      gravite: r.gravite || 'moyenne',
+      probabilite: r.probabilite || 'moyenne',
+      titre: r.titre || 'Risque contextuel identifié',
+      description: r.description || '',
+      impact_financier: r.impact_financier || 'À évaluer',
+      mitigation: r.mitigation || 'Mettre en place un plan de mitigation adapté.'
+    }))
 
     // Generate full HTML report
     const diagHtml = generateDiagnosticReportHtml(claudeResult, sector, fiscal.country, zone)

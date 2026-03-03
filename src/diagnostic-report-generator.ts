@@ -546,6 +546,163 @@ export function generateDeterministicDiagnostic(
     }
   }
 
+  // ═══ RISQUES CONTEXTUELS (par secteur/pays/taille) ═══
+  const risques_contextuels: any[] = []
+  const countryLower = (fiscal.country || '').toLowerCase()
+
+  // --- 1. Risques sectoriels ---
+  // Priorité: kbContext.risques_sectoriels si disponible
+  const kbRisquesSectoriels = kbContext?.risques_sectoriels
+  // KB risks have format: { risque, secteur, pays, source } or { titre, description, gravite, mitigation }
+  const kbRisksHaveDetail = Array.isArray(kbRisquesSectoriels) && kbRisquesSectoriels.length > 0 &&
+    kbRisquesSectoriels.some((r: any) => r.description || r.detail || r.mitigation)
+  
+  if (kbRisksHaveDetail) {
+    // Use KB risks with full detail (prioritized)
+    for (const kr of kbRisquesSectoriels.slice(0, 3)) {
+      risques_contextuels.push({
+        categorie: 'contextuel_secteur',
+        pays: fiscal.country,
+        zone,
+        gravite: kr.gravite || kr.severity || 'moyenne',
+        probabilite: kr.probabilite || kr.probability || 'moyenne',
+        titre: kr.titre || kr.title || kr.risque || `Risque sectoriel ${sector}`,
+        description: kr.description || kr.detail || kr.risque || `Risque identifié dans la base de connaissances pour le secteur ${sector} en ${fiscal.country}.`,
+        impact_financier: kr.impact_financier || kr.financial_impact || 'Impact modéré sur les marges',
+        mitigation: kr.mitigation || kr.action || `Mettre en place un plan de mitigation spécifique pour ce risque sectoriel.`
+      })
+    }
+  } else {
+    // Fallback: generic sector risks
+    const sectorLower = (sector || '').toLowerCase()
+    const sectorRisks: Record<string, Array<{ titre: string; description: string; gravite: string; probabilite: string; impact_financier: string; mitigation: string }>> = {
+      'agriculture': [
+        { titre: 'Saisonnalité et risque climatique', description: 'Le secteur agricole est fortement dépendant des conditions climatiques et des cycles saisonniers. Les récoltes annuelles concentrent les revenus sur quelques mois.', gravite: 'elevee', probabilite: 'elevee', impact_financier: 'Perte potentielle de 30-60% des revenus en cas de mauvaise saison', mitigation: 'Diversifier les cultures, mettre en place une irrigation de secours, constituer un fonds de trésorerie couvrant 6 mois de charges.' },
+        { titre: 'Volatilité des prix des matières premières', description: 'Les prix des intrants agricoles (engrais, semences, phytosanitaires) sont volatils et souvent indexés sur les cours internationaux.', gravite: 'moyenne', probabilite: 'elevee', impact_financier: 'Érosion de 5-15 points de marge brute', mitigation: 'Négocier des contrats d\'approvisionnement à prix fixe sur 6-12 mois et constituer des stocks stratégiques.' },
+        { titre: 'Pertes post-récolte et stockage', description: 'Les pertes post-récolte représentent 20-40% de la production en Afrique de l\'Ouest faute d\'infrastructures de stockage adaptées.', gravite: 'moyenne', probabilite: 'moyenne', impact_financier: 'Manque à gagner de 20-40% de la valeur de la production', mitigation: 'Investir dans des infrastructures de stockage adaptées et des techniques de conservation modernes.' }
+      ],
+      'commerce': [
+        { titre: 'Dépendance fournisseur et rupture de stock', description: 'Le commerce de distribution est vulnérable aux ruptures d\'approvisionnement et à la concentration des sources d\'achat.', gravite: 'elevee', probabilite: 'moyenne', impact_financier: 'Perte de CA de 10-25% par période de rupture', mitigation: 'Diversifier les fournisseurs (minimum 3), constituer un stock de sécurité de 2-3 semaines, négocier des délais de livraison garantis.' },
+        { titre: 'Concurrence du secteur informel', description: 'Le commerce informel représente 60-80% du marché en Afrique de l\'Ouest, avec des prix très compétitifs car exemptés de charges fiscales et sociales.', gravite: 'moyenne', probabilite: 'elevee', impact_financier: 'Pression à la baisse de 10-20% sur les prix de vente', mitigation: 'Se différencier par la qualité, la garantie, le service après-vente et la formalisation (factures, traçabilité).' },
+        { titre: 'BFR sous-estimé et tension de trésorerie', description: 'Le besoin en fonds de roulement est souvent sous-estimé dans le commerce, notamment pour les stocks saisonniers.', gravite: 'moyenne', probabilite: 'moyenne', impact_financier: 'Risque de cessation de paiement en période de pointe', mitigation: 'Modéliser le BFR mensuel avec les pics saisonniers et négocier une ligne de crédit court terme.' }
+      ],
+      'services': [
+        { titre: 'Concentration du portefeuille clients', description: 'Les entreprises de services dépendent souvent de 2-3 clients majeurs représentant plus de 50% du CA.', gravite: 'elevee', probabilite: 'moyenne', impact_financier: 'Perte potentielle de 30-50% du CA si un client majeur est perdu', mitigation: 'Diversifier le portefeuille pour qu\'aucun client ne représente plus de 25% du CA. Développer des contrats récurrents.' },
+        { titre: 'Absence de barrières à l\'entrée', description: 'Le secteur des services est facilement accessible aux nouveaux entrants, créant une pression concurrentielle permanente.', gravite: 'moyenne', probabilite: 'elevee', impact_financier: 'Érosion progressive des marges de 5-10 points', mitigation: 'Développer une expertise différenciante, obtenir des certifications et construire une marque forte.' },
+        { titre: 'Risque de non-paiement', description: 'Les délais de paiement sont souvent longs dans le secteur des services (60-90 jours), avec un risque d\'impayés significatif.', gravite: 'moyenne', probabilite: 'moyenne', impact_financier: 'Créances irrécouvrables de 3-8% du CA', mitigation: 'Mettre en place un processus de relance structuré, demander des acomptes de 30-50% et souscrire une assurance-crédit.' }
+      ],
+      'manufacture': [
+        { titre: 'Dépendance énergétique et coupures électriques', description: 'La production manufacturière est fortement dépendante de l\'approvisionnement énergétique, fréquemment interrompu en Afrique de l\'Ouest.', gravite: 'elevee', probabilite: 'elevee', impact_financier: 'Perte de production de 10-20% et surcoût du groupe électrogène', mitigation: 'Investir dans un groupe électrogène dimensionné et évaluer les solutions solaires pour réduire la dépendance au réseau.' },
+        { titre: 'Approvisionnement en matières premières', description: 'L\'approvisionnement en matières premières est souvent dépendant d\'importations coûteuses avec des délais variables.', gravite: 'moyenne', probabilite: 'moyenne', impact_financier: 'Augmentation des coûts de production de 10-15%', mitigation: 'Développer des sources d\'approvisionnement locales et constituer des stocks stratégiques de 1-2 mois.' },
+        { titre: 'Risque qualité et maintenance', description: 'Les équipements de production nécessitent une maintenance régulière souvent non provisionnée. Les rebuts représentent un coût caché significatif.', gravite: 'moyenne', probabilite: 'moyenne', impact_financier: 'Coûts cachés de 5-10% du CA', mitigation: 'Mettre en place un plan de maintenance préventive et provisionner 3-5% du CA pour la maintenance.' }
+      ],
+      'tech': [
+        { titre: 'Obsolescence technologique rapide', description: 'Les technologies évoluent rapidement, nécessitant des investissements continus en R&D et des amortissements accélérés (< 3 ans).', gravite: 'elevee', probabilite: 'elevee', impact_financier: 'Nécessité de réinvestir 15-25% du CA en R&D', mitigation: 'Adopter des architectures modulaires et scalables. Provisionner un budget R&D de 15-20% du CA.' },
+        { titre: 'Dépendance à l\'infrastructure numérique', description: 'La qualité de la connectivité internet et des infrastructures cloud peut impacter significativement la qualité de service.', gravite: 'moyenne', probabilite: 'moyenne', impact_financier: 'Perte de clients et de productivité', mitigation: 'Mettre en place des solutions de redondance (multi-ISP, CDN, hébergement cloud distribué).' },
+        { titre: 'Concurrence internationale et coûts R&D', description: 'Les entreprises tech locales font face à la concurrence de solutions internationales avec des budgets R&D incomparables.', gravite: 'moyenne', probabilite: 'elevee', impact_financier: 'Difficulté à maintenir l\'avantage concurrentiel', mitigation: 'Se concentrer sur les besoins locaux spécifiques et développer une connaissance terrain inégalée.' }
+      ]
+    }
+
+    // Match sector to risk category
+    let matchedRisks: typeof sectorRisks['agriculture'] | undefined
+    for (const [key, risks] of Object.entries(sectorRisks)) {
+      if (sectorLower.includes(key) || (key === 'agriculture' && (sectorLower.includes('agro') || sectorLower.includes('élevage') || sectorLower.includes('elevage'))) ||
+          (key === 'commerce' && (sectorLower.includes('distribution') || sectorLower.includes('vente'))) ||
+          (key === 'services' && (sectorLower.includes('consulting') || sectorLower.includes('conseil'))) ||
+          (key === 'manufacture' && (sectorLower.includes('transformation') || sectorLower.includes('industri'))) ||
+          (key === 'tech' && (sectorLower.includes('digital') || sectorLower.includes('numérique') || sectorLower.includes('logiciel')))) {
+        matchedRisks = risks
+        break
+      }
+    }
+    if (!matchedRisks) matchedRisks = sectorRisks['services'] // default fallback
+
+    for (const r of matchedRisks) {
+      risques_contextuels.push({
+        categorie: 'contextuel_secteur',
+        pays: fiscal.country,
+        zone,
+        ...r
+      })
+    }
+  }
+
+  // --- 2. Risques géographiques ---
+  const geoRisks: Record<string, Array<{ titre: string; description: string; gravite: string; probabilite: string; impact_financier: string; mitigation: string }>> = {
+    "côte d'ivoire": [
+      { titre: 'Coupures d\'électricité fréquentes', description: `Les coupures d'électricité restent fréquentes en Côte d'Ivoire, particulièrement en zone ${zone}. Elles impactent la productivité et les équipements.`, gravite: 'moyenne', probabilite: 'elevee', impact_financier: 'Perte de productivité de 5-15% et surcoût énergie de secours', mitigation: 'Investir dans un groupe électrogène ou une solution solaire. Provisionner un budget énergie de secours.' },
+      { titre: 'Coûts logistiques et infrastructure routière', description: 'Les coûts de transport et de logistique sont élevés, particulièrement hors d\'Abidjan. L\'état des routes impacte les délais et les coûts.', gravite: zone === 'rural' ? 'elevee' : 'moyenne', probabilite: 'elevee', impact_financier: 'Surcoût logistique de 10-20% vs benchmark international', mitigation: 'Optimiser les circuits de distribution, regrouper les livraisons, négocier des contrats de transport annuels.' }
+    ],
+    "sénégal": [
+      { titre: 'Saisonnalité pluviométrique', description: 'La saisonnalité des pluies au Sénégal impacte de nombreux secteurs, de l\'agriculture au commerce en passant par la construction.', gravite: 'moyenne', probabilite: 'elevee', impact_financier: 'Variation saisonnière de 20-40% du CA', mitigation: 'Planifier l\'activité en tenant compte de la saisonnalité. Constituer une trésorerie de sécurité pour la saison creuse.' },
+      { titre: 'Accès au financement', description: `L'accès au financement bancaire reste limité au Sénégal, particulièrement en zone ${zone}. Les taux d'intérêt sont élevés (8-15%).`, gravite: 'moyenne', probabilite: 'moyenne', impact_financier: 'Coût du crédit élevé réduisant les marges', mitigation: 'Explorer les financements alternatifs : microfinance, fonds d\'impact, financement participatif, lignes DER/ADEPME.' }
+    ],
+    "burkina faso": [
+      { titre: 'Insécurité et accès aux zones rurales', description: 'La situation sécuritaire au Burkina Faso limite l\'accès à certaines zones rurales et impacte l\'activité économique.', gravite: zone === 'rural' ? 'elevee' : 'moyenne', probabilite: zone === 'rural' ? 'elevee' : 'moyenne', impact_financier: 'Restriction de la zone de chalandise et surcoûts de sécurité', mitigation: 'Concentrer les opérations dans les zones sécurisées. Développer des canaux de distribution alternatifs (digital).' },
+      { titre: 'Accès limité à Internet et au digital', description: 'La pénétration d\'Internet reste faible au Burkina Faso (environ 25%), limitant les opportunités digitales.', gravite: 'moyenne', probabilite: 'elevee', impact_financier: 'Limitation du marché adressable via le digital', mitigation: 'Privilégier les solutions mobile-first (USSD, SMS) et développer un réseau de distribution physique.' }
+    ],
+    "mali": [
+      { titre: 'Instabilité politique et économique', description: 'L\'instabilité politique au Mali crée un environnement d\'affaires incertain avec des risques réglementaires accrus.', gravite: 'elevee', probabilite: 'elevee', impact_financier: 'Risque de perturbation des activités et de l\'accès aux marchés', mitigation: 'Diversifier les marchés géographiques. Constituer une trésorerie de sécurité de 6 mois minimum.' },
+      { titre: 'Accès au financement difficile', description: 'Le secteur bancaire malien est prudent et l\'accès au crédit est limité, particulièrement pour les PME.', gravite: 'moyenne', probabilite: 'elevee', impact_financier: 'Croissance limitée par le manque de financement', mitigation: 'Explorer les financements régionaux (BOAD, BAD) et les fonds d\'investissement à impact.' }
+    ]
+  }
+
+  // Match country
+  let matchedGeoRisks = geoRisks[countryLower]
+  if (!matchedGeoRisks) {
+    // Default UEMOA risks
+    matchedGeoRisks = [
+      { titre: `Environnement économique ${fiscal.country}`, description: `L'environnement économique en ${fiscal.country} (zone UEMOA) présente des défis liés à l'infrastructure, à l'accès au financement et à la stabilité du cadre réglementaire.`, gravite: 'moyenne', probabilite: 'moyenne', impact_financier: 'Impact variable selon le secteur et la localisation', mitigation: `Diversifier les sources de revenus et constituer une trésorerie de sécurité de 3-6 mois de charges.` },
+      { titre: zone === 'rural' ? 'Internet et électricité irréguliers' : 'Concurrence et coûts élevés en zone urbaine', description: zone === 'rural' ? 'L\'accès à Internet et à l\'électricité est irrégulier en zone rurale, impactant les opérations quotidiennes.' : 'La concurrence est intense en zone urbaine avec des coûts d\'exploitation élevés (loyer, main-d\'œuvre).', gravite: 'moyenne', probabilite: zone === 'rural' ? 'elevee' : 'moyenne', impact_financier: zone === 'rural' ? 'Perte de productivité et limitation des outils digitaux' : 'Pression sur les marges et les coûts fixes', mitigation: zone === 'rural' ? 'Investir dans des solutions autonomes (solaire, communication satellite/4G).' : 'Se différencier par la qualité de service et optimiser les coûts de structure.' }
+    ]
+  }
+
+  for (const r of matchedGeoRisks) {
+    risques_contextuels.push({
+      categorie: 'contextuel_geographique',
+      pays: fiscal.country,
+      zone,
+      ...r
+    })
+  }
+
+  // --- 3. Risques par taille ---
+  const tailleLabel = currentCA < 50_000_000 ? 'micro-entreprise' : currentCA < 200_000_000 ? 'petite PME' : 'moyenne PME'
+  
+  const sizeRisks: Record<string, { titre: string; description: string; gravite: string; probabilite: string; impact_financier: string; mitigation: string }> = {
+    'micro-entreprise': {
+      titre: 'Dépendance à l\'entrepreneur (personne clé)',
+      description: `En tant que micro-entreprise (CA < 50M FCFA), l'entreprise dépend fortement de son fondateur. L'absence de trésorerie de sécurité et l'accès limité au financement sont des défis courants. La diversification est limitée.`,
+      gravite: 'elevee',
+      probabilite: 'elevee',
+      impact_financier: 'Risque de cessation d\'activité en cas d\'absence du dirigeant. Accès limité aux financements structurés.',
+      mitigation: 'Documenter tous les processus clés, former un(e) adjoint(e), constituer progressivement une trésorerie de sécurité de 3 mois de charges. Explorer le micro-crédit et les tontines formalisées.'
+    },
+    'petite PME': {
+      titre: 'Structure de coûts rigide et croissance contrainte',
+      description: `En tant que petite PME (CA 50-200M FCFA), l'entreprise fait face à une structure de coûts qui se rigidifie. La croissance est souvent limitée par la capacité opérationnelle et le besoin de formalisation croissant.`,
+      gravite: 'moyenne',
+      probabilite: 'elevee',
+      impact_financier: 'Risque de plafonnement de la croissance. Augmentation des coûts de formalisation (comptabilité, social, fiscal).',
+      mitigation: 'Formaliser les processus de production et de vente. Recruter un(e) comptable ou externaliser la comptabilité. Planifier les recrutements en anticipation de la croissance.'
+    },
+    'moyenne PME': {
+      titre: 'Complexité opérationnelle et besoin de management',
+      description: `En tant que moyenne PME (CA > 200M FCFA), l'entreprise fait face à une complexité opérationnelle croissante. Le besoin de management intermédiaire et les risques de désorganisation liés à la croissance sont à surveiller.`,
+      gravite: 'moyenne',
+      probabilite: 'moyenne',
+      impact_financier: 'Risque de désorganisation impactant la qualité et la rentabilité. Coûts de structure en augmentation.',
+      mitigation: 'Recruter des managers intermédiaires qualifiés. Mettre en place un ERP ou des outils de pilotage adaptés. Formaliser la gouvernance (comité de direction, réunions régulières).'
+    }
+  }
+
+  risques_contextuels.push({
+    categorie: 'contextuel_taille',
+    pays: fiscal.country,
+    zone,
+    ...sizeRisks[tailleLabel]
+  })
+
   // ═══ RÉSUMÉ EXÉCUTIF ═══
   const livrablesList = Object.entries(sources).filter(([, v]) => v).map(([k]) => k)
   const missingList = Object.entries(sources).filter(([, v]) => !v).map(([k]) => k)
@@ -633,6 +790,7 @@ export function generateDeterministicDiagnostic(
     },
     points_vigilance,
     incoherences,
+    risques_contextuels,
     forces,
     opportunites_amelioration: opportunites,
     recommandations,
@@ -676,6 +834,7 @@ export function generateDiagnosticReportHtml(
   const recos = data.recommandations || []
   const benchmarks = data.benchmarks || {}
   const resume = data.resume_executif || ''
+  const risquesCtx = data.risques_contextuels || []
   const livrables = data.livrables_analyses || {}
   const ctx = data.contexte_pays || {}
 
@@ -849,6 +1008,48 @@ export function generateDiagnosticReportHtml(
     </div>
   ` : ''
 
+  // Risques Contextuels cards
+  const catIcons: Record<string, { icon: string; label: string; color: string; bg: string }> = {
+    'contextuel_secteur': { icon: 'fa-industry', label: 'Sectoriel', color: '#7c3aed', bg: '#f5f3ff' },
+    'contextuel_geographique': { icon: 'fa-map-location-dot', label: 'Géographique', color: '#0284c7', bg: '#f0f9ff' },
+    'contextuel_taille': { icon: 'fa-building', label: 'Taille', color: '#ea580c', bg: '#fff7ed' }
+  }
+  const risquesCtxHtml = risquesCtx.length > 0 ? `
+    <div style="background:white;border:1px solid #e2e8f0;border-radius:16px;padding:24px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+      <div style="font-size:16px;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:10px;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #f1f5f9">
+        <i class="fas fa-triangle-exclamation" style="color:#dc2626;font-size:18px"></i> Risques Contextuels (${risquesCtx.length})
+        <span style="font-size:11px;font-weight:500;color:#64748b;margin-left:auto">Secteur / Géographie / Taille</span>
+      </div>
+      ${risquesCtx.map((r: any) => {
+        const cat = catIcons[r.categorie] || catIcons['contextuel_secteur']
+        return `
+        <div style="background:${cat.bg};border:1px solid ${cat.color}22;border-left:4px solid ${cat.color};border-radius:0 12px 12px 0;padding:16px 20px;margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+            <span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;padding:2px 8px;border-radius:4px;color:white;background:${cat.color}">
+              <i class="fas ${cat.icon}" style="margin-right:4px"></i>${cat.label}
+            </span>
+            <span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;padding:2px 8px;border-radius:4px;color:white;background:${niveauColor(r.gravite)}">${esc(r.gravite)}</span>
+            <span style="font-size:10px;color:#6b7280;font-weight:600">${esc(r.pays)} ${r.zone ? '(' + esc(r.zone) + ')' : ''}</span>
+            <span style="font-size:10px;color:#6b7280;font-weight:600;margin-left:auto">Probabilité: ${esc(r.probabilite)}</span>
+          </div>
+          <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:6px">${esc(r.titre)}</div>
+          <p style="font-size:12px;color:#475569;margin:0 0 10px 0;line-height:1.6">${esc(r.description)}</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div style="background:rgba(0,0,0,0.03);border-radius:8px;padding:8px 12px">
+              <span style="font-size:10px;color:#dc2626;font-weight:700;display:block;margin-bottom:2px">💥 Impact financier</span>
+              <span style="font-size:11px;color:#0f172a">${esc(r.impact_financier)}</span>
+            </div>
+            <div style="background:rgba(0,0,0,0.03);border-radius:8px;padding:8px 12px">
+              <span style="font-size:10px;color:#059669;font-weight:700;display:block;margin-bottom:2px">🛡️ Mitigation</span>
+              <span style="font-size:11px;color:#0f172a">${esc(r.mitigation)}</span>
+            </div>
+          </div>
+        </div>
+        `
+      }).join('')}
+    </div>
+  ` : ''
+
   // ═══ ASSEMBLE FULL HTML ═══
   return `<!DOCTYPE html>
 <html lang="fr">
@@ -950,6 +1151,9 @@ export function generateDiagnosticReportHtml(
 
     <!-- ═══ INCOHÉRENCES ═══ -->
     ${incohHtml}
+
+    <!-- ═══ RISQUES CONTEXTUELS ═══ -->
+    ${risquesCtxHtml}
 
     <!-- ═══ FORCES & OPPORTUNITÉS ═══ -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
