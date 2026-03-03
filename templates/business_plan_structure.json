@@ -1,0 +1,317 @@
+{
+  "sections": [
+    {
+      "level": 1,
+      "title": "INTRODUCTION",
+      "content_hints": [
+        "Ce document fournit des indications sur les éléments qui doivent normalement figurer dans un Business Plan. Celui-ci se compose de trois éléments :",
+        "Présentation de votre entreprise : soit un bref aperçu de votre entreprise.",
+        "Activités de votre entreprise : soit des informations approfondies sur des questions telles que les processus, les ventes, l'équipe, les finances, etc.",
+        "Le Business Plan est un document essentiel pour l'investisseur. Il doit lui présenter clairement comment et pourquoi l'entreprise a vu le jour, quelle est la position de votre entreprise sur le marché et pourquoi l'investissement dans le projet est nécessaire pour assurer la croissance de l'entrepri",
+        "Ce modèle n'est pas obligatoire. Vous êtes libre d'utiliser un autre modèle pour votre Business Plan. Nous vous le recommandons tout particulièrement si vous en disposez déjà d'un. Vous pouvez aussi utiliser ce document pour vérifier si votre Business Plan existant contient toutes les informations n"
+      ],
+      "subsections": [],
+      "questions": [
+        "Projet pour lequel vous avez besoin d'un investissement : Comment ce projet conduit-il à la croissance de votre entreprise ? Quel est l'impact du projet ? Quels sont les fonds nécessaires ?  etc."
+      ]
+    },
+    {
+      "level": 1,
+      "title": "PRÉSENTATION DE L'ENTREPRISE",
+      "content_hints": [
+        "Ce chapitre donne au lecteur un premier aperçu de votre entreprise."
+      ],
+      "subsections": [
+        {
+          "level": 2,
+          "title": "Informations sur l'entreprise :",
+          "content_hints": [],
+          "questions": []
+        },
+        {
+          "level": 2,
+          "title": "Résumé de la gestion :",
+          "content_hints": [
+            "Ce résumé met en évidence les principaux éléments du Business Plan et les projets pour lesquels vous avez besoin d'un financement. Il doit encourager les investisseurs à lire le Business Plan dans son intégralité et à entamer des discussions ou des négociations avec vous.",
+            "Bien que le Business Plan commence par le résumé, celui-ci est rédigé à la fin. Vous devez d'abord écrire toutes les informations des chapitres suivants avant de rédiger le résumé."
+          ],
+          "questions": []
+        },
+        {
+          "level": 2,
+          "title": "Revue historique :",
+          "content_hints": [
+            "Décrivez brièvement l'évolution de l'entreprise depuis sa création jusqu'à aujourd'hui."
+          ],
+          "questions": [
+            "Quand l'entreprise a-t-elle démarré ?",
+            "Dans quels buts avez-vous créé votre entreprise ?",
+            "Quelles sont vos grandes réalisations, les moments clés?"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "Vision, mission et valeurs :",
+          "content_hints": [
+            "A : Vision :",
+            "La vision doit être inspirante et agir comme un guide pour votre équipe.",
+            "B : La mission :",
+            "Définition de l'activité de l'entreprise, qui elle impacte, ce qu'elle fait, ses objectifs et son approche pour atteindre ces objectifs.",
+            "Cela doit être court : 1 à 3 phrases environ.",
+            "C : Valeurs :",
+            "Les concepts qui guident votre entreprise et qui représentent votre engagement. Les valeurs de l'entreprise peuvent vous aider à prendre des décisions, à favoriser une culture du travail d'équipe et de la collaboration.",
+            "Listez cinq valeurs au maximum, accompagnées d'un exemple expliquant pourquoi elles sont importantes pour vous et/ou comment vous les appliquez. Exemples de valeurs : intégrité, plaisir, diversité, innovation, qualité, honnêteté, etc."
+          ],
+          "questions": [
+            "Pourquoi l'entreprise existe-t-elle ? Quel est le but ultime de l'entreprise à long terme ?"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "L'entreprise :",
+          "content_hints": [
+            "A :Description générale :",
+            "B :L'avenir :",
+            "Formulez des objectifs à court terme (1 an) et à long terme (3 à 5 ans). Les objectifs doivent être formulés selon la méthode SMART (Spécifique, Mesurable, Atteignable, Réaliste, limité dans le Temps). Ainsi, évitez d’écrire \"je veux vendre plus\", mais privilégiez \"d'ici 2025, je veux augmenter de 2"
+          ],
+          "questions": [
+            "Où votre entreprise est-elle basée, donnez quelques informations sur le bâtiment, êtes-vous propriétaire du bâtiment/du terrain ?",
+            "Comment votre entreprise est-elle enregistrée (sa forme juridique), qui sont les actionnaires, comment avez-vous financé le démarrage ?",
+            "Quels processus utilisez-vous ? Quelle technologie utilisez-vous ? Quelles sont les machines et les équipements dont vous disposez ?",
+            "En quoi votre entreprise est-elle innovante ? Prévoyez vous une innovation ?",
+            "Comment organisez vous les ventes, à qui vendez-vous et où vendez-vous ?",
+            "Comment la logistique et la distribution sont-elles gérées ?",
+            "Quels sont vos projets à court et à long terme en ce qui concerne la croissance du marché, la croissance de l'entreprise, l'innovation de vos produits ou de vos processus ?",
+            "Quelles sont vos perspectives de croissance ?"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "Analyse SWOT & gestion des risques :",
+          "content_hints": [
+            "Une analyse SWOT identifie les forces, les faiblesses, les opportunités et les menaces de votre entreprise.",
+            "Gestion des risques :",
+            "Si l'analyse SWOT se concentre sur la situation actuelle de l'entreprise, il est également utile de réfléchir aux menaces qui pèsent sur l'avenir. C'est ce que nous appelons les risques. Il est important d'avoir un plan pour atténuer les risques au cas où ils se produiraient."
+          ],
+          "questions": [
+            "Quelles sont les faiblesses et les forces de votre entreprise (interne) ?",
+            "Quelles sont les menaces et les opportunités liées à l'environnement externe (économie, politique, climat, culture, etc.) ?",
+            "Quelles sont les actions entreprises pour exploiter les forces et les opportunités ?",
+            "Quelles sont les mesures prises pour atténuer ou améliorer les faiblesses et les menaces ?",
+            "Quels sont les risques externes généraux que vous envisagez ? Politique, inflation, pandémie, catastrophes naturelles, etc. Quelle est la gravité de ces risques pour votre entreprise et que ferez-vous pour les atténuer ?",
+            "Quels risques externes voyez-vous sur le marché ? Par exemple, de nouveaux concurrents, des ventes inférieures aux prévisions, la rareté ou l'augmentation des prix des intrants. Quelle est la gravité de ces risques pour votre entreprise et comment envisagez-vous d'y réagir ?",
+            "Quels sont les risques internes susceptibles de se produire ? Par exemple, maladie du propriétaire/directeur général, départ de membres clés du personnel, panne de machines. Quelle serait la gravité de ces risques pour votre entreprise et comment envisagez-vous d'y faire face s'ils se produisent ?"
+          ]
+        }
+      ]
+    },
+    {
+      "level": 1,
+      "title": "OPÉRATIONS COMMERCIALES",
+      "content_hints": [
+        "Ce chapitre fournit des informations plus approfondies et détaillées sur tous les aspects de votre entreprise."
+      ],
+      "subsections": [
+        {
+          "level": 2,
+          "title": "Modèle de l'entreprise :",
+          "content_hints": [
+            "A :Produit/service et proposition de valeur unique :",
+            "B :Clients, canaux d’accès et relations avec les clients :",
+            "Décrivez vos clients aussi concrètement que possible dans des groupes cibles (par exemple, \"femmes de la classe moyenne âgées de 20 à 30 ans sans enfants\").",
+            "C :Revenus et dépenses :",
+            "D :Principales activités, ressources et partenaires :"
+          ],
+          "questions": [
+            "Quels sont les produits ou services que vous proposez ?",
+            "Quel(s) problème(s) ou besoin(s) résout-il ?",
+            "En quoi votre produit ou service est-il unique ? Quels avantages offre-t-il par rapport à ses concurrents/équivalents ?",
+            "Qui sont vos clients ? Comment savez-vous que votre produit/service répond à leurs besoins ou résout leur problème ?",
+            "Quels canaux de communication utilisez-vous pour atteindre vos clients ? Développez-vous une relation à long terme avec vos clients et, si oui, comment ?",
+            "Quels sont les canaux de distribution que vous utilisez ? Comment vos produits/services atteignent-ils les clients ?",
+            "Quelles sont vos principales sources de revenus ?",
+            "Quels sont vos principaux postes de dépenses ?",
+            "Comment vos produits/services sont-ils créés ? Que produisez-vous vous-même et que sous-traitez-vous ?",
+            "Quelles sont les ressources (personnes, biens, argent, etc.) dont vous disposez et de quoi avez-vous besoin ?",
+            "Avec quels partenaires travaillez-vous (fournisseurs, vendeurs, conseillers, etc.) ?"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "Marché, concurrence et environnement :",
+          "content_hints": [
+            "A :Marché et potentiel de marché :",
+            "B :Compétitivité :",
+            "C :Analyses et tendances du marché :"
+          ],
+          "questions": [
+            "Quel est l’état votre marché ? Quelle est la taille du marché ? Quel est votre marché potentiel ? Avez-vous des preuves du potentiel de croissance de votre marché ou ces preuves sont-elles basées sur des hypothèses ?",
+            "Souhaitez-vous étendre votre présence sur le marché existant ou cibler de nouveaux marchés ? Dans l'affirmative, décrivez les nouveaux marchés et expliquez pourquoi vous y voyez un potentiel.",
+            "Avez-vous réalisé une étude de marché ?",
+            "Quelles sont les conditions essentielles pour conquérir le marché ?",
+            "Qui sont vos principaux concurrents ?",
+            "Quels sont leurs objectifs et leur vision ? Que propose-t-elle au marché ?",
+            "Quelles sont leurs forces et leurs faiblesses ?",
+            "Comment vous différencier de la concurrence ?",
+            "Comment le marché a-t-il évolué ces dernières années ?",
+            "Quelles sont les tendances/évolutions dans votre environnement qui peuvent affecter votre entreprise ? Pensez aux tendances sociales, économiques, technologiques et sectorielles."
+          ]
+        },
+        {
+          "level": 2,
+          "title": "Stratégie de vente et de marketing : Les 5P",
+          "content_hints": [
+            "A :Produit (ou service) :",
+            "B :Point(s) de vente :",
+            "C :Prix :",
+            "Détermination du prix de revient et du prix de vente, politique des prix, vision",
+            "Si vous vendez différents produits, fournissez les informations par produit.",
+            "D :Promotion :",
+            "E :Personnel :"
+          ],
+          "questions": [
+            "Pourquoi votre produit aura-t-il du succès ? Comment vous assurez-vous que vos produits/services répondent aux besoins du marché ?",
+            "Où les produits sont-ils proposés ? L'emplacement du marché est-il favorable ?",
+            "Pourquoi est-ce le meilleur endroit pour vendre votre produit (avantage concurrentiel) ?",
+            "Comment vous positionnez-vous sur le marché en termes de stratégie de prix ?",
+            "Quel est le prix de vente et quel est le prix de revient (et quelle est la marge) ?",
+            "Comment allez-vous promouvoir et commercialiser votre produit ?",
+            "Comment allez-vous entretenir les relations avec les clients ?",
+            "Disposez-vous d'un bon directeur des ventes et du marketing ou comment envisagez-vous d'en attirer un ?",
+            "Disposez-vous d'une bonne équipe de vente et de marketing ? Comment sont-ils managés ?"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "Équipe et organisation :",
+          "content_hints": [
+            "A :L'équipe de direction :",
+            "Quelle est leur formation, leur expérience professionnelle, leurs qualités et compétences, etc.",
+            "B :Le personnel :",
+            "C :Organigramme :",
+            "Fournir un organigramme qui visualise la structure de l'entreprise et la répartition des tâches et des responsabilités.",
+            "D :Autres parties prenantes",
+            "Etc."
+          ],
+          "questions": [
+            "Qui fait partie de votre équipe de direction ?",
+            "Quels sont les profils manquants ? Quelles sont les connaissances, l'expérience et les compétences nécessaires ?",
+            "Comment envisagez-vous de recruter de nouveaux membres pour l'équipe de direction ?",
+            "Combien de personnes sont employées ? A temps plein ou à temps partiel ? Sur la base d'un contrat ou d'honoraires journaliers ?",
+            "Quelles sont les qualifications du personnel ? Disposez-vous d'un personnel possédant les bonnes qualifications ou devez-vous attirer d'autres personnes ou davantage ? Comment allez-vous procéder ?",
+            "Disposez-vous d'une politique de ressources humaines ?",
+            "Avez-vous un conseil d'administration ? Quel est le rôle du conseil d'administration ? Qui fait partie du conseil d'administration ? À quelle fréquence le conseil d'administration se réunit-il ?",
+            "Avez-vous des investisseurs ?",
+            "Y a-t-il des conseillers impliqués (formels ou informels) ? Sur quoi donnent-ils des conseils ? S'agit-il de conseils ad hoc ou structurels ?"
+          ]
+        }
+      ]
+    },
+    {
+      "level": 1,
+      "title": "VOTRE PROJET :",
+      "content_hints": [
+        "Ce chapitre fournit des informations sur le projet pour lequel vous avez besoin d'un investissement externe."
+      ],
+      "subsections": [
+        {
+          "level": 2,
+          "title": "Description générale :",
+          "content_hints": [],
+          "questions": [
+            "Quel est le projet que vous envisagez de mettre en œuvre et pour lequel vous recherchez un financement externe ?",
+            "Quelle est la situation actuelle et comment le projet contribuera-t-il au développement et à la croissance de votre entreprise ?",
+            "Combien de temps durera la mise en œuvre du projet, quand commencera-t-elle ? À quoi ressemblera la mise en œuvre ?",
+            "Quel est l'objectif de ce projet ? Expansion de la production, amélioration des produits, production plus efficace, etc."
+          ]
+        },
+        {
+          "level": 2,
+          "title": "Impact :",
+          "content_hints": [
+            "Le projet doit au moins avoir un impact positif sur l'un des domaines mentionnés ci-dessus (social, environnemental, économique)."
+          ],
+          "questions": [
+            "Quel est l'impact social du projet ? Quel groupe cible bénéficiera du projet et comment ?",
+            "Quel est l'impact environnemental du projet ? Aura-t-il des effets positifs sur la nature, le climat, la biodiversité, l'eau, etc.",
+            "Quel est l'impact économique du projet ? Créera-t-il des emplois ? Allez-vous employer davantage de personnes et/ou générer des revenus pour les fournisseurs ?"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "Financier :",
+          "content_hints": [
+            "A :Plan d'investissement :",
+            "Fournir des preuves des montants nécessaires (par exemple, un devis pour une machine)",
+            "B :Plan financier :",
+            "Le plan financier doit démontrer que l'investissement conduit à une augmentation des revenus et à la croissance de l'entreprise.",
+            "Mentionnez les chiffres de base dans le plan d'affaires (voir tableau ci-dessous) et les chiffres détaillés dans le plan financier.",
+            "Analysez votre comptabilité et donnez les raisons pour lesquelles vous avez besoin d'un financement externe et ne pouvez pas financer l'investissement avec vos propres revenus.",
+            "Complétez le tableau ci-dessous à la main ou copiez ces informations à partir de votre plan financier.",
+            "Les chiffres ci-dessus sont tirés de votre plan financier détaillé. Utilisez pour cela le modèle de plan financier de l'OVO."
+          ],
+          "questions": [
+            "Quels sont les investissements nécessaires et pourquoi ?",
+            "L'échelonnement : Quels sont les investissements nécessaires aujourd'hui et ceux qui le seront plus tard ?",
+            "Comment gérerez-vous le plan d'investissement ?",
+            "Comment comptez-vous financer le plan d'investissement ?",
+            "Comment allez-vous gérer le plan financier ?"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "Attentes vis-à-vis d’OVO ?",
+          "content_hints": [
+            "A :Financier :",
+            "B :Expertise :"
+          ],
+          "questions": [
+            "Quel est le montant demandé par l'entrepreneur à OVO ? À quoi servira-t-il ?",
+            "Quelle sera la contribution de l'entrepreneur au montant nécessaire à l'investissement ?",
+            "D'autres investisseurs seront-ils approchés en plus d'OVO ? Pour quoi et pour quels montants ?",
+            "De quel type d'expertise avez-vous besoin pour que l'investissement soit couronné de succès ? (technique, marketing, etc.)",
+            "De quelle manière souhaitez-vous poursuivre le coaching?"
+          ]
+        }
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "index": 0,
+      "rows": 8,
+      "cols": 2,
+      "headers": [
+        "Nom",
+        ""
+      ]
+    },
+    {
+      "index": 1,
+      "rows": 2,
+      "cols": 2,
+      "headers": [
+        "Points forts (internes)\n-\n-",
+        "Faiblesses (internes)\n-\n-"
+      ]
+    },
+    {
+      "index": 2,
+      "rows": 12,
+      "cols": 4,
+      "headers": [
+        "Plan financier",
+        "1ère année",
+        "2ème année",
+        "3ème année"
+      ]
+    }
+  ],
+  "metadata": {
+    "total_paragraphs": 295,
+    "total_non_empty": 159,
+    "total_tables": 3,
+    "total_sections_h1": 4,
+    "total_subsections_h2": 14
+  }
+}

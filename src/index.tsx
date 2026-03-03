@@ -9124,9 +9124,164 @@ app.post('/api/business-plan/generate', async (c) => {
     if (!payload) return c.json({ error: 'Token invalide' }, 401)
 
     const db = c.env.DB
+    const apiKey = c.env.ANTHROPIC_API_KEY
     const pmeId = `pme_${payload.userId}`
 
-    // ═══ STEP 1: Fetch all deliverables in parallel ═══
+    // ═══════════════════════════════════════════════════════════════
+    // STEP A — Template Structure (hardcoded from parsed DOCX)
+    // ═══════════════════════════════════════════════════════════════
+    const templateStructure = {
+      total_pages: 50,
+      total_sections: 4,
+      total_subsections: 14,
+      total_paragraphs: 295,
+      placeholders_count: 45,
+      sections: [
+        {
+          h1: "INTRODUCTION",
+          placeholders: [
+            "Aperçu de l'entreprise",
+            "Activités de l'entreprise (processus, ventes, équipe, finances)",
+            "Position sur le marché et justification de l'investissement",
+            "Projet pour lequel un investissement est nécessaire : croissance, impact, fonds nécessaires"
+          ]
+        },
+        {
+          h1: "PRÉSENTATION DE L'ENTREPRISE",
+          subsections: [
+            {
+              h2: "Informations sur l'entreprise",
+              placeholders: ["Nom", "Site web", "Personne en contact", "Adresse", "Téléphone", "Email", "Date de création", "Forme juridique"]
+            },
+            {
+              h2: "Résumé de la gestion",
+              placeholders: ["Synthèse des éléments clés du Business Plan", "Projets nécessitant un financement"]
+            },
+            {
+              h2: "Revue historique",
+              placeholders: ["Date de démarrage", "Buts de la création", "Grandes réalisations et moments clés"]
+            },
+            {
+              h2: "Vision, mission et valeurs",
+              placeholders: ["Vision inspirante à long terme", "Mission (1-3 phrases)", "5 valeurs maximum avec exemples"]
+            },
+            {
+              h2: "L'entreprise",
+              placeholders: [
+                "Description générale", "Objectifs SMART court terme (1 an) et long terme (3-5 ans)",
+                "Localisation et bâtiment", "Forme juridique et actionnaires", "Processus et technologie",
+                "Innovation", "Organisation des ventes", "Logistique et distribution",
+                "Projets de croissance", "Perspectives de croissance"
+              ]
+            },
+            {
+              h2: "Analyse SWOT & gestion des risques",
+              placeholders: [
+                "Forces internes", "Faiblesses internes", "Opportunités externes", "Menaces externes",
+                "Actions pour exploiter forces/opportunités", "Mesures contre faiblesses/menaces",
+                "Risques externes généraux (politique, inflation, pandémie, catastrophes)",
+                "Risques de marché (nouveaux concurrents, ventes inférieures)",
+                "Risques internes (maladie, départ personnel, pannes)"
+              ]
+            }
+          ]
+        },
+        {
+          h1: "OPÉRATIONS COMMERCIALES",
+          subsections: [
+            {
+              h2: "Modèle de l'entreprise",
+              placeholders: [
+                "Produit/service et proposition de valeur unique",
+                "Clients, canaux d'accès et relations clients",
+                "Revenus et dépenses",
+                "Principales activités, ressources et partenaires"
+              ]
+            },
+            {
+              h2: "Marché, concurrence et environnement",
+              placeholders: [
+                "Taille et état du marché", "Potentiel de marché et preuves",
+                "Extension marché existant ou nouveaux marchés",
+                "Principaux concurrents, leurs forces et faiblesses",
+                "Différenciation par rapport à la concurrence",
+                "Évolution du marché et tendances (sociales, économiques, technologiques)"
+              ]
+            },
+            {
+              h2: "Stratégie de vente et de marketing : Les 5P",
+              placeholders: [
+                "Produit : succès et adéquation au marché",
+                "Point(s) de vente : emplacement et avantage concurrentiel",
+                "Prix : positionnement, prix de vente/revient, marge",
+                "Promotion : stratégie commerciale et relations clients",
+                "Personnel : équipe vente/marketing"
+              ]
+            },
+            {
+              h2: "Équipe et organisation",
+              placeholders: [
+                "Équipe de direction (formation, expérience, compétences)",
+                "Personnel (effectif, temps plein/partiel, qualifications)",
+                "Organigramme",
+                "Conseil d'administration", "Investisseurs", "Conseillers"
+              ]
+            }
+          ]
+        },
+        {
+          h1: "VOTRE PROJET",
+          subsections: [
+            {
+              h2: "Description générale",
+              placeholders: [
+                "Projet et financement externe recherché",
+                "Situation actuelle et contribution à la croissance",
+                "Durée et calendrier de mise en œuvre",
+                "Objectif du projet"
+              ]
+            },
+            {
+              h2: "Impact",
+              placeholders: [
+                "Impact social (groupe cible bénéficiaire)",
+                "Impact environnemental (nature, climat, biodiversité)",
+                "Impact économique (emplois, revenus fournisseurs)"
+              ]
+            },
+            {
+              h2: "Financier",
+              placeholders: [
+                "Plan d'investissement avec preuves des montants",
+                "Plan financier (année 1, 2, 3)",
+                "Justification du besoin de financement externe",
+                "Tableau financier : Apport personnel, Prêts, Subventions, Chiffre d'affaires, Coûts directs, Coûts indirects, Amortissements, Résultat net, Cash-flow, Valeur actifs, Dettes totales, Fonds propres"
+              ]
+            },
+            {
+              h2: "Attentes vis-à-vis d'OVO",
+              placeholders: [
+                "Montant demandé et utilisation",
+                "Contribution de l'entrepreneur",
+                "Autres investisseurs approchés",
+                "Type d'expertise nécessaire",
+                "Modalités de coaching souhaitées"
+              ]
+            }
+          ]
+        }
+      ],
+      tables: [
+        { name: "Informations entreprise", rows: 8, cols: 2, fields: ["Nom", "Site web", "Personne en contact", "Adresse", "Téléphone", "Email", "Date de création", "Forme juridique"] },
+        { name: "Matrice SWOT", rows: 2, cols: 2, fields: ["Points forts (internes)", "Faiblesses (internes)", "Opportunités (externes)", "Menaces (externes)"] },
+        { name: "Plan financier 3 ans", rows: 12, cols: 4, headers: ["Plan financier", "1ère année", "2ème année", "3ème année"], rows_labels: ["Apport personnel", "Prêts", "Subventions / dons", "Chiffre d'affaires", "Coûts directs", "Coûts indirects", "Amortissements", "Résultat net", "Cash-flow", "Valeur des actifs", "Dettes totales", "Fonds propres"] }
+      ]
+    }
+    console.log(`[Business Plan] STEP A — Template structure loaded: ${templateStructure.total_sections} H1, ${templateStructure.total_subsections} H2, ${templateStructure.placeholders_count} placeholders`)
+
+    // ═══════════════════════════════════════════════════════════════
+    // STEP B — Collect all deliverables in parallel
+    // ═══════════════════════════════════════════════════════════════
     const [bmcRow, sicRow, fwRow, diagRow, ovoRow, userRow, pmeDataRow] = await Promise.all([
       db.prepare(`SELECT id, content, score FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_analysis' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
       db.prepare(`SELECT id, content, score FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_analysis' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
@@ -9137,11 +9292,12 @@ app.post('/api/business-plan/generate', async (c) => {
       db.prepare(`SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_pme_data' ORDER BY version DESC LIMIT 1`).bind(payload.userId).first(),
     ])
 
+    // Require at least BMC or Framework
     if (!bmcRow && !fwRow) {
-      return c.json({ error: 'Au moins le Business Model Canvas ou le Framework d\'analyse financière est requis pour générer le Business Plan.' }, 400)
+      return c.json({ error: 'Au moins le Business Model Canvas ou le Framework d\'analyse financière est requis' }, 400)
     }
 
-    // ═══ STEP 2: Parse all deliverables ═══
+    // Parse all deliverables safely
     const safeParse = (raw: any) => { try { return typeof raw === 'string' ? JSON.parse(raw) : (raw || {}) } catch { return {} } }
     const bmcData = bmcRow ? safeParse(bmcRow.content) : null
     const sicData = sicRow ? safeParse(sicRow.content) : null
@@ -9152,8 +9308,7 @@ app.post('/api/business-plan/generate', async (c) => {
     const userName = (userRow?.name as string) || 'Entrepreneur'
     const userCountry = (userRow?.country as string) || ''
 
-    // ═══ STEP 3: Extract key info from each deliverable ═══
-    // --- BMC ---
+    // Extract key info from each deliverable
     const bmcSections = bmcData ? {
       proposition_valeur: bmcData.proposition_valeur || bmcData.value_proposition || bmcData.propositionValeur || '',
       segments_clients: bmcData.segments_clients || bmcData.customer_segments || bmcData.segmentsClients || '',
@@ -9165,8 +9320,6 @@ app.post('/api/business-plan/generate', async (c) => {
       partenaires_cles: bmcData.partenaires_cles || bmcData.key_partners || '',
       structure_couts: bmcData.structure_couts || bmcData.cost_structure || bmcData.structureCouts || '',
     } : null
-
-    // --- SIC ---
     const sicSections = sicData ? {
       probleme_social: sicData.probleme_social || sicData.social_problem || '',
       beneficiaires: sicData.beneficiaires || sicData.beneficiaries || '',
@@ -9175,8 +9328,6 @@ app.post('/api/business-plan/generate', async (c) => {
       odd_cibles: sicData.odd_cibles || sicData.sdg_targets || '',
       theorie_changement: sicData.theorie_changement || sicData.theory_of_change || '',
     } : null
-
-    // --- Framework financier ---
     const fwSections = fwData ? {
       chiffre_affaires: fwData.chiffre_affaires || fwData.revenue || '',
       charges: fwData.charges || fwData.expenses || '',
@@ -9185,8 +9336,6 @@ app.post('/api/business-plan/generate', async (c) => {
       bfr: fwData.bfr || fwData.working_capital || '',
       investissements: fwData.investissements || fwData.investments || '',
     } : null
-
-    // --- PME Data (structured financials) ---
     const pmeFinancials = pmeData ? {
       nom_entreprise: pmeData.nom_entreprise || pmeData.company_name || userName,
       secteur: pmeData.secteur || pmeData.sector || '',
@@ -9194,8 +9343,6 @@ app.post('/api/business-plan/generate', async (c) => {
       historique: pmeData.historique || {},
       hypotheses: pmeData.hypotheses || {},
     } : null
-
-    // --- Diagnostic ---
     const diagSummary = diagData ? {
       score_global: diagData.score_global || diagData.scoreGlobal || (diagRow?.score as number) || 0,
       resume_executif: diagData.resume_executif || diagData.verdict || '',
@@ -9203,8 +9350,6 @@ app.post('/api/business-plan/generate', async (c) => {
       recommandations: diagData.recommandations || diagData.recommendations || [],
       risques: diagData.risques_contextuels || [],
     } : null
-
-    // --- Plan OVO ---
     const ovoSummary = ovoData ? {
       score: ovoData.score_global || (ovoRow?.score as number) || 0,
       compte_resultat: ovoData.compte_resultat || ovoData.income_statement || null,
@@ -9216,95 +9361,385 @@ app.post('/api/business-plan/generate', async (c) => {
     const companyName = pmeFinancials?.nom_entreprise || userName
     const sector = pmeFinancials?.secteur || ''
 
-    // ═══ STEP 4: Compile Business Plan JSON ═══
-    const businessPlanJson = {
-      meta: {
-        titre: `Business Plan — ${companyName}`,
-        entreprise: companyName,
-        secteur: sector,
-        pays: userCountry,
-        date_generation: new Date().toISOString(),
-        sources_utilisees: {
-          bmc: !!bmcRow,
-          sic: !!sicRow,
-          framework: !!fwRow,
-          diagnostic: !!diagRow,
-          plan_ovo: !!ovoRow,
-          pme_data: !!pmeData,
-        }
-      },
-      sections: [
-        {
-          id: 'resume_executif',
-          titre: 'Résumé Exécutif',
-          icon: 'fa-file-lines',
-          contenu: _buildResumeExecutif(companyName, sector, userCountry, diagSummary, bmcSections, sicSections)
-        },
-        {
-          id: 'presentation_entreprise',
-          titre: 'Présentation de l\'Entreprise',
-          icon: 'fa-building',
-          contenu: _buildPresentationEntreprise(companyName, sector, userCountry, pmeFinancials)
-        },
-        {
-          id: 'modele_economique',
-          titre: 'Modèle Économique (Business Model)',
-          icon: 'fa-diagram-project',
-          contenu: bmcSections ? _buildModeleEconomique(bmcSections) : 'Non disponible — Le BMC n\'a pas encore été généré.'
-        },
-        {
-          id: 'impact_social',
-          titre: 'Impact Social & Environnemental',
-          icon: 'fa-hand-holding-heart',
-          contenu: sicSections ? _buildImpactSocial(sicSections) : 'Non disponible — Le SIC n\'a pas encore été généré.'
-        },
-        {
-          id: 'analyse_financiere',
-          titre: 'Analyse Financière',
-          icon: 'fa-chart-bar',
-          contenu: _buildAnalyseFinanciere(fwSections, pmeFinancials, ovoSummary)
-        },
-        {
-          id: 'projections_financieres',
-          titre: 'Projections Financières & Plan OVO',
-          icon: 'fa-chart-line',
-          contenu: ovoSummary ? _buildProjections(ovoSummary) : 'Non disponible — Le Plan OVO n\'a pas encore été généré.'
-        },
-        {
-          id: 'diagnostic_readiness',
-          titre: 'Diagnostic de Maturité Investisseur',
-          icon: 'fa-stethoscope',
-          contenu: diagSummary ? _buildDiagnostic(diagSummary) : 'Non disponible — Le Diagnostic n\'a pas encore été généré.'
-        },
-        {
-          id: 'plan_action',
-          titre: 'Plan d\'Action & Prochaines Étapes',
-          icon: 'fa-list-check',
-          contenu: _buildPlanAction(diagSummary, bmcSections, sicSections, fwSections)
-        },
-      ],
-      scores: {
-        bmc: bmcRow?.score as number || null,
-        sic: sicRow?.score as number || null,
-        framework: fwRow?.score as number || null,
-        diagnostic: diagSummary?.score_global || null,
-        plan_ovo: ovoSummary?.score || null,
-      },
+    // Build allDeliverables and available sources tracking
+    const sources = {
+      bmc: !!bmcRow,
+      sic: !!sicRow,
+      framework: !!fwRow,
+      diagnostic: !!diagRow,
+      plan_ovo: !!ovoRow,
+      pme_data: !!pmeData,
+    }
+    const availableCount = Object.values(sources).filter(Boolean).length
+    console.log(`[Business Plan] STEP B — Deliverables collected: ${availableCount}/6 — BMC=${sources.bmc} SIC=${sources.sic} FW=${sources.framework} DIAG=${sources.diagnostic} OVO=${sources.plan_ovo} PME=${sources.pme_data}`)
+
+    // ═══════════════════════════════════════════════════════════════
+    // STEP C — Knowledge-Base enrichment (country/sector + 3 RAG queries)
+    // ═══════════════════════════════════════════════════════════════
+    // Infer country from deliverables
+    const contentTexts: string[] = []
+    if (bmcData) contentTexts.push(JSON.stringify(bmcData).slice(0, 3000))
+    if (fwData) contentTexts.push(JSON.stringify(fwData).slice(0, 3000))
+    if (diagData) contentTexts.push(JSON.stringify(diagData).slice(0, 2000))
+    if (pmeData) contentTexts.push(JSON.stringify(pmeData).slice(0, 2000))
+    if (userCountry) contentTexts.push(userCountry)
+
+    const countryKey = detectCountry(contentTexts)
+    const fiscal = getFiscalParams(countryKey)
+    const { kbContext: fiscalKBText } = buildKBContext(fiscal)
+
+    // Infer sector from BMC/Framework/PME data
+    const inferredSector = sector ||
+      (bmcData?.secteur || bmcData?.sector || '') ||
+      (fwData?.secteur || fwData?.sector || '') ||
+      (diagData?.secteur || diagData?.sector || '') ||
+      'Non spécifié'
+
+    // Query KB database for market context, competition, and opportunities
+    let kbBenchmarks: any[] = []
+    let kbFunders: any[] = []
+    let kbRisks: any[] = []
+    let kbUsed = false
+    try {
+      const [benchResult, funderResult, risksResult] = await Promise.all([
+        // RAG Query 1: Market context & sector benchmarks
+        db.prepare(`SELECT * FROM kb_benchmarks WHERE (sector = ? OR sector = 'all' OR sector IS NULL) ORDER BY metric LIMIT 30`).bind(inferredSector).all(),
+        // RAG Query 2: Competition & funders landscape
+        db.prepare(`SELECT * FROM kb_funders WHERE (region LIKE ? OR region LIKE '%UEMOA%' OR region IS NULL) ORDER BY name LIMIT 15`).bind('%' + fiscal.country + '%').all(),
+        // RAG Query 3: Opportunities & risks
+        db.prepare(`SELECT * FROM kb_sources WHERE (category = 'risks' OR category = 'sector_risks' OR category = 'opportunities') AND (region = ? OR region = 'UEMOA' OR region IS NULL) ORDER BY relevance_score DESC LIMIT 15`).bind(fiscal.country).all(),
+      ])
+      kbBenchmarks = benchResult.results || []
+      kbFunders = funderResult.results || []
+      kbRisks = risksResult.results || []
+      kbUsed = (kbBenchmarks.length + kbFunders.length + kbRisks.length) > 0
+    } catch (e: any) {
+      console.log(`[Business Plan] KB query failed (non-fatal): ${e.message}`)
     }
 
-    // ═══ STEP 5: Save to DB ═══
+    // Build kbContext object
+    const kbContext = {
+      pays: fiscal.country,
+      secteur: inferredSector,
+      fiscal_params: fiscalKBText,
+      benchmarks_sectoriels: {
+        marge_brute: `${Math.round(fiscal.sectorBenchmarks.grossMarginRange[0] * 100)}-${Math.round(fiscal.sectorBenchmarks.grossMarginRange[1] * 100)}%`,
+        marge_ebitda: `${Math.round(fiscal.sectorBenchmarks.ebitdaMarginRange[0] * 100)}-${Math.round(fiscal.sectorBenchmarks.ebitdaMarginRange[1] * 100)}%`,
+        marge_nette: `${Math.round(fiscal.sectorBenchmarks.netMarginRange[0] * 100)}-${Math.round(fiscal.sectorBenchmarks.netMarginRange[1] * 100)}%`,
+        ratio_dette_max: `${Math.round(fiscal.sectorBenchmarks.debtRatioMax * 100)}%`,
+        seuil_rentabilite: `${fiscal.sectorBenchmarks.breakEvenMonths[0]}-${fiscal.sectorBenchmarks.breakEvenMonths[1]} mois`,
+      },
+      contexte_marche: kbBenchmarks.length > 0
+        ? kbBenchmarks.slice(0, 10).map((b: any) => `${b.metric || b.name}: ${b.value || b.description}`)
+        : [`Marché PME ${fiscal.country} en croissance, taux bancaire moyen ${(fiscal.bankRate * 100).toFixed(1)}%`, `Inflation ${(fiscal.inflationRate * 100).toFixed(1)}%, SMIG ${fiscal.smig.toLocaleString()} ${fiscal.currency}`],
+      concurrence_paysage: kbFunders.length > 0
+        ? kbFunders.slice(0, 8).map((f: any) => ({ nom: f.name, type: f.type, focus: f.focus_sectors || 'PME' }))
+        : [
+          { nom: 'OVO', type: 'Prêt', focus: 'PME à impact' },
+          { nom: 'BAD/BAfD', type: 'Subvention/Prêt', focus: 'Infrastructure' },
+          { nom: 'AFD/Proparco', type: 'Prêt/Garantie', focus: 'PME croissance' },
+        ],
+      opportunites_risques: kbRisks.length > 0
+        ? kbRisks.slice(0, 8).map((r: any) => r.name || r.description || '')
+        : [
+          'Croissance démographique et urbanisation rapide',
+          'Digitalisation des services financiers (mobile money)',
+          'Accès limité au financement bancaire pour PME',
+          'Volatilité des prix matières premières',
+          'Infrastructures énergétiques insuffisantes',
+        ],
+      reglementation: {
+        tva: `${Math.round(fiscal.vat * 100)}%`,
+        impot_societes: `${Math.round(fiscal.corporateTax * 100)}%`,
+        charges_sociales: `${(fiscal.socialChargesRate * 100).toFixed(1)}%`,
+        regime_fiscal_1: `${fiscal.taxRegime1.name} (${fiscal.taxRegime1.description})`,
+        regime_fiscal_2: `${fiscal.taxRegime2.name} (${fiscal.taxRegime2.description})`,
+      }
+    }
+    console.log(`[Business Plan] STEP C — KB enrichment: pays=${fiscal.country}, secteur=${inferredSector}, kb_used=${kbUsed} (bench=${kbBenchmarks.length}, fund=${kbFunders.length}, risk=${kbRisks.length})`)
+
+    // ═══════════════════════════════════════════════════════════════
+    // STEP D — Call Claude with system prompt, templateStructure, kbContext
+    // ═══════════════════════════════════════════════════════════════
+    let businessPlanJson: any
+    let usedAI = false
+
+    if (isValidApiKey(apiKey)) {
+      // --- System Prompt ---
+      const systemPrompt = `Tu es un expert en rédaction de Business Plans pour PME en Afrique de l'Ouest (zone UEMOA/CFA).
+Tu connais parfaitement le contexte économique, fiscal et réglementaire de ces pays.
+Tu rédiges des documents professionnels destinés aux investisseurs (OVO, BAD, IFC, AFD/Proparco, investisseurs d'impact).
+
+MISSION : Génère un Business Plan complet en JSON libre (free-form) qui correspond EXACTEMENT à chaque placeholder du template DOCX fourni.
+
+RÈGLES STRICTES :
+1. Respecte l'ordre et les titres exacts du template (INTRODUCTION, PRÉSENTATION DE L'ENTREPRISE, OPÉRATIONS COMMERCIALES, VOTRE PROJET).
+2. Remplis CHAQUE placeholder en utilisant les livrables fournis. Priorité : BMC > Framework > Diagnostic > Plan OVO > SIC.
+3. Enrichis les sections avec les données kbContext (benchmarks, contexte marché, réglementation, concurrence).
+4. Si un livrable est MANQUANT, note-le dans metadata.livrables_utilises et mets "À compléter" ou des estimations réalistes basées sur le secteur et le pays.
+5. Ton PROFESSIONNEL, orienté investisseur. Chaque paragraphe = 3 à 5 phrases (50-150 mots).
+6. Remplis les 3 tableaux du template :
+   - Table 0 : Informations entreprise (8 lignes x 2 colonnes)
+   - Table 1 : Matrice SWOT (2 lignes x 2 colonnes : Forces/Faiblesses, Opportunités/Menaces)
+   - Table 2 : Plan financier 3 ans (12 lignes x 4 colonnes : libellé + année 1/2/3)
+7. Le JSON doit remplir TOUS les placeholders SANS dépasser l'espace du template (~50 pages).
+8. Monnaie = ${fiscal.currency}, Pays = ${fiscal.country}.
+
+SQUELETTE JSON REQUIS :
+{
+  "metadata": {
+    "titre": "Business Plan — [Entreprise]",
+    "entreprise": "[nom]",
+    "secteur": "[secteur]",
+    "pays": "[pays]",
+    "date_generation": "[ISO date]",
+    "livrables_utilises": { "bmc": bool, "sic": bool, "framework": bool, "diagnostic": bool, "plan_ovo": bool },
+    "livrables_manquants": ["liste des livrables non disponibles"],
+    "version": "AI-generated"
+  },
+  "resume_executif": {
+    "titre": "Résumé de la gestion",
+    "synthese": "paragraphe 3-5 phrases",
+    "points_cles": ["point 1", "point 2", "..."],
+    "montant_recherche": "X FCFA",
+    "usage_fonds": "description"
+  },
+  "presentation_entreprise": {
+    "informations_table": { "nom": "", "site_web": "", "contact": "", "adresse": "", "telephone": "", "email": "", "date_creation": "", "forme_juridique": "" },
+    "revue_historique": { "date_demarrage": "", "raison_creation": "", "realisations_cles": ["..."] },
+    "vision_mission_valeurs": { "vision": "", "mission": "", "valeurs": [{ "valeur": "", "exemple": "" }] },
+    "description_generale": "paragraphe",
+    "objectifs_smart": { "court_terme_1an": ["..."], "long_terme_3_5ans": ["..."] },
+    "operations": { "localisation": "", "forme_juridique_detail": "", "processus_technologie": "", "innovation": "", "ventes": "", "logistique": "", "croissance": "" }
+  },
+  "analyse_swot": {
+    "forces": ["..."],
+    "faiblesses": ["..."],
+    "opportunites": ["..."],
+    "menaces": ["..."],
+    "gestion_risques": [{ "type_risque": "", "gravite": "", "mitigation": "" }]
+  },
+  "analyse_marche": {
+    "taille_marche": "",
+    "potentiel_croissance": "",
+    "concurrents": [{ "nom": "", "forces": "", "faiblesses": "" }],
+    "tendances": ["..."],
+    "differenciation": ""
+  },
+  "offre_produit_service": {
+    "description": "",
+    "proposition_valeur": "",
+    "probleme_resolu": "",
+    "avantage_concurrentiel": ""
+  },
+  "strategie_marketing": {
+    "produit": "",
+    "point_de_vente": "",
+    "prix": { "prix_vente": "", "prix_revient": "", "marge": "", "strategie": "" },
+    "promotion": "",
+    "personnel": ""
+  },
+  "model_economique": {
+    "segments_clients": "",
+    "canaux_distribution": "",
+    "relations_clients": "",
+    "sources_revenus": "",
+    "ressources_cles": "",
+    "activites_cles": "",
+    "partenaires_cles": "",
+    "structure_couts": ""
+  },
+  "plan_operationnel": {
+    "equipe_direction": [{ "nom": "", "role": "", "competences": "" }],
+    "personnel": { "effectif": "", "qualifications": "", "politique_rh": "" },
+    "organigramme_description": "",
+    "conseil_administration": "",
+    "investisseurs_actuels": "",
+    "conseillers": ""
+  },
+  "impact_social": {
+    "impact_social": "",
+    "impact_environnemental": "",
+    "impact_economique": "",
+    "odd_cibles": ["..."],
+    "beneficiaires": "",
+    "indicateurs": ["..."]
+  },
+  "plan_financier": {
+    "plan_investissement": "",
+    "justification_financement": "",
+    "tableau_financier_3ans": {
+      "apport_personnel": ["année1", "année2", "année3"],
+      "prets": ["", "", ""],
+      "subventions_dons": ["", "", ""],
+      "chiffre_affaires": ["", "", ""],
+      "couts_directs": ["", "", ""],
+      "couts_indirects": ["", "", ""],
+      "amortissements": ["", "", ""],
+      "resultat_net": ["", "", ""],
+      "cash_flow": ["", "", ""],
+      "valeur_actifs": ["", "", ""],
+      "dettes_totales": ["", "", ""],
+      "fonds_propres": ["", "", ""]
+    },
+    "kpis": {}
+  },
+  "gouvernance": {
+    "projet_description": "",
+    "situation_actuelle": "",
+    "duree_mise_en_oeuvre": "",
+    "objectif_projet": ""
+  },
+  "risques_mitigation": [{ "risque": "", "probabilite": "", "impact": "", "mitigation": "" }],
+  "attentes_ovo": {
+    "montant_demande": "",
+    "contribution_entrepreneur": "",
+    "autres_investisseurs": "",
+    "expertise_necessaire": "",
+    "coaching_souhaite": ""
+  },
+  "annexes": {
+    "documents_joints": ["Liste des documents financiers détaillés", "Plan OVO détaillé", "Organigramme"]
+  }
+}
+
+IMPORTANT : Réponds UNIQUEMENT avec le JSON. Aucun texte supplémentaire.`
+
+      // --- User Prompt ---
+      const delivParts: string[] = []
+      if (bmcData) {
+        delivParts.push(`=== LIVRABLE: BMC (Business Model Canvas) — Score: ${bmcRow?.score || 'N/A'}/100 ===\n${JSON.stringify(bmcSections, null, 1).slice(0, 4000)}`)
+      }
+      if (sicData) {
+        delivParts.push(`=== LIVRABLE: SIC (Social Impact Canvas) — Score: ${sicRow?.score || 'N/A'}/100 ===\n${JSON.stringify(sicSections, null, 1).slice(0, 3000)}`)
+      }
+      if (fwData) {
+        delivParts.push(`=== LIVRABLE: FRAMEWORK FINANCIER — Score: ${fwRow?.score || 'N/A'}/100 ===\n${JSON.stringify(fwSections, null, 1).slice(0, 4000)}`)
+      }
+      if (pmeData) {
+        delivParts.push(`=== DONNÉES PME STRUCTURÉES ===\n${JSON.stringify(pmeFinancials, null, 1).slice(0, 4000)}`)
+      }
+      if (diagData) {
+        delivParts.push(`=== LIVRABLE: DIAGNOSTIC EXPERT — Score: ${diagSummary?.score_global || 'N/A'}/100 ===\n${JSON.stringify(diagSummary, null, 1).slice(0, 3000)}`)
+      }
+      if (ovoData) {
+        delivParts.push(`=== LIVRABLE: PLAN OVO — Score: ${ovoSummary?.score || 'N/A'}/100 ===\n${JSON.stringify(ovoSummary, null, 1).slice(0, 4000)}`)
+      }
+
+      const missingList = Object.entries(sources).filter(([, v]) => !v).map(([k]) => k)
+
+      const userPrompt = `Génère le Business Plan complet pour cette PME.
+
+=== ENTREPRISE ===
+Nom: ${companyName}
+Secteur: ${inferredSector}
+Pays: ${fiscal.country}
+Entrepreneur: ${userName}
+
+=== TEMPLATE DOCX (structure à respecter) ===
+${JSON.stringify(templateStructure, null, 1).slice(0, 5000)}
+
+=== LIVRABLES DISPONIBLES ===
+${delivParts.join('\n\n')}
+
+=== CONTEXTE KB (${fiscal.country} — ${inferredSector}) ===
+${JSON.stringify(kbContext, null, 1).slice(0, 4000)}
+
+=== LIVRABLES MANQUANTS ===
+${missingList.length > 0 ? missingList.join(', ') : 'Aucun (tous disponibles)'}
+${availableCount < 4 ? '\n⚠️ DONNÉES PARTIELLES : Certains livrables manquent. Utilise des estimations réalistes basées sur le secteur et le pays pour les sections manquantes. Indique "À compléter" pour les données spécifiques non disponibles.' : ''}
+
+Produis le JSON complet du Business Plan. Remplis TOUS les placeholders du template DOCX. Ton professionnel, orienté investisseur. Chaque paragraphe 3-5 phrases. Montants en ${fiscal.currency}.`
+
+      console.log(`[Business Plan] STEP D — Claude call: ${delivParts.length} deliverables, prompt ${userPrompt.length} chars, temp=0.4, maxTokens=12000`)
+
+      try {
+        businessPlanJson = await callClaudeJSON({
+          apiKey,
+          systemPrompt,
+          userPrompt,
+          maxTokens: 12000,
+          temperature: 0.4,
+          timeoutMs: 180_000,
+          maxRetries: 2,
+          label: 'Business Plan AI'
+        })
+        usedAI = true
+        console.log(`[Business Plan] Claude returned Business Plan: metadata.entreprise=${businessPlanJson?.metadata?.entreprise || 'N/A'}, sections=${Object.keys(businessPlanJson || {}).length}`)
+      } catch (claudeErr: any) {
+        console.error(`[Business Plan] Claude API error: ${claudeErr.message} — falling back to deterministic engine`)
+        businessPlanJson = null // will trigger fallback
+      }
+    } else {
+      console.log(`[Business Plan] No valid API key — using deterministic fallback`)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // FALLBACK — Deterministic generation if Claude fails or no API key
+    // ═══════════════════════════════════════════════════════════════
+    if (!businessPlanJson) {
+      businessPlanJson = _buildDeterministicBusinessPlan(
+        companyName, inferredSector, fiscal.country, userName, sources,
+        bmcSections, sicSections, fwSections, pmeFinancials, diagSummary, ovoSummary,
+        kbContext, fiscal
+      )
+      businessPlanJson._fallback = true
+    }
+
+    // Ensure metadata has required fields
+    if (!businessPlanJson.metadata) businessPlanJson.metadata = {}
+    businessPlanJson.metadata.titre = businessPlanJson.metadata.titre || `Business Plan — ${companyName}`
+    businessPlanJson.metadata.entreprise = businessPlanJson.metadata.entreprise || companyName
+    businessPlanJson.metadata.secteur = businessPlanJson.metadata.secteur || inferredSector
+    businessPlanJson.metadata.pays = businessPlanJson.metadata.pays || fiscal.country
+    businessPlanJson.metadata.date_generation = businessPlanJson.metadata.date_generation || new Date().toISOString()
+    businessPlanJson.metadata.livrables_utilises = businessPlanJson.metadata.livrables_utilises || sources
+    businessPlanJson.metadata.ai_generated = usedAI
+    businessPlanJson.metadata.kb_used = kbUsed
+
+    // Also build the legacy sections array for the module page rendering
+    businessPlanJson.sections = businessPlanJson.sections || [
+      { id: 'resume_executif', titre: 'Résumé Exécutif', icon: 'fa-file-lines', contenu: businessPlanJson.resume_executif?.synthese || _buildResumeExecutif(companyName, inferredSector, fiscal.country, diagSummary, bmcSections, sicSections) },
+      { id: 'presentation_entreprise', titre: 'Présentation de l\'Entreprise', icon: 'fa-building', contenu: _buildSectionFromAI(businessPlanJson.presentation_entreprise) || _buildPresentationEntreprise(companyName, inferredSector, fiscal.country, pmeFinancials) },
+      { id: 'modele_economique', titre: 'Modèle Économique (Business Model)', icon: 'fa-diagram-project', contenu: _buildSectionFromAI(businessPlanJson.model_economique) || (bmcSections ? _buildModeleEconomique(bmcSections) : 'Non disponible — BMC non généré.') },
+      { id: 'analyse_marche', titre: 'Analyse de Marché & Concurrence', icon: 'fa-chart-pie', contenu: _buildSectionFromAI(businessPlanJson.analyse_marche) || 'À compléter.' },
+      { id: 'strategie_marketing', titre: 'Stratégie Marketing (5P)', icon: 'fa-bullhorn', contenu: _buildSectionFromAI(businessPlanJson.strategie_marketing) || 'À compléter.' },
+      { id: 'impact_social', titre: 'Impact Social & Environnemental', icon: 'fa-hand-holding-heart', contenu: _buildSectionFromAI(businessPlanJson.impact_social) || (sicSections ? _buildImpactSocial(sicSections) : 'Non disponible — SIC non généré.') },
+      { id: 'analyse_financiere', titre: 'Analyse Financière & Plan d\'Investissement', icon: 'fa-chart-bar', contenu: _buildSectionFromAI(businessPlanJson.plan_financier) || _buildAnalyseFinanciere(fwSections, pmeFinancials, ovoSummary) },
+      { id: 'analyse_swot', titre: 'Analyse SWOT & Risques', icon: 'fa-shield-halved', contenu: _buildSectionFromAI(businessPlanJson.analyse_swot) || 'À compléter.' },
+      { id: 'plan_operationnel', titre: 'Équipe & Organisation', icon: 'fa-users-gear', contenu: _buildSectionFromAI(businessPlanJson.plan_operationnel) || 'À compléter.' },
+      { id: 'projet', titre: 'Votre Projet', icon: 'fa-rocket', contenu: _buildSectionFromAI(businessPlanJson.gouvernance) || 'À compléter.' },
+      { id: 'attentes_ovo', titre: 'Attentes vis-à-vis d\'OVO', icon: 'fa-handshake', contenu: _buildSectionFromAI(businessPlanJson.attentes_ovo) || 'À compléter.' },
+      { id: 'diagnostic_readiness', titre: 'Diagnostic de Maturité', icon: 'fa-stethoscope', contenu: diagSummary ? _buildDiagnostic(diagSummary) : 'Non disponible — Diagnostic non généré.' },
+      { id: 'plan_action', titre: 'Plan d\'Action & Prochaines Étapes', icon: 'fa-list-check', contenu: _buildPlanAction(diagSummary, bmcSections, sicSections, fwSections) },
+    ]
+
+    // Add scores
+    businessPlanJson.scores = businessPlanJson.scores || {
+      bmc: bmcRow?.score as number || null,
+      sic: sicRow?.score as number || null,
+      framework: fwRow?.score as number || null,
+      diagnostic: diagSummary?.score_global || null,
+      plan_ovo: ovoSummary?.score || null,
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STEP E — Save to DB with KB context
+    // ═══════════════════════════════════════════════════════════════
     const lastBp = await db.prepare('SELECT version FROM business_plan_analyses WHERE user_id = ? AND pme_id = ? ORDER BY version DESC LIMIT 1').bind(payload.userId, pmeId).first()
     const newVersion = (lastBp?.version ? Number(lastBp.version) : 0) + 1
     const id = crypto.randomUUID()
 
+    const kbContextStr = JSON.stringify(kbContext).slice(0, 10000)
+
     await db.prepare(
-      `INSERT INTO business_plan_analyses (id, user_id, pme_id, version, status, business_plan_json, template_docx_path, pays, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'generated', ?, '/templates/business_plan_template.docx', ?, datetime('now'), datetime('now'))`
-    ).bind(id, payload.userId, pmeId, newVersion, JSON.stringify(businessPlanJson), userCountry).run()
+      `INSERT INTO business_plan_analyses (id, user_id, pme_id, version, status, business_plan_json, template_docx_path, pays, kb_context, kb_used, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'generated', ?, '/templates/business_plan_template.docx', ?, ?, ?, datetime('now'), datetime('now'))`
+    ).bind(id, payload.userId, pmeId, newVersion, JSON.stringify(businessPlanJson), fiscal.country, kbContextStr, kbUsed ? 1 : 0).run()
 
-    console.log(`[Business Plan] Generated v${newVersion} for user ${payload.userId} (id: ${id}) — sources: BMC=${!!bmcRow} SIC=${!!sicRow} FW=${!!fwRow} DIAG=${!!diagRow} OVO=${!!ovoRow}`)
+    console.log(`[Business Plan] STEP E — Saved v${newVersion} (id: ${id}) — AI=${usedAI}, KB=${kbUsed}, sources: ${availableCount}/6`)
 
-    return c.json({ success: true, id, version: newVersion, message: 'Business Plan généré avec succès !' })
+    return c.json({ success: true, id, version: newVersion, ai_generated: usedAI, kb_used: kbUsed, message: 'Business Plan généré avec succès !' })
   } catch (error: any) {
     console.error('[Business Plan Generate] Error:', error)
     return c.json({ error: error.message || 'Erreur serveur' }, 500)
@@ -9313,6 +9748,205 @@ app.post('/api/business-plan/generate', async (c) => {
 
 // ═══ Business Plan section builders ═══
 function _safeStr(v: any): string { return typeof v === 'string' ? v : (Array.isArray(v) ? v.join(', ') : JSON.stringify(v ?? '')) }
+
+/** Convert an AI-generated section object to readable text for the module page */
+function _buildSectionFromAI(section: any): string {
+  if (!section) return ''
+  if (typeof section === 'string') return section
+  const parts: string[] = []
+  for (const [key, value] of Object.entries(section)) {
+    if (!value) continue
+    const label = key.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase())
+    if (typeof value === 'string') {
+      parts.push(`${label} :\n${value}`)
+    } else if (Array.isArray(value)) {
+      if (value.length > 0) {
+        if (typeof value[0] === 'string') {
+          parts.push(`${label} :\n${value.map((v, i) => `  ${i + 1}. ${v}`).join('\n')}`)
+        } else {
+          parts.push(`${label} :\n${value.map((v, i) => `  ${i + 1}. ${typeof v === 'object' ? Object.values(v).filter(Boolean).join(' — ') : String(v)}`).join('\n')}`)
+        }
+      }
+    } else if (typeof value === 'object') {
+      const subParts = Object.entries(value).map(([sk, sv]) => `  • ${sk.replace(/_/g, ' ')}: ${_safeStr(sv)}`).join('\n')
+      if (subParts) parts.push(`${label} :\n${subParts}`)
+    }
+  }
+  return parts.join('\n\n') || ''
+}
+
+/** Deterministic fallback business plan when Claude is not available */
+function _buildDeterministicBusinessPlan(
+  company: string, sector: string, country: string, userName: string,
+  sources: Record<string, boolean>,
+  bmc: any, sic: any, fw: any, pme: any, diag: any, ovo: any,
+  kbCtx: any, fiscal: any
+): any {
+  const missingList = Object.entries(sources).filter(([, v]) => !v).map(([k]) => k)
+  return {
+    metadata: {
+      titre: `Business Plan — ${company}`,
+      entreprise: company,
+      secteur: sector,
+      pays: country,
+      date_generation: new Date().toISOString(),
+      livrables_utilises: sources,
+      livrables_manquants: missingList,
+      version: 'deterministic-fallback'
+    },
+    resume_executif: {
+      titre: 'Résumé de la gestion',
+      synthese: `${company} est une entreprise${sector ? ` du secteur ${sector}` : ''}${country ? ` basée en ${country}` : ''}. ${diag?.resume_executif || `L'entreprise développe ses activités avec une proposition de valeur différenciée sur son marché.`}${bmc?.proposition_valeur ? ` Sa proposition de valeur repose sur : ${_safeStr(bmc.proposition_valeur)}.` : ''}`,
+      points_cles: [
+        bmc?.proposition_valeur ? `Proposition de valeur : ${_safeStr(bmc.proposition_valeur).slice(0, 150)}` : 'Proposition de valeur à détailler',
+        diag?.score_global ? `Score de maturité investisseur : ${diag.score_global}/100` : 'Diagnostic de maturité à réaliser',
+        ovo?.score ? `Score Plan OVO : ${ovo.score}/100` : 'Plan financier OVO à compléter',
+      ],
+      montant_recherche: 'À compléter',
+      usage_fonds: 'À compléter — détailler l\'utilisation des fonds recherchés'
+    },
+    presentation_entreprise: {
+      informations_table: {
+        nom: company,
+        site_web: 'À compléter',
+        contact: userName,
+        adresse: country || 'À compléter',
+        telephone: 'À compléter',
+        email: 'À compléter',
+        date_creation: 'À compléter',
+        forme_juridique: 'À compléter'
+      },
+      revue_historique: {
+        date_demarrage: pme?.historique?.date_creation || 'À compléter',
+        raison_creation: 'À compléter',
+        realisations_cles: pme?.historique?.caTotal ? [`Chiffre d'affaires historique : ${_safeStr(pme.historique.caTotal)}`] : ['À compléter']
+      },
+      vision_mission_valeurs: {
+        vision: 'À compléter — vision inspirante à long terme',
+        mission: 'À compléter — mission en 1-3 phrases',
+        valeurs: [{ valeur: 'Impact social', exemple: 'Engagement envers la communauté locale' }]
+      },
+      description_generale: `${company} opère dans le secteur ${sector || 'non spécifié'} en ${country || 'Afrique de l\'Ouest'}. L'entreprise ${pme?.activites?.length ? `développe ${pme.activites.length} activité(s) principale(s)` : 'développe ses activités'}. Son positionnement vise à répondre aux besoins du marché local tout en maintenant des standards de qualité élevés.`,
+      objectifs_smart: {
+        court_terme_1an: ['À compléter — objectifs SMART à 1 an'],
+        long_terme_3_5ans: ['À compléter — objectifs SMART à 3-5 ans']
+      },
+      operations: {
+        localisation: country || 'À compléter',
+        forme_juridique_detail: 'À compléter',
+        processus_technologie: 'À compléter',
+        innovation: 'À compléter',
+        ventes: bmc?.canaux ? _safeStr(bmc.canaux) : 'À compléter',
+        logistique: 'À compléter',
+        croissance: 'À compléter'
+      }
+    },
+    analyse_swot: {
+      forces: diag?.forces?.length ? diag.forces.map((f: any) => typeof f === 'string' ? f : f.titre || f.title || _safeStr(f)) : ['À compléter'],
+      faiblesses: ['À compléter — identifier les faiblesses internes'],
+      opportunites: (kbCtx?.opportunites_risques || []).slice(0, 3).filter((r: string) => r.includes('Croissance') || r.includes('Digital')).concat(['À compléter']),
+      menaces: (kbCtx?.opportunites_risques || []).slice(0, 3).filter((r: string) => r.includes('limité') || r.includes('Volatilité')).concat(['À compléter']),
+      gestion_risques: diag?.risques?.length ? diag.risques.slice(0, 3).map((r: any) => ({
+        type_risque: typeof r === 'string' ? r : r.titre || r.title || 'Risque identifié',
+        gravite: r.gravite || 'Moyenne',
+        mitigation: r.mitigation || 'À détailler'
+      })) : [{ type_risque: 'À compléter', gravite: 'À évaluer', mitigation: 'À détailler' }]
+    },
+    analyse_marche: {
+      taille_marche: `Marché des PME en ${country || 'Afrique de l\'Ouest'} — ${kbCtx?.benchmarks_sectoriels?.marge_brute ? `Marge brute sectorielle typique : ${kbCtx.benchmarks_sectoriels.marge_brute}` : 'À compléter'}`,
+      potentiel_croissance: 'À compléter avec une étude de marché',
+      concurrents: [{ nom: 'À identifier', forces: 'À analyser', faiblesses: 'À analyser' }],
+      tendances: kbCtx?.contexte_marche || ['À compléter'],
+      differenciation: bmc?.proposition_valeur ? _safeStr(bmc.proposition_valeur) : 'À compléter'
+    },
+    offre_produit_service: {
+      description: bmc?.activites_cles ? _safeStr(bmc.activites_cles) : 'À compléter',
+      proposition_valeur: bmc?.proposition_valeur ? _safeStr(bmc.proposition_valeur) : 'À compléter',
+      probleme_resolu: sic?.probleme_social ? _safeStr(sic.probleme_social) : 'À compléter',
+      avantage_concurrentiel: 'À compléter'
+    },
+    strategie_marketing: {
+      produit: bmc?.proposition_valeur ? _safeStr(bmc.proposition_valeur) : 'À compléter',
+      point_de_vente: bmc?.canaux ? _safeStr(bmc.canaux) : 'À compléter',
+      prix: { prix_vente: 'À compléter', prix_revient: 'À compléter', marge: 'À compléter', strategie: 'À compléter' },
+      promotion: 'À compléter',
+      personnel: 'À compléter'
+    },
+    model_economique: {
+      segments_clients: bmc?.segments_clients ? _safeStr(bmc.segments_clients) : 'À compléter',
+      canaux_distribution: bmc?.canaux ? _safeStr(bmc.canaux) : 'À compléter',
+      relations_clients: bmc?.relations_clients ? _safeStr(bmc.relations_clients) : 'À compléter',
+      sources_revenus: bmc?.sources_revenus ? _safeStr(bmc.sources_revenus) : 'À compléter',
+      ressources_cles: bmc?.ressources_cles ? _safeStr(bmc.ressources_cles) : 'À compléter',
+      activites_cles: bmc?.activites_cles ? _safeStr(bmc.activites_cles) : 'À compléter',
+      partenaires_cles: bmc?.partenaires_cles ? _safeStr(bmc.partenaires_cles) : 'À compléter',
+      structure_couts: bmc?.structure_couts ? _safeStr(bmc.structure_couts) : 'À compléter'
+    },
+    plan_operationnel: {
+      equipe_direction: [{ nom: userName, role: 'Directeur Général', competences: 'À compléter' }],
+      personnel: { effectif: 'À compléter', qualifications: 'À compléter', politique_rh: 'À compléter' },
+      organigramme_description: 'À compléter — fournir un organigramme',
+      conseil_administration: 'À compléter',
+      investisseurs_actuels: 'À compléter',
+      conseillers: 'À compléter'
+    },
+    impact_social: {
+      impact_social: sic?.probleme_social ? _safeStr(sic.probleme_social) : 'À compléter',
+      impact_environnemental: sic?.solution_impact ? _safeStr(sic.solution_impact) : 'À compléter',
+      impact_economique: 'À compléter — emplois créés, revenus générés',
+      odd_cibles: sic?.odd_cibles ? (Array.isArray(sic.odd_cibles) ? sic.odd_cibles : [_safeStr(sic.odd_cibles)]) : ['À compléter'],
+      beneficiaires: sic?.beneficiaires ? _safeStr(sic.beneficiaires) : 'À compléter',
+      indicateurs: sic?.indicateurs_impact ? (Array.isArray(sic.indicateurs_impact) ? sic.indicateurs_impact : [_safeStr(sic.indicateurs_impact)]) : ['À compléter']
+    },
+    plan_financier: {
+      plan_investissement: fw?.investissements ? _safeStr(fw.investissements) : 'À compléter',
+      justification_financement: 'À compléter — justifier le besoin de financement externe',
+      tableau_financier_3ans: {
+        apport_personnel: ['À compléter', 'À compléter', 'À compléter'],
+        prets: ['À compléter', 'À compléter', 'À compléter'],
+        subventions_dons: ['À compléter', 'À compléter', 'À compléter'],
+        chiffre_affaires: fw?.chiffre_affaires ? [_safeStr(fw.chiffre_affaires), 'Année 2', 'Année 3'] : ['À compléter', 'À compléter', 'À compléter'],
+        couts_directs: ['À compléter', 'À compléter', 'À compléter'],
+        couts_indirects: ['À compléter', 'À compléter', 'À compléter'],
+        amortissements: ['À compléter', 'À compléter', 'À compléter'],
+        resultat_net: fw?.resultat_net ? [_safeStr(fw.resultat_net), 'Année 2', 'Année 3'] : ['À compléter', 'À compléter', 'À compléter'],
+        cash_flow: fw?.tresorerie ? [_safeStr(fw.tresorerie), 'Année 2', 'Année 3'] : ['À compléter', 'À compléter', 'À compléter'],
+        valeur_actifs: ['À compléter', 'À compléter', 'À compléter'],
+        dettes_totales: ['À compléter', 'À compléter', 'À compléter'],
+        fonds_propres: ['À compléter', 'À compléter', 'À compléter']
+      },
+      kpis: ovo?.kpis || {}
+    },
+    gouvernance: {
+      projet_description: 'À compléter — décrire le projet nécessitant un financement',
+      situation_actuelle: 'À compléter — situation actuelle de l\'entreprise',
+      duree_mise_en_oeuvre: 'À compléter — calendrier de mise en œuvre',
+      objectif_projet: 'À compléter — objectif principal du projet'
+    },
+    risques_mitigation: diag?.risques?.length ? diag.risques.slice(0, 5).map((r: any) => ({
+      risque: typeof r === 'string' ? r : r.titre || r.title || 'Risque',
+      probabilite: r.probabilite || 'Moyenne',
+      impact: r.impact || 'Moyen',
+      mitigation: r.mitigation || 'À détailler'
+    })) : [{ risque: 'À identifier', probabilite: 'À évaluer', impact: 'À évaluer', mitigation: 'À définir' }],
+    attentes_ovo: {
+      montant_demande: 'À compléter',
+      contribution_entrepreneur: 'À compléter',
+      autres_investisseurs: 'À compléter',
+      expertise_necessaire: 'À compléter',
+      coaching_souhaite: 'À compléter'
+    },
+    annexes: {
+      documents_joints: [
+        sources.bmc ? 'Business Model Canvas (BMC) — généré' : 'BMC — à générer',
+        sources.sic ? 'Social Impact Canvas (SIC) — généré' : 'SIC — à générer',
+        sources.framework ? 'Framework d\'analyse financière — généré' : 'Framework — à générer',
+        sources.diagnostic ? 'Diagnostic expert — généré' : 'Diagnostic — à générer',
+        sources.plan_ovo ? 'Plan OVO — généré' : 'Plan OVO — à générer',
+      ]
+    }
+  }
+}
 
 function _buildResumeExecutif(company: string, sector: string, country: string, diag: any, bmc: any, sic: any): string {
   let r = `${company} est une entreprise`
