@@ -2314,7 +2314,7 @@ function renderDiagnosticModulePage(opts: {
   const isOldFormat = !a.scores_dimensions && !a.score_global && (Array.isArray(a.dimensions) || a.scoreGlobal !== undefined)
 
   // Normalize old format → new format fields
-  const scoreGlobal = a.score_global ?? a.scoreGlobal ?? diagScore ?? 0
+  const scoreGlobal = a.score_global || a.scoreGlobal || diagScore || 0
   const palier = a.palier ?? a.verdict ?? ''
   const label = a.label ?? a.verdict ?? (scoreGlobal >= 71 ? 'Projet solide' : scoreGlobal >= 51 ? 'Projet en développement' : scoreGlobal >= 31 ? 'À consolider' : scoreGlobal > 0 ? 'À renforcer' : 'En attente')
   const couleur = a.couleur ?? a.verdictColor ?? ''
@@ -2358,8 +2358,14 @@ function renderDiagnosticModulePage(opts: {
   const messageIncomplet = a.message_incomplet || ''
 
   const companyName = user?.name ?? 'Entrepreneur'
-  const sector = contexte.secteur || ''
-  const genDate = createdAt ? new Date(createdAt + (createdAt.includes('T') ? '' : 'T00:00:00')).toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' }) : new Date().toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' })
+  // Sector: try contexte, then dimensions data, fallback empty
+  const sector = contexte.secteur || a.sector || a.secteur || ''
+  // Date: safely parse createdAt, fallback to current date
+  let genDate: string
+  try {
+    const d = createdAt ? new Date(createdAt) : new Date()
+    genDate = isNaN(d.getTime()) ? new Date().toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' }) : d.toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' })
+  } catch { genDate = new Date().toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' }) }
 
   // Dimension display config (includes both new and old format codes)
   const dimConfig: Record<string, {icon:string; label:string; color:string}> = {
@@ -2731,7 +2737,7 @@ function renderDiagnosticModulePage(opts: {
     <div class="diag-banner__logo">E</div>
     <div>
       <div class="diag-banner__title">DIAGNOSTIC EXPERT \u2014 INVESTMENT READINESS</div>
-      <div class="diag-banner__sub">${esc(companyName)} \u2022 ${esc(sector || 'Secteur non défini')} \u2022 ${genDate}${diagVersion > 0 ? ` \u2022 <span style="padding:2px 8px;background:rgba(255,255,255,0.2);border-radius:10px;font-size:11px">v${diagVersion}</span>` : ''}</div>
+      <div class="diag-banner__sub">${esc(companyName)}${sector ? ' \u2022 ' + esc(sector) : ''} \u2022 ${genDate}${diagVersion > 0 ? ` \u2022 <span style="padding:2px 8px;background:rgba(255,255,255,0.2);border-radius:10px;font-size:11px">v${diagVersion}</span>` : ''}</div>
     </div>
   </div>
 
@@ -2959,7 +2965,7 @@ app.get('/module/diagnostic', async (c) => {
     const pmeId = `pme_${payload.userId}`
 
     // Fetch available sources in parallel
-    const [bmcRow, sicRow, frameworkRow, frameworkPmeRow, planOvoRow, diagRow, userRow] = await Promise.all([
+    const [bmcRow, sicRow, frameworkRow, frameworkPmeRow, planOvoRow, diagRow, userRow, latestIterRow] = await Promise.all([
       db.prepare(`SELECT id FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_analysis' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
       db.prepare(`SELECT id FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_analysis' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
       db.prepare(`SELECT id FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
@@ -2967,6 +2973,7 @@ app.get('/module/diagnostic', async (c) => {
       db.prepare(`SELECT id, status FROM plan_ovo_analyses WHERE user_id = ? AND pme_id = ? ORDER BY created_at DESC LIMIT 1`).bind(payload.userId, pmeId).first(),
       db.prepare(`SELECT id, version, score, status, sources_used, analysis_json, created_at FROM diagnostic_analyses WHERE user_id = ? AND pme_id = ? ORDER BY created_at DESC LIMIT 1`).bind(payload.userId, pmeId).first(),
       db.prepare('SELECT name, email, country FROM users WHERE id = ?').bind(payload.userId).first(),
+      db.prepare('SELECT score_global, scores_dimensions, version, created_at FROM iterations WHERE user_id = ? ORDER BY version DESC LIMIT 1').bind(payload.userId).first(),
     ])
 
     const hasBmc = !!bmcRow
@@ -2974,10 +2981,12 @@ app.get('/module/diagnostic', async (c) => {
     const hasFramework = !!frameworkRow
     const hasFrameworkPme = !!frameworkPmeRow
     const hasPlanOvo = !!(planOvoRow && planOvoRow.status === 'generated')
-    const hasDiagnostic = !!diagRow
-    const diagStatus = diagRow ? (diagRow.status as string) : 'none'
-    const diagScore = diagRow?.score ? Number(diagRow.score) : null
-    const diagVersion = diagRow?.version ? Number(diagRow.version) : 0
+    const hasDiagnostic = !!diagRow || !!latestIterRow
+    const diagStatus = diagRow ? (diagRow.status as string) : (latestIterRow ? 'generated' : 'none')
+    // Use iteration score if available (more accurate), fallback to diagnostic_analyses score
+    const iterScore = latestIterRow?.score_global ? Number(latestIterRow.score_global) : null
+    const diagScore = iterScore ?? (diagRow?.score ? Number(diagRow.score) : null)
+    const diagVersion = (latestIterRow?.version ? Number(latestIterRow.version) : 0) || (diagRow?.version ? Number(diagRow.version) : 0)
     const diagId = diagRow ? (diagRow.id as string) : null
     const isPartial = diagStatus === 'partial'
 
@@ -2986,7 +2995,18 @@ app.get('/module/diagnostic', async (c) => {
     if (diagRow?.analysis_json) {
       try { analysisData = JSON.parse(diagRow.analysis_json as string) } catch {}
     }
-    const diagCreatedAt = diagRow?.created_at ? String(diagRow.created_at) : ''
+    // Merge iteration scores_dimensions into analysis if available
+    if (latestIterRow?.scores_dimensions && analysisData) {
+      try {
+        const iterDims = JSON.parse(latestIterRow.scores_dimensions as string)
+        // If analysis uses old format, enrich with iteration data
+        if (!analysisData.scores_dimensions && iterDims) {
+          analysisData._iteration_scores = iterDims
+          analysisData._iteration_score_global = iterScore
+        }
+      } catch {}
+    }
+    const diagCreatedAt = diagRow?.created_at ? String(diagRow.created_at) : (latestIterRow?.created_at ? String(latestIterRow.created_at) : '')
 
     const embedded = c.req.query('embedded') === '1'
 

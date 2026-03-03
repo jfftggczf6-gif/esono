@@ -3977,7 +3977,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
     .ev2-center__content { flex: 1; overflow-y: auto; padding: 16px 20px; min-height: 0; background: #f9fafb; }
     
     /* ── BOTTOM DELIVERABLE ICONS (7-column grid) ── */
-    .ev2-bottom { background: #ffffff; border-top: 1px solid #e5e7eb; padding: 14px 20px; flex-shrink: 0; }
+    .ev2-bottom { background: #ffffff; border-top: 1px solid #e5e7eb; padding: 14px 20px; flex-shrink: 0; position: relative; z-index: 10; }
     .ev2-bottom__grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; }
     .ev2-deliv-icon { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 6px; border-radius: 12px; cursor: pointer; transition: all 0.2s; border: 2px solid transparent; text-align: center; position: relative; }
     .ev2-deliv-icon:hover { background: #f3f4f6; }
@@ -4200,7 +4200,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
               <a href="/module/diagnostic" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e3a5f;border:1px solid #a3b8d8;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer"><i class="fas fa-expand"></i> Pleine page</a>
             </div>
           </div>
-          <iframe src="/module/diagnostic?embedded=1" style="width:100%;min-height:85vh;border:none;border-radius:12px;background:#0f172a" onload="try{this.style.height=this.contentDocument.body.scrollHeight+40+'px'}catch(e){}"></iframe>
+          <iframe src="/module/diagnostic?embedded=1" style="width:100%;height:600px;border:none;border-radius:12px;background:#0f172a"></iframe>
         ` : renderEmptyState()}
       </div>
 
@@ -4378,14 +4378,13 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
           '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
           '<button data-download="html" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#1e3a5f;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(30,58,95,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-code"></i> HTML</button>' +
           '<button data-download="pdf" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(124,45,18,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>' +
-          '<a href="/module/diagnostic" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e3a5f;border:1px solid #a3b8d8;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=\'#f0f4ff\'" onmouseout="this.style.background=\'white\'"><i class="fas fa-expand"></i> Pleine page</a>' +
+          '<a href="/module/diagnostic" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e3a5f;border:1px solid #a3b8d8;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#f0f4ff&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>' +
           '</div>';
         el.appendChild(diagBar);
         // Iframe loading /module/diagnostic
         var diagIframe = document.createElement('iframe');
-        diagIframe.style.cssText = 'width:100%;min-height:85vh;border:none;border-radius:12px;background:#0f172a';
+        diagIframe.style.cssText = 'width:100%;height:600px;border:none;border-radius:12px;background:#0f172a';
         diagIframe.src = '/module/diagnostic?embedded=1';
-        diagIframe.onload = function() { try { diagIframe.style.height = diagIframe.contentDocument.body.scrollHeight + 40 + 'px'; } catch(e) {} };
         el.appendChild(diagIframe);
       } else if (type === 'bmc_analysis' && BMC_HTML_TEMPLATE && BMC_HTML_TEMPLATE.length > 100) {
         el.innerHTML = '';
@@ -4401,7 +4400,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         el.appendChild(bmcBar);
         // ── Iframe ──
         var iframe = document.createElement('iframe');
-        iframe.style.cssText = 'width:100%;min-height:80vh;border:none;border-radius:12px;background:#fff';
+        iframe.style.cssText = 'width:100%;height:600px;border:none;border-radius:12px;background:#fff';
         iframe.srcdoc = BMC_HTML_TEMPLATE;
         iframe.onload = function() { try { iframe.style.height = iframe.contentDocument.body.scrollHeight + 40 + 'px'; } catch(e) {} };
         el.appendChild(iframe);
@@ -4421,7 +4420,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         el.appendChild(sicBar);
         // ── Iframe ──
         var sicIframe = document.createElement('iframe');
-        sicIframe.style.cssText = 'width:100%;min-height:80vh;border:none;border-radius:12px;background:#fff';
+        sicIframe.style.cssText = 'width:100%;height:600px;border:none;border-radius:12px;background:#fff';
         sicIframe.srcdoc = SIC_HTML_TEMPLATE;
         sicIframe.onload = function() { try { sicIframe.style.height = sicIframe.contentDocument.body.scrollHeight + 40 + 'px'; } catch(e) {} };
         el.appendChild(sicIframe);
@@ -4443,7 +4442,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         el.appendChild(fwBar);
         // ── Iframe ──
         var fwIframe = document.createElement('iframe');
-        fwIframe.style.cssText = 'width:100%;min-height:80vh;border:none;border-radius:12px;background:#fff';
+        fwIframe.style.cssText = 'width:100%;height:600px;border:none;border-radius:12px;background:#fff';
         fwIframe.srcdoc = FRAMEWORK_HTML_TEMPLATE;
         fwIframe.onload = function() { try { fwIframe.style.height = fwIframe.contentDocument.body.scrollHeight + 40 + 'px'; } catch(e) {} };
         el.appendChild(fwIframe);
