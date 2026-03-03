@@ -2292,9 +2292,9 @@ function renderPlanOvoModulePage(opts: {
 function renderDiagnosticModulePage(opts: {
   hasBmc: boolean; hasSic: boolean; hasFramework: boolean; hasFrameworkPme: boolean; hasPlanOvo: boolean;
   hasDiagnostic: boolean; diagStatus: string; diagScore: number | null; diagVersion: number;
-  diagId: string | null; isPartial: boolean; user: any; analysis: any; createdAt: string;
+  diagId: string | null; isPartial: boolean; user: any; analysis: any; createdAt: string; embedded?: boolean;
 }): string {
-  const { hasBmc, hasSic, hasFramework, hasFrameworkPme, hasPlanOvo, hasDiagnostic, diagStatus, diagScore, diagVersion, diagId, isPartial, user, analysis, createdAt } = opts
+  const { hasBmc, hasSic, hasFramework, hasFrameworkPme, hasPlanOvo, hasDiagnostic, diagStatus, diagScore, diagVersion, diagId, isPartial, user, analysis, createdAt, embedded } = opts
   const availableCount = [hasBmc, hasSic, hasFramework, hasFrameworkPme, hasPlanOvo].filter(Boolean).length
   const canGenerate = availableCount >= 2
 
@@ -2720,7 +2720,7 @@ function renderDiagnosticModulePage(opts: {
 <body>
 
   <!-- Floating download buttons -->
-  ${hasAnalysis ? `
+  ${hasAnalysis && !embedded ? `
   <div class="float-btns" id="floatBtns">
     <button class="float-btn float-btn--html" onclick="downloadDiagnostic('html')" ${!diagId ? 'disabled' : ''}><i class="fas fa-download"></i> HTML</button>
     <button class="float-btn float-btn--pdf" onclick="downloadDiagnostic('pdf')" ${!diagId ? 'disabled' : ''}><i class="fas fa-file-pdf"></i> PDF</button>
@@ -2738,9 +2738,9 @@ function renderDiagnosticModulePage(opts: {
   <div class="page-container">
 
     <!-- Back link -->
-    <a href="/entrepreneur" class="back-link" style="display:inline-flex;align-items:center;gap:6px;color:#64748b;text-decoration:none;font-size:13px;margin:16px 0;transition:color 0.2s">
+    ${embedded ? '' : `<a href="/entrepreneur" class="back-link" style="display:inline-flex;align-items:center;gap:6px;color:#64748b;text-decoration:none;font-size:13px;margin:16px 0;transition:color 0.2s">
       <i class="fas fa-arrow-left"></i> Retour au tableau de bord
-    </a>
+    </a>`}
 
     ${!hasAnalysis ? `
     <!-- ═══ PRE-GENERATION VIEW ═══ -->
@@ -2848,12 +2848,12 @@ function renderDiagnosticModulePage(opts: {
     ${nextStepsHtml}
 
     <!-- Regenerate button -->
-    <div class="gen-card">
+    ${embedded ? '' : `<div class="gen-card">
       <button id="btnGenerate" class="gen-btn" onclick="generateDiagnostic()">
         <i class="fas fa-refresh"></i> Régénérer le diagnostic
       </button>
       <div id="generateStatus" style="margin-top:16px;display:none"></div>
-    </div>
+    </div>`}
 
     <!-- Footer -->
     ${footerHtml}
@@ -2988,10 +2988,12 @@ app.get('/module/diagnostic', async (c) => {
     }
     const diagCreatedAt = diagRow?.created_at ? String(diagRow.created_at) : ''
 
+    const embedded = c.req.query('embedded') === '1'
+
     return c.html(renderDiagnosticModulePage({
       hasBmc, hasSic, hasFramework, hasFrameworkPme, hasPlanOvo,
       hasDiagnostic, diagStatus, diagScore, diagVersion, diagId, isPartial, user: userRow,
-      analysis: analysisData, createdAt: diagCreatedAt
+      analysis: analysisData, createdAt: diagCreatedAt, embedded
     }))
   } catch (error: any) {
     console.error('[Diagnostic Module Page] Error:', error)

@@ -4191,7 +4191,17 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         </div>
       </div>
       <div class="ev2-center__content" id="center-content">
-        ${hasGenerated ? renderDiagnosticView(delivMap.diagnostic, scoresDim) : renderEmptyState()}
+        ${hasGenerated || delivMap.diagnostic ? `
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#f0f4ff,#e8edfb);border:1px solid #a3b8d8;border-radius:12px;margin-bottom:16px">
+            <div style="display:flex;align-items:center;gap:10px"><i class="fas fa-stethoscope" style="font-size:24px;color:#1e3a5f"></i><div><div style="font-size:14px;font-weight:700;color:#1e3a5f">\uD83D\uDD0D Diagnostic Expert</div><div style="font-size:12px;color:#4b6584">Score: ${score >= 0 ? score : (delivMap.diagnostic?.score ?? '—')}/100 — Disponible en HTML et PDF</div></div></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="ev2-btn-sm" onclick="downloadDeliverable('html')"><i class="fas fa-file-code"></i> HTML</button>
+              <button class="ev2-btn-sm" onclick="downloadDeliverable('pdf')"><i class="fas fa-file-pdf"></i> PDF</button>
+              <a href="/module/diagnostic" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e3a5f;border:1px solid #a3b8d8;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer"><i class="fas fa-expand"></i> Pleine page</a>
+            </div>
+          </div>
+          <iframe src="/module/diagnostic?embedded=1" style="width:100%;min-height:85vh;border:none;border-radius:12px;background:#0f172a" onload="try{this.style.height=this.contentDocument.body.scrollHeight+40+'px'}catch(e){}"></iframe>
+        ` : renderEmptyState()}
       </div>
 
       <!-- ═══ BOTTOM DELIVERABLE ICONS (7-column grid) ═══ -->
@@ -4358,35 +4368,25 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
       const score = data.score || content.score || 0;
       const sColor = getScoreColor(score);
       
-      if (type === 'diagnostic' && DIAGNOSTIC_HTML_TEMPLATE && DIAGNOSTIC_HTML_TEMPLATE.length > 100) {
+      if (type === 'diagnostic') {
+        // ── DIAGNOSTIC: embed /module/diagnostic in iframe (same rich design) ──
         el.innerHTML = '';
-        // ── Download bar above iframe ──
+        // Download bar
         var diagBar = document.createElement('div');
         diagBar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#f0f4ff,#e8edfb);border:1px solid #a3b8d8;border-radius:12px;margin-bottom:16px';
-        diagBar.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-stethoscope" style="font-size:24px;color:#1e3a5f"></i><div><div style="font-size:14px;font-weight:700;color:#1e3a5f">Diagnostic Expert</div><div style="font-size:12px;color:#4b6584">Disponible en HTML et PDF</div></div></div>' +
+        diagBar.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-stethoscope" style="font-size:24px;color:#1e3a5f"></i><div><div style="font-size:14px;font-weight:700;color:#1e3a5f">\uD83D\uDD0D Diagnostic Expert</div><div style="font-size:12px;color:#4b6584">Score: ' + score + '/100 — Disponible en HTML et PDF</div></div></div>' +
           '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-          '<button data-download="html" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#1e3a5f;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-code"></i> HTML</button>' +
-          '<button data-download="pdf" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>' +
-          '<a href="/deliverable/diagnostic" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e3a5f;border:1px solid #a3b8d8;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#f0f4ff&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>' +
-          '<a href="/module/diagnostic" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#dc2626;border:1px solid #fecaca;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#fef2f2&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-search"></i> Module Diagnostic</a>' +
+          '<button data-download="html" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#1e3a5f;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(30,58,95,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-code"></i> HTML</button>' +
+          '<button data-download="pdf" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(124,45,18,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>' +
+          '<a href="/module/diagnostic" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e3a5f;border:1px solid #a3b8d8;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=\'#f0f4ff\'" onmouseout="this.style.background=\'white\'"><i class="fas fa-expand"></i> Pleine page</a>' +
           '</div>';
         el.appendChild(diagBar);
-        // ── Iframe ──
+        // Iframe loading /module/diagnostic
         var diagIframe = document.createElement('iframe');
-        diagIframe.style.cssText = 'width:100%;min-height:80vh;border:none;border-radius:12px;background:#fff';
-        diagIframe.srcdoc = DIAGNOSTIC_HTML_TEMPLATE;
+        diagIframe.style.cssText = 'width:100%;min-height:85vh;border:none;border-radius:12px;background:#0f172a';
+        diagIframe.src = '/module/diagnostic?embedded=1';
         diagIframe.onload = function() { try { diagIframe.style.height = diagIframe.contentDocument.body.scrollHeight + 40 + 'px'; } catch(e) {} };
         el.appendChild(diagIframe);
-      } else if (type === 'diagnostic') {
-        // Merge DIAGNOSTIC_ANALYSIS_JSON into content if content lacks new-format fields
-        var diagContent = content;
-        if (DIAGNOSTIC_ANALYSIS_JSON && (!content.scores_dimensions && !content.score_global)) {
-          diagContent = Object.assign({}, content, DIAGNOSTIC_ANALYSIS_JSON);
-        } else if (DIAGNOSTIC_ANALYSIS_JSON) {
-          // Even when content has new format, prefer DIAGNOSTIC_ANALYSIS_JSON for completeness
-          diagContent = Object.assign({}, content, DIAGNOSTIC_ANALYSIS_JSON);
-        }
-        el.innerHTML = renderDiagHTML(diagContent, scoresDim, score, sColor);
       } else if (type === 'bmc_analysis' && BMC_HTML_TEMPLATE && BMC_HTML_TEMPLATE.length > 100) {
         el.innerHTML = '';
         // ── Download bar above iframe ──
