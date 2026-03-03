@@ -3632,6 +3632,54 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
     ).bind(payload.userId).first() as any
     const diagnosticClaudeHtml = diagHtmlRow?.content || ''
 
+    // Load pre-stored SIC HTML from database (instant display)
+    // First try sic_html from entrepreneur_deliverables, then generate from sic_analyses if needed
+    let sicClaudeHtml = ''
+    const sicHtmlRow = await c.env.DB.prepare(
+      "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_html' ORDER BY version DESC LIMIT 1"
+    ).bind(payload.userId).first() as any
+    if (sicHtmlRow?.content && sicHtmlRow.content.length > 500) {
+      sicClaudeHtml = sicHtmlRow.content
+    } else {
+      // Try to generate from sic_analyses (new SIC Analyst flow)
+      try {
+        const sicAnalysisRow = await c.env.DB.prepare(`
+          SELECT analysis_json, extraction_json, score FROM sic_analyses
+          WHERE user_id = ? AND analysis_json IS NOT NULL
+          ORDER BY created_at DESC LIMIT 1
+        `).bind(payload.userId).first() as any
+        if (sicAnalysisRow?.analysis_json) {
+          const analysisData = JSON.parse(sicAnalysisRow.analysis_json)
+          const extractionData = sicAnalysisRow.extraction_json ? JSON.parse(sicAnalysisRow.extraction_json) : null
+          const extractMeta = extractionData?.metadata || {}
+          const projectRow = await c.env.DB.prepare(
+            'SELECT name FROM projects WHERE user_id = ? ORDER BY created_at DESC LIMIT 1'
+          ).bind(payload.userId).first() as any
+          const delivInput: SicAnalystDeliverableInput = {
+            companyName: extractMeta.nom_entreprise || (projectRow?.name as string) || 'Mon Projet',
+            entrepreneurName: (user?.name as string) || 'Entrepreneur',
+            sector: extractMeta.secteur || '',
+            location: extractMeta.zone_geographique || '',
+            country: "Côte d'Ivoire",
+            analysis: analysisData,
+            extractionJson: extractionData
+          }
+          sicClaudeHtml = renderSicDeliverableFromAnalyst(delivInput)
+          // Cache for next time
+          try {
+            await c.env.DB.prepare("DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_html'").bind(payload.userId).run()
+            const sicHtmlId = crypto.randomUUID()
+            await c.env.DB.prepare(
+              "INSERT INTO entrepreneur_deliverables (id, user_id, type, content, created_at) VALUES (?, ?, 'sic_html', ?, datetime('now'))"
+            ).bind(sicHtmlId, payload.userId, sicClaudeHtml).run()
+            console.log('[Entrepreneur Page] Cached SIC HTML (' + sicClaudeHtml.length + ' chars)')
+          } catch { /* ignore cache error */ }
+        }
+      } catch (e) {
+        console.error('[Entrepreneur Page] Error generating SIC HTML:', e)
+      }
+    }
+
     // Fetch chat messages
     const chatMessages = await c.env.DB.prepare(
       'SELECT id, role, content, created_at FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC LIMIT 50'
@@ -4048,6 +4096,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
     const BMC_HTML_TEMPLATE = ${JSON.stringify(bmcClaudeHtml)};
     const FRAMEWORK_HTML_TEMPLATE = ${JSON.stringify(frameworkClaudeHtml)};
     const DIAGNOSTIC_HTML_TEMPLATE = ${JSON.stringify(diagnosticClaudeHtml)};
+    const SIC_HTML_TEMPLATE = ${JSON.stringify(sicClaudeHtml)};
     const sources = ${JSON.stringify(allUploads.map((u: any) => ({ id: u.id, filename: u.filename, category: u.category })))};
 
     // ── Mobile sidebar toggle ──
@@ -4182,6 +4231,13 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         el.appendChild(iframe);
       } else if (type === 'bmc_analysis') {
         el.innerHTML = renderBMCHTML(content, score, sColor);
+      } else if (type === 'sic_analysis' && SIC_HTML_TEMPLATE && SIC_HTML_TEMPLATE.length > 100) {
+        el.innerHTML = '';
+        var sicIframe = document.createElement('iframe');
+        sicIframe.style.cssText = 'width:100%;min-height:80vh;border:none;border-radius:12px;background:#fff';
+        sicIframe.srcdoc = SIC_HTML_TEMPLATE;
+        sicIframe.onload = function() { try { sicIframe.style.height = sicIframe.contentDocument.body.scrollHeight + 40 + 'px'; } catch(e) {} };
+        el.appendChild(sicIframe);
       } else if (type === 'sic_analysis') {
         el.innerHTML = renderSICHTML(content, score, sColor);
       } else if (type === 'plan_ovo') {
