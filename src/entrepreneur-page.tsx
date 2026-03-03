@@ -3691,6 +3691,30 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
       delivMap[d.type] = d
     }
 
+    // ── If no 'diagnostic' in delivMap, inject from diagnostic_analyses ──
+    if (!delivMap.diagnostic) {
+      try {
+        const pmeId = `pme_${payload.userId}`
+        const diagFallbackRow = await c.env.DB.prepare(
+          "SELECT id, analysis_json, score, version, status, created_at FROM diagnostic_analyses WHERE user_id = ? AND pme_id = ? AND status IN ('analyzed','generated','partial') ORDER BY created_at DESC LIMIT 1"
+        ).bind(payload.userId, pmeId).first() as any
+        if (diagFallbackRow?.analysis_json) {
+          delivMap.diagnostic = {
+            id: diagFallbackRow.id,
+            type: 'diagnostic',
+            content: diagFallbackRow.analysis_json,
+            score: diagFallbackRow.score || 0,
+            version: diagFallbackRow.version || 1,
+            created_at: diagFallbackRow.created_at,
+            _source: 'diagnostic_analyses'
+          }
+          console.log('[Entrepreneur Page] Injected diagnostic from diagnostic_analyses (score=' + diagFallbackRow.score + ')')
+        }
+      } catch (e) {
+        console.error('[Entrepreneur Page] Error loading diagnostic fallback:', e)
+      }
+    }
+
     // Load pre-stored BMC Claude AI HTML from database (instant display)
     const bmcHtmlRow = await c.env.DB.prepare(
       "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_html' ORDER BY version DESC LIMIT 1"
@@ -3704,10 +3728,32 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
     const frameworkClaudeHtml = fwHtmlRow?.content || ''
 
     // Load pre-stored Diagnostic Expert HTML from database (instant display)
+    // Priority: 1) entrepreneur_deliverables.diagnostic_html  2) diagnostic_analyses.html_content  3) empty
+    let diagnosticClaudeHtml = ''
+    let diagnosticAnalysisJson: any = null
     const diagHtmlRow = await c.env.DB.prepare(
       "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'diagnostic_html' ORDER BY version DESC LIMIT 1"
     ).bind(payload.userId).first() as any
-    const diagnosticClaudeHtml = diagHtmlRow?.content || ''
+    if (diagHtmlRow?.content && diagHtmlRow.content.length > 200) {
+      diagnosticClaudeHtml = diagHtmlRow.content
+    } else {
+      // Fallback: try diagnostic_analyses (new Diagnostic Expert system)
+      try {
+        const pmeId = `pme_${payload.userId}`
+        const diagAnalysisRow = await c.env.DB.prepare(
+          "SELECT html_content, analysis_json, score, version FROM diagnostic_analyses WHERE user_id = ? AND pme_id = ? AND status IN ('analyzed','generated','partial') ORDER BY created_at DESC LIMIT 1"
+        ).bind(payload.userId, pmeId).first() as any
+        if (diagAnalysisRow?.html_content && diagAnalysisRow.html_content.length > 200) {
+          diagnosticClaudeHtml = diagAnalysisRow.html_content
+          console.log('[Entrepreneur Page] Loaded Diagnostic HTML from diagnostic_analyses (' + diagAnalysisRow.html_content.length + ' chars, score=' + diagAnalysisRow.score + ')')
+        }
+        if (diagAnalysisRow?.analysis_json) {
+          try { diagnosticAnalysisJson = JSON.parse(diagAnalysisRow.analysis_json) } catch { /* ignore */ }
+        }
+      } catch (e) {
+        console.error('[Entrepreneur Page] Error loading diagnostic_analyses:', e)
+      }
+    }
 
     // Load pre-stored SIC HTML from database (instant display)
     // First try sic_html from entrepreneur_deliverables, then generate from sic_analyses if needed
@@ -4190,6 +4236,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
     const BMC_HTML_TEMPLATE = ${JSON.stringify(bmcClaudeHtml)};
     const FRAMEWORK_HTML_TEMPLATE = ${JSON.stringify(frameworkClaudeHtml)};
     const DIAGNOSTIC_HTML_TEMPLATE = ${JSON.stringify(diagnosticClaudeHtml)};
+    const DIAGNOSTIC_ANALYSIS_JSON = ${JSON.stringify(diagnosticAnalysisJson)};
     const SIC_HTML_TEMPLATE = ${JSON.stringify(sicClaudeHtml)};
     const sources = ${JSON.stringify(allUploads.map((u: any) => ({ id: u.id, filename: u.filename, category: u.category })))};
     const PLAN_OVO_ID = ${JSON.stringify(mainPlanOvoId)};
@@ -4399,43 +4446,174 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
     function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
     function renderDiagHTML(c, dims, score, col) {
-      const d = c.dimensions || [];
+      // Support BOTH old format (dimensions[], strengths[], weaknesses[], recommendations[])
+      // and new format (scores_dimensions{}, forces[], opportunites_amelioration[], recommandations[], risques_contextuels[], etc.)
+      const isNewFormat = !!c.scores_dimensions || !!c.score_global;
+      
       let html = '<div class="ev2-diag">';
       
       // ═══ BARRE BLEU FONCÉ — Diagnostic: HTML + PDF ═══
       html += '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#f0f4ff,#e8edfb);border:1px solid #a3b8d8;border-radius:12px;margin-bottom:20px">';
-      html += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-stethoscope" style="font-size:24px;color:#1e3a5f"></i><div><div style="font-size:14px;font-weight:700;color:#1e3a5f">🔍 Diagnostic Expert</div><div style="font-size:12px;color:#4b6584">Disponible en HTML et PDF</div></div></div>';
+      html += '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-stethoscope" style="font-size:24px;color:#1e3a5f"></i><div><div style="font-size:14px;font-weight:700;color:#1e3a5f">\u{1F50D} Diagnostic Expert</div><div style="font-size:12px;color:#4b6584">Disponible en HTML et PDF</div></div></div>';
       html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
       html += '<button data-download="html" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#1e3a5f;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(30,58,95,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-code"></i> HTML</button>';
       html += '<button data-download="pdf" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(124,45,18,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>';
-      html += '<a href="/deliverable/diagnostic" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e3a5f;border:1px solid #a3b8d8;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#f0f4ff&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-expand"></i> Pleine page</a>';
-      html += '<a href="/module/diagnostic" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#dc2626;border:1px solid #fecaca;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#fef2f2&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-search"></i> Module Diagnostic</a>';
+      html += '<a href="/module/diagnostic" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#dc2626;border:1px solid #fecaca;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=&apos;#fef2f2&apos;" onmouseout="this.style.background=&apos;white&apos;"><i class="fas fa-search"></i> Voir le Diagnostic complet</a>';
       html += '</div></div>';
+
+      if (isNewFormat) {
+        // ── NEW FORMAT: scores_dimensions, forces, recommandations, etc. ──
+        const globalScore = c.score_global || score || 0;
+        const label = c.label || '';
+        const sColor = globalScore >= 86 ? '#059669' : globalScore >= 71 ? '#059669' : globalScore >= 51 ? '#84cc16' : globalScore >= 31 ? '#eab308' : '#f97316';
+        
+        // Executive summary
+        if (c.resume_executif) {
+          html += '<div style="background:#f8fafc;border-left:4px solid #0d9488;border-radius:0 12px 12px 0;padding:18px 20px;margin-bottom:20px">';
+          html += '<div style="font-size:13px;font-weight:700;color:#0d9488;margin-bottom:8px"><i class="fas fa-file-lines"></i> Résumé Exécutif</div>';
+          html += '<div style="font-size:13px;color:#475569;line-height:1.7;white-space:pre-line">' + esc(c.resume_executif) + '</div>';
+          html += '</div>';
+        }
+        
+        // Global score
+        html += '<div style="text-align:center;padding:20px;background:#f8fafc;border-radius:12px;margin-bottom:20px;border:1px solid #e2e8f0">';
+        html += '<div style="font-size:12px;color:#94a3b8;font-weight:600;margin-bottom:8px">Score Global</div>';
+        html += '<div style="font-size:36px;font-weight:800;color:' + sColor + '">' + globalScore + '<span style="font-size:16px;color:#94a3b8">/100</span></div>';
+        html += '<div style="font-size:13px;color:' + sColor + ';font-weight:600;margin-top:4px">' + esc(label) + '</div>';
+        html += '</div>';
+        
+        // Dimensions
+        const sd = c.scores_dimensions || {};
+        const dimKeys = ['coherence','viabilite','realisme','completude_couts','capacite_remboursement'];
+        const dimLabels = {coherence:'Cohérence financière',viabilite:'Viabilité économique',realisme:'Réalisme des projections',completude_couts:'Complétude des coûts',capacite_remboursement:'Capacité de remboursement'};
+        html += '<div class="ev2-diag__dims">';
+        for (const dk of dimKeys) {
+          const dim = sd[dk];
+          if (!dim) continue;
+          const ds = dim.score || 0;
+          const dc = getScoreColor(ds);
+          html += '<div class="ev2-diag__dim"><div class="ev2-diag__dim-name">' + esc(dim.label || dimLabels[dk] || dk) + '</div><div class="ev2-diag__dim-score" style="color:' + dc + '">' + ds + '/100</div><div class="ev2-diag__dim-bar"><div class="ev2-diag__dim-bar-fill" style="width:' + ds + '%;background:' + dc + '"></div></div><div class="ev2-diag__dim-text">' + esc(dim.commentaire || '') + '</div></div>';
+        }
+        html += '</div>';
+        
+        // Forces
+        const forces = c.forces || [];
+        if (forces.length) {
+          html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title" style="color:#059669"><i class="fas fa-check-circle" style="color:#059669"></i> Forces (' + forces.length + ')</div><ul class="ev2-diag__list">';
+          for (const f of forces) {
+            const titre = typeof f === 'string' ? f : (f.titre || '');
+            const just = typeof f === 'object' ? (f.justification || '') : '';
+            html += '<li><i class="fas fa-check" style="color:#059669"></i> <strong>' + esc(titre) + '</strong>' + (just ? '<br><span style="font-size:12px;color:#64748b">' + esc(just) + '</span>' : '') + '</li>';
+          }
+          html += '</ul></div>';
+        }
+        
+        // Opportunities
+        const opps = c.opportunites_amelioration || [];
+        if (opps.length) {
+          html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title" style="color:#2563eb"><i class="fas fa-lightbulb" style="color:#d97706"></i> Opportunités d\\x27amélioration (' + opps.length + ')</div><ul class="ev2-diag__list">';
+          for (const o of opps) {
+            const titre = typeof o === 'string' ? o : (o.titre || '');
+            html += '<li><i class="fas fa-arrow-right" style="color:#d97706"></i> ' + esc(titre) + '</li>';
+          }
+          html += '</ul></div>';
+        }
+        
+        // Vigilance points
+        const vig = c.points_vigilance || [];
+        if (vig.length) {
+          html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-shield-halved" style="color:#f59e0b"></i> Points de vigilance (' + vig.length + ')</div>';
+          html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px"><thead><tr style="background:#1e3a5f;color:white"><th style="padding:8px 10px;text-align:left">Niveau</th><th style="padding:8px 10px;text-align:left">Titre</th><th style="padding:8px 10px;text-align:left">Impact</th><th style="padding:8px 10px;text-align:left">Action</th></tr></thead><tbody>';
+          for (const v of vig) {
+            const niv = (v.niveau||'moyen').toLowerCase();
+            const nbg = niv === 'critique' || niv === 'elevee' || niv === 'eleve' ? '#fef2f2' : niv === 'moyen' || niv === 'moyenne' ? '#fffbeb' : '#f8fafc';
+            html += '<tr style="background:' + nbg + ';border-bottom:1px solid #e2e8f0"><td style="padding:8px 10px;font-weight:700">' + esc(v.niveau||'—') + '</td><td style="padding:8px 10px"><strong>' + esc(v.titre||'—') + '</strong><br><span style="color:#64748b">' + esc(v.description||'') + '</span></td><td style="padding:8px 10px;color:#d97706">' + esc(v.impact_financier||'—') + '</td><td style="padding:8px 10px;color:#059669">' + esc(v.action_recommandee||'—') + '</td></tr>';
+          }
+          html += '</tbody></table></div></div>';
+        }
+        
+        // Contextual risks
+        const risques = c.risques_contextuels || [];
+        if (risques.length) {
+          html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-exclamation-circle" style="color:#f97316"></i> Risques Contextuels (' + risques.length + ')</div>';
+          for (const r of risques) {
+            const cat = (r.categorie||'').replace('contextuel_','');
+            const catLabel = cat === 'secteur' ? '\u{1F3ED} Sectoriel' : cat === 'geographique' ? '\u{1F30D} Géographique' : '\u{1F3E2} Taille';
+            html += '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:8px">';
+            html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap"><span style="padding:2px 8px;background:#e0e7ff;border-radius:8px;font-size:11px;font-weight:700;color:#4338ca">' + catLabel + '</span><span style="padding:2px 8px;background:#fef3c7;border-radius:8px;font-size:11px;font-weight:600;color:#92400e">' + esc(r.gravite||'—') + '</span></div>';
+            html += '<div style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:4px">' + esc(r.titre||'') + '</div>';
+            html += '<div style="font-size:12px;color:#475569;line-height:1.5;margin-bottom:6px">' + esc(r.description||'') + '</div>';
+            if (r.impact_financier) html += '<div style="font-size:11px;color:#d97706;margin-bottom:4px"><i class="fas fa-coins"></i> ' + esc(r.impact_financier) + '</div>';
+            if (r.mitigation) html += '<div style="font-size:11px;color:#059669;background:#f0fdf4;padding:6px 10px;border-radius:6px"><i class="fas fa-shield-halved"></i> ' + esc(r.mitigation) + '</div>';
+            html += '</div>';
+          }
+          html += '</div>';
+        }
+        
+        // Recommendations
+        const recs = c.recommandations || [];
+        if (recs.length) {
+          html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-clipboard-list" style="color:#2563eb"></i> Recommandations (' + recs.length + ')</div>';
+          for (var ri = 0; ri < recs.length; ri++) {
+            const r = recs[ri];
+            html += '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid ' + (r.urgence && r.urgence.toLowerCase().includes('imm') ? '#ef4444' : '#eab308') + ';border-radius:0 10px 10px 0;padding:12px 16px;margin-bottom:8px">';
+            html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="width:24px;height:24px;border-radius:50%;background:#e2e8f0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800">' + (ri+1) + '</span><strong style="font-size:13px;color:#1e293b">' + esc(r.titre||'') + '</strong></div>';
+            html += '<div style="font-size:12px;color:#475569;margin-bottom:6px">' + esc(r.detail||'') + '</div>';
+            if (r.impact_viabilite) html += '<span style="display:inline-block;padding:2px 8px;background:#d1fae5;border-radius:8px;font-size:10px;font-weight:700;color:#065f46;margin-right:6px">' + esc(r.impact_viabilite) + '</span>';
+            if (r.action_concrete) html += '<div style="font-size:11px;color:#059669;margin-top:6px"><i class="fas fa-bolt"></i> ' + esc(r.action_concrete) + '</div>';
+            if (r.message_encourageant) html += '<div style="font-size:11px;color:#6366f1;font-style:italic;margin-top:4px">\u{1F4AA} ' + esc(r.message_encourageant) + '</div>';
+            html += '</div>';
+          }
+          html += '</div>';
+        }
+        
+        // Benchmarks
+        const bm = c.benchmarks || {};
+        const bmKeys = ['marge_brute','marge_ebitda','marge_nette','ratio_endettement','seuil_rentabilite'];
+        const bmLabels = {marge_brute:'Marge Brute',marge_ebitda:'Marge EBITDA',marge_nette:'Marge Nette',ratio_endettement:"Ratio d'endettement",seuil_rentabilite:'Seuil de Rentabilité'};
+        const hasBm = bmKeys.some(function(k){return !!bm[k]});
+        if (hasBm) {
+          html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-chart-bar" style="color:#8b5cf6"></i> Benchmarks sectoriels</div>';
+          html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#1e3a5f;color:white"><th style="padding:8px 10px;text-align:left">Indicateur</th><th style="padding:8px 10px;text-align:center">Entreprise</th><th style="padding:8px 10px;text-align:center">Secteur</th><th style="padding:8px 10px;text-align:center">Verdict</th></tr></thead><tbody>';
+          for (const bk of bmKeys) {
+            const b = bm[bk]; if (!b) continue;
+            const vCol = (b.verdict||'').toLowerCase().includes('excell') || (b.verdict||'').toLowerCase().includes('bon') || (b.verdict||'').toLowerCase().includes('sup') ? '#059669' : '#d97706';
+            html += '<tr style="border-bottom:1px solid #e2e8f0"><td style="padding:8px 10px;font-weight:600">' + (bmLabels[bk]||bk) + '</td><td style="padding:8px 10px;text-align:center;font-weight:700">' + (b.entreprise != null ? b.entreprise + '%' : '—') + '</td><td style="padding:8px 10px;text-align:center;color:#64748b">' + (b.secteur_min != null ? b.secteur_min + ' — ' + (b.secteur_max||'') + '%' : '—') + '</td><td style="padding:8px 10px;text-align:center;color:' + vCol + ';font-weight:600">' + esc(b.verdict||'—') + '</td></tr>';
+          }
+          html += '</tbody></table></div><div style="font-size:10px;color:#94a3b8;margin-top:6px;font-style:italic">Benchmarks : BCEAO, IFC, FIRCA — Confiance moyenne</div></div>';
+        }
+        
+        // Link to full page
+        html += '<div style="text-align:center;margin-top:20px;padding:16px;background:#f0fdf4;border-radius:12px;border:1px solid #bbf7d0">';
+        html += '<a href="/module/diagnostic" style="display:inline-flex;align-items:center;gap:10px;padding:12px 24px;background:linear-gradient(135deg,#0d9488,#0f766e);color:white;border-radius:10px;text-decoration:none;font-size:14px;font-weight:700">';
+        html += '<i class="fas fa-expand"></i> Voir le diagnostic complet (pleine page)</a></div>';
+        
+      } else {
+        // ── OLD FORMAT: dimensions[], strengths[], weaknesses[], recommendations[] ──
+        const d = c.dimensions || [];
+        html += '<div class="ev2-diag__dims">';
+        for (const dim of d) {
+          const dc = getScoreColor(dim.score || 0);
+          html += '<div class="ev2-diag__dim"><div class="ev2-diag__dim-name">' + esc(dim.name) + '</div><div class="ev2-diag__dim-score" style="color:' + dc + '">' + (dim.score||0) + '/100</div><div class="ev2-diag__dim-bar"><div class="ev2-diag__dim-bar-fill" style="width:' + (dim.score||0) + '%;background:' + dc + '"></div></div><div class="ev2-diag__dim-text">' + esc(dim.analysis||'') + '</div></div>';
+        }
+        html += '</div>';
+        if (c.strengths?.length) {
+          html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-check-circle" style="color:#059669"></i> Forces</div><ul class="ev2-diag__list">';
+          for (const s of c.strengths) html += '<li><i class="fas fa-check" style="color:#059669"></i>' + esc(s) + '</li>';
+          html += '</ul></div>';
+        }
+        if (c.weaknesses?.length) {
+          html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-exclamation-triangle" style="color:#dc2626"></i> Faiblesses</div><ul class="ev2-diag__list">';
+          for (const w of c.weaknesses) html += '<li><i class="fas fa-times" style="color:#dc2626"></i>' + esc(w) + '</li>';
+          html += '</ul></div>';
+        }
+        if (c.recommendations?.length) {
+          html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-lightbulb" style="color:#d97706"></i> Recommandations</div><ul class="ev2-diag__list">';
+          for (const r of c.recommendations) html += '<li><i class="fas fa-arrow-right" style="color:#d97706"></i>' + esc(r) + '</li>';
+          html += '</ul></div>';
+        }
+      }
       
-      html += '<div class="ev2-diag__dims">';
-      for (const dim of d) {
-        const dc = getScoreColor(dim.score || 0);
-        html += '<div class="ev2-diag__dim"><div class="ev2-diag__dim-name">' + esc(dim.name) + '</div><div class="ev2-diag__dim-score" style="color:' + dc + '">' + (dim.score||0) + '/100</div><div class="ev2-diag__dim-bar"><div class="ev2-diag__dim-bar-fill" style="width:' + (dim.score||0) + '%;background:' + dc + '"></div></div><div class="ev2-diag__dim-text">' + esc(dim.analysis||'') + '</div></div>';
-      }
-      html += '</div>';
-      // Strengths
-      if (c.strengths?.length) {
-        html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-check-circle" style="color:#059669"></i> Forces</div><ul class="ev2-diag__list">';
-        for (const s of c.strengths) html += '<li><i class="fas fa-check" style="color:#059669"></i>' + esc(s) + '</li>';
-        html += '</ul></div>';
-      }
-      // Weaknesses
-      if (c.weaknesses?.length) {
-        html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-exclamation-triangle" style="color:#dc2626"></i> Faiblesses</div><ul class="ev2-diag__list">';
-        for (const w of c.weaknesses) html += '<li><i class="fas fa-times" style="color:#dc2626"></i>' + esc(w) + '</li>';
-        html += '</ul></div>';
-      }
-      // Recommendations
-      if (c.recommendations?.length) {
-        html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-lightbulb" style="color:#d97706"></i> Recommandations</div><ul class="ev2-diag__list">';
-        for (const r of c.recommendations) html += '<li><i class="fas fa-arrow-right" style="color:#d97706"></i>' + esc(r) + '</li>';
-        html += '</ul></div>';
-      }
       html += '</div>';
       return html;
     }
@@ -5300,7 +5478,69 @@ function renderDiagnosticView(deliverable: any, scoresDim: any): string {
     content = {}
   }
 
-  const score = deliverable.score || content.score || 0
+  const score = deliverable.score || content.score_global || content.score || 0
+  
+  // Check if new format (from diagnostic_analyses)
+  const isNewFormat = !!content.scores_dimensions || !!content.score_global
+  
+  if (isNewFormat) {
+    // New format — show summary with link to full page
+    const globalScore = content.score_global || score
+    const label = content.label || ''
+    const sColor = getScoreColor(globalScore)
+    const forces = content.forces || []
+    const recs = content.recommandations || []
+    const sd = content.scores_dimensions || {}
+    const dimKeys = ['coherence','viabilite','realisme','completude_couts','capacite_remboursement']
+    const dimLabels: Record<string,string> = {coherence:'Cohérence financière',viabilite:'Viabilité économique',realisme:'Réalisme des projections',completude_couts:'Complétude des coûts',capacite_remboursement:'Capacité de remboursement'}
+
+    let html = '<div class="ev2-diag">'
+    
+    // Score header
+    html += `<div style="text-align:center;padding:20px;background:linear-gradient(135deg,${sColor}10,${sColor}05);border:1px solid ${sColor}30;border-radius:16px;margin-bottom:20px">
+      <div style="font-size:12px;color:#94a3b8;font-weight:600;margin-bottom:4px">Score Investment Readiness</div>
+      <div style="font-size:36px;font-weight:800;color:${sColor}">${globalScore}<span style="font-size:16px;color:#94a3b8">/100</span></div>
+      <div style="font-size:13px;color:${sColor};font-weight:600;margin-top:4px">${escapeHtml(label)}</div>
+    </div>`
+    
+    // Dimensions
+    html += '<div class="ev2-diag__dims">'
+    for (const dk of dimKeys) {
+      const dim = sd[dk]
+      if (!dim) continue
+      const ds = dim.score || 0
+      const dc = getScoreColor(ds)
+      html += `<div class="ev2-diag__dim">
+        <div class="ev2-diag__dim-name">${escapeHtml(dim.label || dimLabels[dk] || dk)}</div>
+        <div class="ev2-diag__dim-score" style="color:${dc}">${ds}/100</div>
+        <div class="ev2-diag__dim-bar"><div class="ev2-diag__dim-bar-fill" style="width:${ds}%;background:${dc}"></div></div>
+        <div class="ev2-diag__dim-text">${escapeHtml(dim.commentaire || '')}</div>
+      </div>`
+    }
+    html += '</div>'
+    
+    // Forces summary
+    if (forces.length) {
+      html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-check-circle" style="color:#059669"></i> Forces</div><ul class="ev2-diag__list">'
+      for (const f of forces) {
+        const titre = typeof f === 'string' ? f : (f.titre || '')
+        html += `<li><i class="fas fa-check" style="color:#059669"></i> ${escapeHtml(titre)}</li>`
+      }
+      html += '</ul></div>'
+    }
+    
+    // Link to full view
+    html += `<div style="text-align:center;margin-top:16px;padding:14px;background:#f0f4ff;border-radius:12px;border:1px solid #93c5fd">
+      <a href="/module/diagnostic" style="display:inline-flex;align-items:center;gap:10px;padding:12px 24px;background:#2563eb;color:white;border-radius:10px;text-decoration:none;font-size:14px;font-weight:700;box-shadow:0 2px 10px rgba(37,99,235,0.3)">
+        <i class="fas fa-expand"></i> Voir le diagnostic complet
+      </a>
+    </div>`
+    
+    html += '</div>'
+    return html
+  }
+
+  // Old format fallback
   const dimensions = content.dimensions || []
   const strengths = content.strengths || []
   const weaknesses = content.weaknesses || []
@@ -5308,7 +5548,6 @@ function renderDiagnosticView(deliverable: any, scoresDim: any): string {
 
   let html = '<div class="ev2-diag">'
   
-  // Dimensions
   html += '<div class="ev2-diag__dims">'
   for (const dim of dimensions) {
     const dc = getScoreColor(dim.score || 0)
@@ -5321,21 +5560,18 @@ function renderDiagnosticView(deliverable: any, scoresDim: any): string {
   }
   html += '</div>'
 
-  // Strengths
   if (strengths.length) {
     html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-check-circle" style="color:#059669"></i> Forces</div><ul class="ev2-diag__list">'
     for (const s of strengths) html += `<li><i class="fas fa-check" style="color:#059669"></i>${escapeHtml(s)}</li>`
     html += '</ul></div>'
   }
 
-  // Weaknesses
   if (weaknesses.length) {
     html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-exclamation-triangle" style="color:#dc2626"></i> Faiblesses</div><ul class="ev2-diag__list">'
     for (const w of weaknesses) html += `<li><i class="fas fa-times" style="color:#dc2626"></i>${escapeHtml(w)}</li>`
     html += '</ul></div>'
   }
 
-  // Recommendations
   if (recommendations.length) {
     html += '<div class="ev2-diag__section"><div class="ev2-diag__section-title"><i class="fas fa-lightbulb" style="color:#d97706"></i> Recommandations</div><ul class="ev2-diag__list">'
     for (const r of recommendations) html += `<li><i class="fas fa-arrow-right" style="color:#d97706"></i>${escapeHtml(r)}</li>`
