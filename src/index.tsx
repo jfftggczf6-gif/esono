@@ -2292,238 +2292,543 @@ function renderPlanOvoModulePage(opts: {
 function renderDiagnosticModulePage(opts: {
   hasBmc: boolean; hasSic: boolean; hasFramework: boolean; hasFrameworkPme: boolean; hasPlanOvo: boolean;
   hasDiagnostic: boolean; diagStatus: string; diagScore: number | null; diagVersion: number;
-  diagId: string | null; isPartial: boolean; user: any;
+  diagId: string | null; isPartial: boolean; user: any; analysis: any; createdAt: string;
 }): string {
-  const { hasBmc, hasSic, hasFramework, hasFrameworkPme, hasPlanOvo, hasDiagnostic, diagStatus, diagScore, diagVersion, diagId, isPartial, user } = opts
+  const { hasBmc, hasSic, hasFramework, hasFrameworkPme, hasPlanOvo, hasDiagnostic, diagStatus, diagScore, diagVersion, diagId, isPartial, user, analysis, createdAt } = opts
   const availableCount = [hasBmc, hasSic, hasFramework, hasFrameworkPme, hasPlanOvo].filter(Boolean).length
   const canGenerate = availableCount >= 2
 
-  const statusBadge = (status: string) => {
-    switch (status) {
-      case 'generated': return '<span class="diag-badge diag-badge--generated"><i class="fas fa-check-circle"></i> Généré</span>'
-      case 'partial': return '<span class="diag-badge diag-badge--partial"><i class="fas fa-exclamation-triangle"></i> Partiel</span>'
-      case 'generating': return '<span class="diag-badge diag-badge--generating"><i class="fas fa-spinner fa-spin"></i> En cours</span>'
-      case 'error': return '<span class="diag-badge diag-badge--error"><i class="fas fa-times-circle"></i> Erreur</span>'
-      default: return '<span class="diag-badge diag-badge--none"><i class="fas fa-clock"></i> Non généré</span>'
-    }
+  // Helpers
+  const esc = (s: any) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+  const fmtNum = (n: any) => { const v = Number(n); if (isNaN(v)) return String(n ?? '—'); if (Math.abs(v)>=1e6) return (v/1e6).toFixed(1)+'M'; if (Math.abs(v)>=1e3) return (v/1e3).toFixed(0)+'k'; return v.toString() }
+
+  const scoreColor = (s: number) => s >= 86 ? '#059669' : s >= 71 ? '#059669' : s >= 51 ? '#84cc16' : s >= 31 ? '#eab308' : '#f97316'
+  const barColor = (s: number) => s > 75 ? '#22c55e' : s >= 60 ? '#eab308' : s >= 40 ? '#f97316' : '#ef4444'
+  const niveauBg = (n: string) => n === 'critique' || n === 'elevee' || n === 'eleve' ? '#7c2d12' : n === 'moyen' || n === 'moyenne' ? '#78350f' : '#1e293b'
+  const niveauColor = (n: string) => n === 'critique' || n === 'elevee' || n === 'eleve' ? '#fbbf24' : n === 'moyen' || n === 'moyenne' ? '#fde68a' : '#94a3b8'
+  const urgencyBadge = (u: string) => { const ul = (u||'').toLowerCase(); if (ul.includes('imm') || ul.includes('critique') || ul.includes('court')) return '\u{1F534} Critique'; if (ul.includes('important') || ul.includes('moyen')) return '\u{1F7E0} Important'; return '\u{1F7E1} Recommandé' }
+  const urgencyBorder = (u: string) => { const ul = (u||'').toLowerCase(); if (ul.includes('imm') || ul.includes('critique') || ul.includes('court')) return '#ef4444'; if (ul.includes('important') || ul.includes('moyen')) return '#f97316'; return '#eab308' }
+
+  // Extract data from analysis
+  const a = analysis || {} as any
+  const scoreGlobal = a.score_global ?? diagScore ?? 0
+  const palier = a.palier ?? ''
+  const label = a.label ?? ''
+  const couleur = a.couleur ?? ''
+  const sd = a.scores_dimensions || {}
+  const vigilance = Array.isArray(a.points_vigilance) ? a.points_vigilance : []
+  const incoherences = Array.isArray(a.incoherences) ? a.incoherences : []
+  const risquesCtx = Array.isArray(a.risques_contextuels) ? a.risques_contextuels : []
+  const forces = Array.isArray(a.forces) ? a.forces : []
+  const opps = Array.isArray(a.opportunites_amelioration) ? a.opportunites_amelioration : []
+  const recs = Array.isArray(a.recommandations) ? a.recommandations : []
+  const benchmarks = a.benchmarks || {}
+  const resumeExec = a.resume_executif || ''
+  const pap = Array.isArray(a.points_attention_prioritaires) ? a.points_attention_prioritaires : []
+  const livrables = a.livrables_analyses || {}
+  const contexte = a.contexte_pays || {}
+  const donneesCompletes = a.donnees_completes !== false
+  const messageIncomplet = a.message_incomplet || ''
+
+  const companyName = user?.name ?? 'Entrepreneur'
+  const sector = contexte.secteur || ''
+  const genDate = createdAt ? new Date(createdAt + (createdAt.includes('T') ? '' : 'T00:00:00')).toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' }) : new Date().toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' })
+
+  // Dimension display config
+  const dimConfig: Record<string, {icon:string; label:string; color:string}> = {
+    coherence: { icon: 'fa-link', label: 'Cohérence financière', color: '#3b82f6' },
+    viabilite: { icon: 'fa-chart-line', label: 'Viabilité économique', color: '#8b5cf6' },
+    realisme: { icon: 'fa-bullseye', label: 'Réalisme des projections', color: '#06b6d4' },
+    completude_couts: { icon: 'fa-list-check', label: 'Complétude des coûts', color: '#f59e0b' },
+    capacite_remboursement: { icon: 'fa-hand-holding-dollar', label: 'Capacité de remboursement', color: '#10b981' },
   }
 
+  // Check if we have a generated diagnostic to render
+  const hasAnalysis = !!analysis && (diagStatus === 'generated' || diagStatus === 'analyzed' || diagStatus === 'partial')
+
+  // ═══ SECTIONS HTML (only built if analysis exists) ═══
+
+  // Incomplete data banner
+  const incompleteBannerHtml = (!donneesCompletes && hasAnalysis) ? `
+    <div style="background:#422006;border:1px solid #92400e;border-radius:12px;padding:18px 24px;margin-bottom:20px;display:flex;align-items:flex-start;gap:14px">
+      <div style="font-size:24px;flex-shrink:0">\u26A0\uFE0F</div>
+      <div>
+        <div style="font-weight:700;color:#fbbf24;font-size:15px;margin-bottom:6px">Données incomplètes</div>
+        <div style="color:#fde68a;font-size:13px;line-height:1.6">${esc(messageIncomplet)}</div>
+        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px">
+          ${Object.entries(livrables).map(([k, v]) => `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:${v ? '#065f46' : '#7c2d12'};color:${v ? '#6ee7b7' : '#fca5a5'}">${v ? '\u2705' : '\u274C'} ${esc(k)}</span>`).join('')}
+        </div>
+      </div>
+    </div>` : ''
+
+  // Executive summary
+  const execSummaryHtml = hasAnalysis && resumeExec ? `
+    <div style="background:#162032;border-left:4px solid #0d9488;border-radius:0 12px 12px 0;padding:24px 28px;margin-bottom:24px">
+      <div style="font-size:15px;font-weight:700;color:#5eead4;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+        <i class="fas fa-file-lines"></i> Résumé Exécutif
+      </div>
+      <div style="font-size:1rem;color:#cbd5e1;line-height:1.8;white-space:pre-line">${esc(resumeExec)}</div>
+    </div>` : ''
+
+  // Global score gauge
+  const gaugeHtml = hasAnalysis ? `
+    <div style="background:#0f172a;border:1px solid #334155;border-radius:16px;padding:28px;margin-bottom:24px;text-align:center">
+      <div style="font-size:14px;color:#94a3b8;font-weight:600;margin-bottom:16px">Indicateur de progression</div>
+      <div style="position:relative;width:120px;height:120px;margin:0 auto 16px">
+        <svg width="120" height="120" viewBox="0 0 120 120">
+          <circle cx="60" cy="60" r="52" fill="none" stroke="#1e293b" stroke-width="10"/>
+          <circle id="gaugeArc" cx="60" cy="60" r="52" fill="none" stroke="${scoreColor(scoreGlobal)}" stroke-width="10" stroke-linecap="round"
+            stroke-dasharray="${2 * Math.PI * 52}" stroke-dashoffset="${2 * Math.PI * 52}" transform="rotate(-90 60 60)"
+            style="transition:stroke-dashoffset 1.5s ease-out"/>
+        </svg>
+        <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">
+          <span id="scoreNum" style="font-size:36px;font-weight:800;color:${scoreColor(scoreGlobal)}">0</span>
+          <span style="font-size:12px;color:#64748b">/100</span>
+        </div>
+      </div>
+      <div style="font-size:14px;color:${scoreColor(scoreGlobal)};font-weight:600">${esc(label)}</div>
+      ${diagVersion > 0 ? `<span style="display:inline-block;margin-top:8px;padding:2px 10px;background:#1e293b;border-radius:20px;font-size:11px;color:#94a3b8">v${diagVersion}</span>` : ''}
+    </div>` : ''
+
+  // Priority attention points (show if not empty OR score < 40)
+  const showPap = hasAnalysis && (pap.length > 0 || scoreGlobal < 40)
+  const papHtml = showPap ? `
+    <div style="background:#422006;border:1px solid #92400e;border-radius:12px;padding:20px 24px;margin-bottom:24px">
+      <div style="font-size:15px;font-weight:700;color:#fbbf24;margin-bottom:12px;display:flex;align-items:center;gap:10px">
+        \u26A0\uFE0F Points d'attention prioritaires
+      </div>
+      <ul style="list-style:none;padding:0;margin:0">
+        ${pap.map((p: any) => `<li style="padding:8px 0;color:#fde68a;font-size:14px;line-height:1.5;border-bottom:1px solid #78350f;display:flex;align-items:flex-start;gap:10px">
+          <span style="color:#f97316;flex-shrink:0">\u25B6</span> ${esc(typeof p === 'string' ? p : p.titre || p.description || JSON.stringify(p))}
+        </li>`).join('')}
+      </ul>
+    </div>` : ''
+
+  // Dimensions cards
+  const dimKeys = ['coherence', 'viabilite', 'realisme', 'completude_couts', 'capacite_remboursement']
+  const dimsHtml = hasAnalysis ? dimKeys.map(key => {
+    const dim = sd[key] || {}
+    const cfg = dimConfig[key] || { icon:'fa-circle', label:key, color:'#64748b' }
+    const score = dim.score ?? 0
+    const comment = dim.commentaire || ''
+    const incoD = Array.isArray(dim.incoherences_detectees) ? dim.incoherences_detectees : []
+    const redFlags = Array.isArray(dim.red_flags) ? dim.red_flags : []
+    const postesM = Array.isArray(dim.postes_manquants) ? dim.postes_manquants : []
+    return `
+    <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:20px 24px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:36px;height:36px;border-radius:10px;background:${cfg.color}22;display:flex;align-items:center;justify-content:center">
+            <i class="fas ${cfg.icon}" style="color:${cfg.color};font-size:15px"></i>
+          </div>
+          <span style="font-size:15px;font-weight:700;color:#e2e8f0">${esc(dim.label || cfg.label)}</span>
+        </div>
+        <span style="font-size:22px;font-weight:800;color:${barColor(score)}">${score}<span style="font-size:13px;color:#64748b">/100</span></span>
+      </div>
+      <div style="background:#1e293b;border-radius:6px;height:12px;overflow:hidden;margin-bottom:14px">
+        <div class="dim-bar" data-target="${score}" style="height:100%;width:0%;background:${barColor(score)};border-radius:6px;transition:width 1.2s ease-out"></div>
+      </div>
+      <div style="font-size:13px;color:#94a3b8;line-height:1.7">${esc(comment)}</div>
+      ${incoD.length > 0 ? `<div style="margin-top:12px;padding:10px 14px;background:#7c2d1222;border:1px solid #7c2d12;border-radius:8px">
+        <div style="font-size:12px;font-weight:700;color:#fbbf24;margin-bottom:6px"><i class="fas fa-exclamation-triangle"></i> Incohérences détectées</div>
+        ${incoD.map((inc: any) => `<div style="font-size:12px;color:#fca5a5;margin-top:4px">\u2022 ${esc(typeof inc === 'string' ? inc : inc.description || JSON.stringify(inc))}</div>`).join('')}
+      </div>` : ''}
+      ${redFlags.length > 0 ? `<div style="margin-top:10px;padding:10px 14px;background:#7c2d1222;border:1px solid #7c2d12;border-radius:8px">
+        <div style="font-size:12px;font-weight:700;color:#ef4444;margin-bottom:6px"><i class="fas fa-flag"></i> Red Flags</div>
+        ${redFlags.map((rf: any) => `<div style="font-size:12px;color:#fca5a5;margin-top:4px">\u2022 ${esc(typeof rf === 'string' ? rf : rf.description || JSON.stringify(rf))}</div>`).join('')}
+      </div>` : ''}
+      ${postesM.length > 0 ? `<div style="margin-top:10px;padding:10px 14px;background:#1e293b;border:1px solid #334155;border-radius:8px">
+        <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:6px"><i class="fas fa-list"></i> Postes manquants</div>
+        ${postesM.map((pm: any) => `<div style="font-size:12px;color:#fde68a;margin-top:4px">\u2022 ${esc(pm)}</div>`).join('')}
+      </div>` : ''}
+    </div>`
+  }).join('') : ''
+
+  // Forces & Opportunities (two-column)
+  const forcesHtml = hasAnalysis && forces.length > 0 ? forces.map((f: any) => `
+    <div style="padding:10px 0;border-bottom:1px solid #064e3b">
+      <div style="font-size:14px;font-weight:600;color:#6ee7b7;display:flex;align-items:flex-start;gap:8px">\u2705 ${esc(f.titre || f)}</div>
+      ${f.justification ? `<div style="font-size:12px;color:#a7f3d0;margin-top:4px;line-height:1.5">${esc(f.justification)}</div>` : ''}
+    </div>`).join('') : '<div style="color:#64748b;font-size:13px">Aucune force identifiée pour le moment.</div>'
+
+  const oppsHtml = hasAnalysis && opps.length > 0 ? opps.map((o: any) => `
+    <div style="padding:10px 0;border-bottom:1px solid #1e3a5f">
+      <div style="font-size:14px;font-weight:600;color:#93c5fd;display:flex;align-items:flex-start;gap:8px">\u{1F4A1} ${esc(o.titre || o)}</div>
+      ${o.justification ? `<div style="font-size:12px;color:#bfdbfe;margin-top:4px;line-height:1.5">${esc(o.justification)}</div>` : ''}
+      ${o.priorite ? `<span style="display:inline-block;margin-top:6px;padding:2px 8px;background:#1e3a5f;border-radius:10px;font-size:10px;color:#93c5fd;font-weight:600">Priorité : ${esc(o.priorite)}</span>` : ''}
+    </div>`).join('') : '<div style="color:#64748b;font-size:13px">Aucune opportunité identifiée pour le moment.</div>'
+
+  // Vigilance table
+  const vigilanceHtml = hasAnalysis && vigilance.length > 0 ? `
+    <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:20px 24px;margin-bottom:24px;overflow-x:auto">
+      <div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:16px;display:flex;align-items:center;gap:10px">
+        <i class="fas fa-shield-halved" style="color:#f59e0b"></i> Points de vigilance
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:700px">
+        <thead>
+          <tr style="background:#1e3a5f;color:white">
+            <th style="padding:10px 12px;text-align:left;border-radius:8px 0 0 0">Catégorie</th>
+            <th style="padding:10px 12px;text-align:left">Niveau</th>
+            <th style="padding:10px 12px;text-align:left">Probabilité</th>
+            <th style="padding:10px 12px;text-align:left">Point de vigilance</th>
+            <th style="padding:10px 12px;text-align:left">Impact</th>
+            <th style="padding:10px 12px;text-align:left;border-radius:0 8px 0 0">Action recommandée</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${vigilance.map((v: any) => {
+            const niv = (v.niveau || 'moyen').toLowerCase()
+            const rowBg = niv === 'critique' || niv === 'elevee' || niv === 'eleve' ? '#451a03' : niv === 'moyen' || niv === 'moyenne' ? '#422006' : '#1e293b'
+            const rowColor = niv === 'critique' || niv === 'elevee' || niv === 'eleve' ? '#fca5a5' : niv === 'moyen' || niv === 'moyenne' ? '#fde68a' : '#94a3b8'
+            return `<tr style="background:${rowBg};border-bottom:1px solid #334155">
+              <td style="padding:10px 12px;color:${rowColor}">${esc(v.categorie || '—')}</td>
+              <td style="padding:10px 12px"><span style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${niveauBg(niv)};color:${niveauColor(niv)}">${esc(v.niveau || '—')}</span></td>
+              <td style="padding:10px 12px;color:#94a3b8">${esc(v.probabilite || '—')}</td>
+              <td style="padding:10px 12px;color:#e2e8f0;font-weight:600">${esc(v.titre || '—')}<br/><span style="font-weight:400;font-size:12px;color:#94a3b8">${esc(v.description || '')}</span></td>
+              <td style="padding:10px 12px;color:#fbbf24;font-size:12px">${esc(v.impact_financier || '—')}</td>
+              <td style="padding:10px 12px;color:#6ee7b7;font-size:12px">${esc(v.action_recommandee || '—')}</td>
+            </tr>`
+          }).join('')}
+        </tbody>
+      </table>
+    </div>` : ''
+
+  // Incoherences
+  const incohHtml = hasAnalysis && incoherences.length > 0 ? `
+    <div style="margin-bottom:24px">
+      <div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+        <i class="fas fa-triangle-exclamation" style="color:#f97316"></i> Incohérences détectées
+      </div>
+      ${incoherences.map((inc: any) => `
+        <div style="background:#2a1a0a;border:1px solid #92400e;border-radius:12px;padding:16px 20px;margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span style="font-size:14px;font-weight:700;color:#fbbf24">${esc(inc.type || 'Incohérence')}</span>
+            ${inc.champ ? `<span style="padding:2px 8px;background:#78350f;border-radius:10px;font-size:11px;color:#fde68a">${esc(inc.champ)}</span>` : ''}
+            ${inc.ecart_pct ? `<span style="padding:2px 8px;background:#7c2d12;border-radius:10px;font-size:11px;color:#fca5a5">Écart: ${esc(inc.ecart_pct)}%</span>` : ''}
+          </div>
+          ${inc.valeurs ? `<div style="font-size:12px;color:#94a3b8;margin-bottom:6px">Valeurs: ${esc(typeof inc.valeurs === 'object' ? JSON.stringify(inc.valeurs) : inc.valeurs)}</div>` : ''}
+          <div style="font-size:13px;color:#fde68a;line-height:1.5">${esc(inc.explication || inc.description || '')}</div>
+        </div>
+      `).join('')}
+    </div>` : ''
+
+  // Recommendations
+  const recsHtml = hasAnalysis && recs.length > 0 ? `
+    <div style="margin-bottom:24px">
+      <div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+        <i class="fas fa-clipboard-list" style="color:#3b82f6"></i> Recommandations prioritaires
+      </div>
+      ${recs.map((r: any, i: number) => `
+        <div style="background:#0f172a;border:1px solid #334155;border-left:4px solid ${urgencyBorder(r.urgence)};border-radius:0 12px 12px 0;padding:18px 22px;margin-bottom:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="width:28px;height:28px;border-radius:50%;background:#1e293b;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#e2e8f0">${i + 1}</span>
+              <span style="font-size:14px;font-weight:700;color:#e2e8f0">${esc(r.titre)}</span>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              ${r.impact_viabilite ? `<span style="padding:3px 10px;background:#0d9488;border-radius:10px;font-size:11px;font-weight:700;color:white">${esc(r.impact_viabilite)}</span>` : ''}
+              <span style="padding:3px 10px;background:#1e293b;border:1px solid #334155;border-radius:10px;font-size:11px;font-weight:600;color:#e2e8f0">${urgencyBadge(r.urgence)}</span>
+            </div>
+          </div>
+          <div style="font-size:13px;color:#94a3b8;line-height:1.6;margin-bottom:10px">${esc(r.detail)}</div>
+          ${r.action_concrete ? `<div style="font-size:12px;color:#6ee7b7;background:#064e3b44;padding:8px 12px;border-radius:8px;margin-bottom:8px"><i class="fas fa-bolt" style="margin-right:6px"></i>${esc(r.action_concrete)}</div>` : ''}
+          ${r.message_encourageant ? `<div style="font-size:12px;color:#a5b4fc;font-style:italic;margin-top:4px">\u{1F4AA} ${esc(r.message_encourageant)}</div>` : ''}
+        </div>
+      `).join('')}
+    </div>` : ''
+
+  // Benchmarks table
+  const benchmarkKeys = ['marge_brute', 'marge_ebitda', 'marge_nette', 'ratio_endettement', 'seuil_rentabilite']
+  const benchmarkLabels: Record<string,string> = { marge_brute:'Marge Brute', marge_ebitda:'Marge EBITDA', marge_nette:'Marge Nette', ratio_endettement:"Ratio d'endettement", seuil_rentabilite:'Seuil de Rentabilité' }
+  const hasBenchmarks = hasAnalysis && benchmarkKeys.some(k => benchmarks[k])
+  const benchHtml = hasBenchmarks ? `
+    <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:20px 24px;margin-bottom:24px;overflow-x:auto">
+      <div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:16px;display:flex;align-items:center;gap:10px">
+        <i class="fas fa-chart-bar" style="color:#8b5cf6"></i> Benchmarks sectoriels
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:600px">
+        <thead>
+          <tr style="background:#1e3a5f;color:white">
+            <th style="padding:10px 12px;text-align:left;border-radius:8px 0 0 0">Indicateur</th>
+            <th style="padding:10px 12px;text-align:center">Entreprise</th>
+            <th style="padding:10px 12px;text-align:center">Benchmark sectoriel</th>
+            <th style="padding:10px 12px;text-align:center">Écart</th>
+            <th style="padding:10px 12px;text-align:center;border-radius:0 8px 0 0">Verdict</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${benchmarkKeys.filter(k => benchmarks[k]).map(k => {
+            const b = benchmarks[k]
+            const vCol = (b.verdict || '').toLowerCase().includes('excell') || (b.verdict || '').toLowerCase().includes('bon') || (b.verdict || '').toLowerCase().includes('sup') ? '#6ee7b7' : (b.verdict || '').toLowerCase().includes('bas') || (b.verdict || '').toLowerCase().includes('insuff') ? '#fca5a5' : '#fde68a'
+            return `<tr style="border-bottom:1px solid #334155">
+              <td style="padding:10px 12px;color:#e2e8f0;font-weight:600">${benchmarkLabels[k] || k}</td>
+              <td style="padding:10px 12px;text-align:center;color:#e2e8f0;font-weight:700">${b.entreprise != null ? (typeof b.entreprise === 'number' ? b.entreprise + (k.includes('mois') || k.includes('rentabilite') ? ' mois' : '%') : esc(b.entreprise)) : '—'}</td>
+              <td style="padding:10px 12px;text-align:center;color:#94a3b8">${b.secteur_min != null ? b.secteur_min + ' — ' + (b.secteur_max ?? '') + (k.includes('mois') || k.includes('rentabilite') ? ' mois' : '%') : '—'}</td>
+              <td style="padding:10px 12px;text-align:center;color:#fbbf24;font-size:12px">${esc(b.ecart || '—')}</td>
+              <td style="padding:10px 12px;text-align:center;color:${vCol};font-weight:600;font-size:12px">${esc(b.verdict || '—')}</td>
+            </tr>`
+          }).join('')}
+        </tbody>
+      </table>
+      <div style="margin-top:12px;font-size:11px;color:#64748b;font-style:italic">Benchmarks : BCEAO, IFC, FIRCA — Confiance moyenne</div>
+    </div>` : ''
+
+  // Contextual risks section
+  const risquesCtxHtml = hasAnalysis && risquesCtx.length > 0 ? `
+    <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:20px 24px;margin-bottom:24px">
+      <div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:16px;display:flex;align-items:center;gap:10px">
+        <i class="fas fa-exclamation-circle" style="color:#f97316"></i> Risques Contextuels
+      </div>
+      ${risquesCtx.map((r: any) => {
+        const cat = (r.categorie || '').replace('contextuel_','')
+        const catLabel = cat === 'secteur' ? '\u{1F3ED} Sectoriel' : cat === 'geographique' ? '\u{1F30D} Géographique' : '\u{1F3E2} Taille'
+        const catBg = cat === 'secteur' ? '#7c3aed' : cat === 'geographique' ? '#2563eb' : '#0891b2'
+        const grav = (r.gravite || 'moyenne').toLowerCase()
+        return `
+        <div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:16px 18px;margin-bottom:10px">
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+            <span style="padding:3px 10px;background:${catBg};border-radius:10px;font-size:11px;font-weight:700;color:white">${catLabel}</span>
+            <span style="padding:3px 10px;background:${niveauBg(grav)};border-radius:10px;font-size:11px;font-weight:700;color:${niveauColor(grav)}">${esc(r.gravite || '—')}</span>
+            <span style="padding:3px 10px;background:#1e293b;border:1px solid #475569;border-radius:10px;font-size:11px;color:#94a3b8">${esc(r.probabilite || '—')}</span>
+            ${r.pays ? `<span style="font-size:11px;color:#64748b">${esc(r.pays)}${r.zone ? ' \u2022 ' + esc(r.zone) : ''}</span>` : ''}
+          </div>
+          <div style="font-size:14px;font-weight:700;color:#e2e8f0;margin-bottom:6px">${esc(r.titre)}</div>
+          <div style="font-size:13px;color:#94a3b8;line-height:1.6;margin-bottom:10px">${esc(r.description || '')}</div>
+          ${r.impact_financier ? `<div style="font-size:12px;color:#fbbf24;margin-bottom:8px"><i class="fas fa-coins" style="margin-right:6px"></i>${esc(r.impact_financier)}</div>` : ''}
+          ${r.mitigation ? `<div style="font-size:12px;color:#6ee7b7;background:#064e3b44;padding:8px 12px;border-radius:8px"><i class="fas fa-shield-halved" style="margin-right:6px"></i>${esc(r.mitigation)}</div>` : ''}
+        </div>`
+      }).join('')}
+    </div>` : ''
+
+  // Next steps + CTA
+  const nextStepsHtml = hasAnalysis ? `
+    <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:20px 24px;margin-bottom:24px">
+      <div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+        <i class="fas fa-forward" style="color:#0d9488"></i> Prochaines étapes
+      </div>
+      <ul style="list-style:none;padding:0;margin:0 0 18px 0">
+        <li style="padding:8px 0;color:#cbd5e1;font-size:14px;border-bottom:1px solid #1e293b;display:flex;align-items:center;gap:10px"><span style="color:#0d9488">1.</span> Compléter les livrables manquants pour affiner le diagnostic</li>
+        <li style="padding:8px 0;color:#cbd5e1;font-size:14px;border-bottom:1px solid #1e293b;display:flex;align-items:center;gap:10px"><span style="color:#0d9488">2.</span> Appliquer les recommandations prioritaires identifiées</li>
+        <li style="padding:8px 0;color:#cbd5e1;font-size:14px;border-bottom:1px solid #1e293b;display:flex;align-items:center;gap:10px"><span style="color:#0d9488">3.</span> Renouveler le diagnostic après les ajustements pour mesurer la progression</li>
+        <li style="padding:8px 0;color:#cbd5e1;font-size:14px;display:flex;align-items:center;gap:10px"><span style="color:#0d9488">4.</span> Utiliser le chat IA pour approfondir les recommandations</li>
+      </ul>
+      <div style="text-align:center">
+        <a href="/chat" style="display:inline-flex;align-items:center;gap:10px;padding:12px 28px;background:linear-gradient(135deg,#0d9488,#0f766e);color:white;border-radius:12px;text-decoration:none;font-size:14px;font-weight:700;box-shadow:0 4px 14px rgba(13,148,136,0.3);transition:all 0.2s">
+          \u{1F4AC} Améliorer via le chat IA \u2192
+        </a>
+      </div>
+    </div>` : ''
+
+  // Footer
+  const footerHtml = hasAnalysis ? `
+    <div style="text-align:center;padding:20px 0;border-top:1px solid #1e293b;margin-top:20px">
+      <div style="font-size:12px;color:#64748b">Généré par ESANO Diagnostic Expert \u2022 ${genDate}${diagVersion > 0 ? ' \u2022 v' + diagVersion : ''}</div>
+      <div style="font-size:11px;color:#475569;margin-top:6px">Ce diagnostic est indicatif et ne constitue pas un conseil financier formel. Consultez un professionnel pour toute décision d'investissement.</div>
+    </div>` : ''
+
+  // ═══ PAGE ASSEMBLY ═══
   return `<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Diagnostic Expert — Investment Readiness | ESONO</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <title>Diagnostic Expert — Investment Readiness | ESANO</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-    * { font-family: 'Inter', sans-serif; }
-    body { background: #f8fafc; margin: 0; }
-    .diag-header { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: white; padding: 24px 32px; }
-    .diag-header__back { color: #94a3b8; text-decoration: none; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; margin-bottom: 16px; transition: color 0.2s; }
-    .diag-header__back:hover { color: white; }
-    .diag-header__title { font-size: 28px; font-weight: 800; display: flex; align-items: center; gap: 14px; }
-    .diag-header__sub { color: #94a3b8; font-size: 14px; margin-top: 6px; }
-    .diag-container { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; }
-    .diag-card { background: white; border-radius: 16px; border: 1px solid #e2e8f0; padding: 24px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
-    .diag-card__title { font-size: 16px; font-weight: 700; color: #1e293b; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; }
-    .diag-source { display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: #f8fafc; border-radius: 12px; margin-bottom: 8px; border: 1px solid #e2e8f0; }
-    .diag-source--ok { background: #f0fdf4; border-color: #bbf7d0; }
-    .diag-source--missing { background: #fef2f2; border-color: #fecaca; }
-    .diag-source__icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
-    .diag-source__label { font-size: 14px; font-weight: 600; color: #1e293b; }
-    .diag-source__status { font-size: 12px; margin-top: 2px; }
-    .diag-btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 28px; border-radius: 12px; font-size: 15px; font-weight: 700; border: none; cursor: pointer; transition: all 0.2s; }
-    .diag-btn--primary { background: linear-gradient(135deg, #dc2626, #b91c1c); color: white; box-shadow: 0 4px 14px rgba(220,38,38,0.3); }
-    .diag-btn--primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(220,38,38,0.4); }
-    .diag-btn--primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
-    .diag-btn--download { background: #059669; color: white; box-shadow: 0 4px 14px rgba(5,150,105,0.3); padding: 10px 20px; font-size: 13px; }
-    .diag-btn--download:hover { background: #047857; }
-    .diag-btn--download:disabled { opacity: 0.4; cursor: not-allowed; }
-    .diag-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
-    .diag-badge--generated { background: #d1fae5; color: #065f46; }
-    .diag-badge--partial { background: #fef3c7; color: #92400e; }
-    .diag-badge--generating { background: #dbeafe; color: #1e40af; }
-    .diag-badge--error { background: #fee2e2; color: #991b1b; }
-    .diag-badge--none { background: #f1f5f9; color: #64748b; }
-    .diag-preview { background: #f1f5f9; border-radius: 16px; border: 2px dashed #cbd5e1; padding: 60px 20px; text-align: center; color: #64748b; }
-    .diag-preview--ready { border-style: solid; border-color: #059669; background: #f0fdf4; }
-    .diag-dimensions { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-top: 14px; }
-    .diag-dim { padding: 14px; background: #f8fafc; border-radius: 10px; border: 1px solid #e2e8f0; text-align: center; }
-    .diag-dim__name { font-size: 13px; font-weight: 600; color: #334155; }
-    .diag-dim__score { font-size: 22px; font-weight: 800; margin-top: 4px; }
-    .diag-dim__status { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+    body { background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    .page-container { max-width: 960px; margin: 0 auto; padding: 0 20px 60px; }
+
+    /* Header banner */
+    .diag-banner { background: linear-gradient(135deg, #1e3a5f 0%, #0d9488 100%); height: 120px; display: flex; align-items: center; padding: 0 32px; position: relative; }
+    .diag-banner__logo { width: 40px; height: 40px; border-radius: 10px; background: rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center; margin-right: 18px; flex-shrink: 0; color: white; font-weight: 800; font-size: 16px; }
+    .diag-banner__title { font-size: 20px; font-weight: 800; color: white; letter-spacing: 0.5px; }
+    .diag-banner__sub { font-size: 13px; color: rgba(255,255,255,0.8); margin-top: 4px; }
+
+    /* Floating download buttons */
+    .float-btns { position: fixed; top: 16px; right: 16px; display: flex; gap: 8px; z-index: 1000; }
+    .float-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 10px; font-size: 12px; font-weight: 700; border: none; cursor: pointer; color: white; text-decoration: none; box-shadow: 0 2px 10px rgba(0,0,0,0.3); transition: transform 0.15s; }
+    .float-btn:hover { transform: translateY(-1px); }
+    .float-btn--html { background: #2563eb; }
+    .float-btn--pdf { background: #7c2d12; }
+    .float-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    /* Generate section */
+    .gen-card { background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 24px; margin: 20px 0; text-align: center; }
+    .gen-btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 28px; border-radius: 12px; font-size: 15px; font-weight: 700; border: none; cursor: pointer; background: linear-gradient(135deg, #dc2626, #b91c1c); color: white; box-shadow: 0 4px 14px rgba(220,38,38,0.3); transition: all 0.2s; }
+    .gen-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(220,38,38,0.4); }
+    .gen-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    /* Responsive tables */
+    table { border-spacing: 0; }
+    @media (max-width: 768px) {
+      .two-col { grid-template-columns: 1fr !important; }
+      .diag-banner { height: auto; min-height: 100px; padding: 16px; flex-wrap: wrap; }
+      .diag-banner__title { font-size: 16px; }
+      .float-btns { position: static; justify-content: center; margin: 12px 0; }
+    }
+
+    /* Print styles */
+    @media print {
+      .float-btns, .gen-card, .back-link { display: none !important; }
+      body { background: white; color: #1e293b; }
+      .page-container { max-width: 100%; padding: 0; }
+    }
+
+    /* Animations */
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .anim-in { animation: fadeIn 0.5s ease-out forwards; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .diag-spin { animation: spin 1s linear infinite; }
+    .fa-spin-custom { animation: spin 1s linear infinite; }
   </style>
 </head>
 <body>
-  <div class="diag-header">
-    <a href="/entrepreneur" class="diag-header__back"><i class="fas fa-arrow-left"></i> Retour au tableau de bord</a>
-    <div class="diag-header__title">
-      \u{1F50D} Diagnostic Expert \u2014 Investment Readiness
-    </div>
-    <div class="diag-header__sub">
-      Phase 2 \u00B7 Finance \u2014 Module 5 \u00B7 Score d'investissabilit\u00E9, dimensions, risques, recommandations
+
+  <!-- Floating download buttons -->
+  ${hasAnalysis ? `
+  <div class="float-btns" id="floatBtns">
+    <button class="float-btn float-btn--html" onclick="downloadDiagnostic('html')" ${!diagId ? 'disabled' : ''}><i class="fas fa-download"></i> HTML</button>
+    <button class="float-btn float-btn--pdf" onclick="downloadDiagnostic('pdf')" ${!diagId ? 'disabled' : ''}><i class="fas fa-file-pdf"></i> PDF</button>
+  </div>` : ''}
+
+  <!-- Header banner -->
+  <div class="diag-banner">
+    <div class="diag-banner__logo">E</div>
+    <div>
+      <div class="diag-banner__title">DIAGNOSTIC EXPERT \u2014 INVESTMENT READINESS</div>
+      <div class="diag-banner__sub">${esc(companyName)} \u2022 ${esc(sector || 'Secteur non défini')} \u2022 ${genDate}${diagVersion > 0 ? ` \u2022 <span style="padding:2px 8px;background:rgba(255,255,255,0.2);border-radius:10px;font-size:11px">v${diagVersion}</span>` : ''}</div>
     </div>
   </div>
 
-  <div class="diag-container">
+  <div class="page-container">
 
-    <!-- Description -->
-    <div class="diag-card">
-      <div class="diag-card__title"><i class="fas fa-info-circle" style="color:#dc2626"></i> \u00C0 propos</div>
-      <p style="font-size:14px;color:#475569;line-height:1.7;margin:0">
-        Le <strong>Diagnostic Expert</strong> analyse l'ensemble de vos livrables (BMC, SIC, Framework, Plan OVO, Business Plan, ODD) 
-        et produit un rapport compl\u00E8t d'Investment Readiness :
-        <strong>score global /100</strong>, analyse sur 5 dimensions, d\u00E9tection des risques et incoh\u00E9rences,
-        forces/faiblesses, recommandations prioritaires, benchmarks sectoriels et r\u00E9sum\u00E9 ex\u00E9cutif.
+    <!-- Back link -->
+    <a href="/entrepreneur" class="back-link" style="display:inline-flex;align-items:center;gap:6px;color:#64748b;text-decoration:none;font-size:13px;margin:16px 0;transition:color 0.2s">
+      <i class="fas fa-arrow-left"></i> Retour au tableau de bord
+    </a>
+
+    ${!hasAnalysis ? `
+    <!-- ═══ PRE-GENERATION VIEW ═══ -->
+
+    <!-- About card -->
+    <div style="background:#1e293b;border:1px solid #334155;border-radius:14px;padding:24px;margin-bottom:20px">
+      <div style="font-size:16px;font-weight:700;color:#e2e8f0;margin-bottom:12px;display:flex;align-items:center;gap:10px">
+        <i class="fas fa-info-circle" style="color:#0d9488"></i> À propos
+      </div>
+      <p style="font-size:14px;color:#94a3b8;line-height:1.7">
+        Le <strong style="color:#e2e8f0">Diagnostic Expert</strong> analyse l'ensemble de vos livrables (BMC, SIC, Framework, Plan OVO, Business Plan, ODD) 
+        et produit un rapport complet d'Investment Readiness :
+        <strong style="color:#e2e8f0">score global /100</strong>, analyse sur 5 dimensions, détection des risques et incohérences,
+        forces/faiblesses, recommandations prioritaires, benchmarks sectoriels et résumé exécutif.
       </p>
-      <p style="font-size:13px;color:#94a3b8;margin-top:10px;margin-bottom:0">
-        \u{1F4A1} Le diagnostic se g\u00E9n\u00E8re automatiquement d\u00E8s que 2 modules sont compl\u00E9t\u00E9s. G\u00E9n\u00E9rer le diagnostic pour voir l'analyse compl\u00E8te.
-      </p>
     </div>
 
-    <!-- Sources de données -->
-    <div class="diag-card">
-      <div class="diag-card__title"><i class="fas fa-database" style="color:#7c3aed"></i> Sources de donn\u00E9es (${availableCount}/5)</div>
-      
-      <div class="diag-source ${hasBmc ? 'diag-source--ok' : 'diag-source--missing'}">
-        <div class="diag-source__icon" style="background:${hasBmc ? '#d1fae5' : '#fee2e2'};color:${hasBmc ? '#059669' : '#dc2626'}">
-          <i class="fas fa-diagram-project"></i>
-        </div>
-        <div style="flex:1">
-          <div class="diag-source__label">BMC (Business Model Canvas)</div>
-          <div class="diag-source__status" style="color:${hasBmc ? '#059669' : '#dc2626'}">
-            ${hasBmc ? '<i class="fas fa-check-circle"></i> Disponible' : '<i class="fas fa-times-circle"></i> Non disponible'}
+    <!-- Sources -->
+    <div style="background:#1e293b;border:1px solid #334155;border-radius:14px;padding:24px;margin-bottom:20px">
+      <div style="font-size:16px;font-weight:700;color:#e2e8f0;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+        <i class="fas fa-database" style="color:#7c3aed"></i> Sources de données (${availableCount}/5)
+      </div>
+      ${[
+        { has: hasBmc, icon: 'fa-diagram-project', label: 'BMC (Business Model Canvas)' },
+        { has: hasSic, icon: 'fa-hand-holding-heart', label: 'SIC (Social Impact Canvas)' },
+        { has: hasFramework, icon: 'fa-chart-bar', label: 'Framework Analyse PME' },
+        { has: hasFrameworkPme, icon: 'fa-calculator', label: 'Données PME structurées' },
+        { has: hasPlanOvo, icon: 'fa-file-excel', label: 'Plan Financier OVO' },
+      ].map(s => `
+        <div style="display:flex;align-items:center;gap:14px;padding:12px 16px;background:${s.has ? '#064e3b44' : '#7c2d1222'};border:1px solid ${s.has ? '#065f46' : '#7c2d12'};border-radius:10px;margin-bottom:8px">
+          <div style="width:36px;height:36px;border-radius:8px;background:${s.has ? '#065f46' : '#7c2d12'};display:flex;align-items:center;justify-content:center;color:${s.has ? '#6ee7b7' : '#fca5a5'};font-size:14px;flex-shrink:0">
+            <i class="fas ${s.icon}"></i>
+          </div>
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:600;color:#e2e8f0">${s.label}</div>
+            <div style="font-size:12px;color:${s.has ? '#6ee7b7' : '#fca5a5'};margin-top:2px">${s.has ? '<i class="fas fa-check-circle"></i> Disponible' : '<i class="fas fa-times-circle"></i> Non disponible'}</div>
           </div>
         </div>
-      </div>
-
-      <div class="diag-source ${hasSic ? 'diag-source--ok' : 'diag-source--missing'}">
-        <div class="diag-source__icon" style="background:${hasSic ? '#d1fae5' : '#fee2e2'};color:${hasSic ? '#059669' : '#dc2626'}">
-          <i class="fas fa-hand-holding-heart"></i>
-        </div>
-        <div style="flex:1">
-          <div class="diag-source__label">SIC (Social Impact Canvas)</div>
-          <div class="diag-source__status" style="color:${hasSic ? '#059669' : '#dc2626'}">
-            ${hasSic ? '<i class="fas fa-check-circle"></i> Disponible' : '<i class="fas fa-times-circle"></i> Non disponible'}
-          </div>
-        </div>
-      </div>
-
-      <div class="diag-source ${hasFramework ? 'diag-source--ok' : 'diag-source--missing'}">
-        <div class="diag-source__icon" style="background:${hasFramework ? '#d1fae5' : '#fee2e2'};color:${hasFramework ? '#059669' : '#dc2626'}">
-          <i class="fas fa-chart-bar"></i>
-        </div>
-        <div style="flex:1">
-          <div class="diag-source__label">Framework Analyse PME</div>
-          <div class="diag-source__status" style="color:${hasFramework ? '#059669' : '#dc2626'}">
-            ${hasFramework ? '<i class="fas fa-check-circle"></i> Disponible' : '<i class="fas fa-times-circle"></i> Non disponible'}
-          </div>
-        </div>
-      </div>
-
-      <div class="diag-source ${hasFrameworkPme ? 'diag-source--ok' : 'diag-source--missing'}">
-        <div class="diag-source__icon" style="background:${hasFrameworkPme ? '#d1fae5' : '#fee2e2'};color:${hasFrameworkPme ? '#059669' : '#dc2626'}">
-          <i class="fas fa-calculator"></i>
-        </div>
-        <div style="flex:1">
-          <div class="diag-source__label">Donn\u00E9es PME structur\u00E9es</div>
-          <div class="diag-source__status" style="color:${hasFrameworkPme ? '#059669' : '#dc2626'}">
-            ${hasFrameworkPme ? '<i class="fas fa-check-circle"></i> Disponible' : '<i class="fas fa-times-circle"></i> Non disponible'}
-          </div>
-        </div>
-      </div>
-
-      <div class="diag-source ${hasPlanOvo ? 'diag-source--ok' : 'diag-source--missing'}">
-        <div class="diag-source__icon" style="background:${hasPlanOvo ? '#d1fae5' : '#fee2e2'};color:${hasPlanOvo ? '#059669' : '#dc2626'}">
-          <i class="fas fa-file-excel"></i>
-        </div>
-        <div style="flex:1">
-          <div class="diag-source__label">Plan Financier OVO</div>
-          <div class="diag-source__status" style="color:${hasPlanOvo ? '#059669' : '#dc2626'}">
-            ${hasPlanOvo ? '<i class="fas fa-check-circle"></i> Disponible' : '<i class="fas fa-times-circle"></i> Non disponible'}
-          </div>
-        </div>
-      </div>
+      `).join('')}
     </div>
 
-    <!-- Statut du diagnostic -->
-    <div class="diag-card">
-      <div class="diag-card__title"><i class="fas fa-stethoscope" style="color:#dc2626"></i> Statut du diagnostic</div>
-      <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
-        ${statusBadge(diagStatus)}
-        ${diagScore !== null ? '<span style="font-size:14px;color:#475569">Score: <strong>' + diagScore + '/100</strong></span>' : ''}
-        ${diagVersion > 0 ? '<span style="font-size:12px;color:#94a3b8">v' + diagVersion + '</span>' : ''}
-      </div>
-
-      <!-- 5 Dimensions preview -->
-      <div class="diag-dimensions">
-        <div class="diag-dim">
-          <div class="diag-dim__name">\u{1F4BC} Mod\u00E8le \u00C9co.</div>
-          <div class="diag-dim__score" style="color:${hasBmc ? '#2563eb' : '#cbd5e1'}">\u2014</div>
-          <div class="diag-dim__status">${hasBmc ? 'Donn\u00E9es OK' : 'En attente'}</div>
-        </div>
-        <div class="diag-dim">
-          <div class="diag-dim__name">\u{1F30D} Impact Social</div>
-          <div class="diag-dim__score" style="color:${hasSic ? '#059669' : '#cbd5e1'}">\u2014</div>
-          <div class="diag-dim__status">${hasSic ? 'Donn\u00E9es OK' : 'En attente'}</div>
-        </div>
-        <div class="diag-dim">
-          <div class="diag-dim__name">\u{1F4B0} Viabilit\u00E9 Fin.</div>
-          <div class="diag-dim__score" style="color:${hasFramework ? '#7c3aed' : '#cbd5e1'}">\u2014</div>
-          <div class="diag-dim__status">${hasFramework ? 'Donn\u00E9es OK' : 'En attente'}</div>
-        </div>
-        <div class="diag-dim">
-          <div class="diag-dim__name">\u{1F465} \u00C9quipe & Gouv.</div>
-          <div class="diag-dim__score" style="color:#cbd5e1">\u2014</div>
-          <div class="diag-dim__status">En attente</div>
-        </div>
-        <div class="diag-dim">
-          <div class="diag-dim__name">\u{1F3AF} March\u00E9 & Pos.</div>
-          <div class="diag-dim__score" style="color:#cbd5e1">\u2014</div>
-          <div class="diag-dim__status">En attente</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Action buttons -->
-    <div class="diag-card" style="text-align:center">
-      <button id="btnGenerate" class="diag-btn diag-btn--primary" ${!canGenerate ? 'disabled' : ''} onclick="generateDiagnostic()">
-        <i class="fas fa-search"></i>
-        \u{1F50D} G\u00E9n\u00E9rer le Diagnostic Expert
+    <!-- Generate button -->
+    <div class="gen-card">
+      <button id="btnGenerate" class="gen-btn" ${!canGenerate ? 'disabled' : ''} onclick="generateDiagnostic()">
+        <i class="fas fa-search"></i> Générer le Diagnostic Expert
       </button>
-      ${!canGenerate ? '<p style="font-size:12px;color:#dc2626;margin-top:10px">\u26A0\uFE0F Au moins 2 modules compl\u00E9t\u00E9s sont requis pour g\u00E9n\u00E9rer le diagnostic.</p>' : ''}
-      
+      ${!canGenerate ? '<p style="font-size:12px;color:#fca5a5;margin-top:10px">\u26A0\uFE0F Au moins 2 modules complétés sont requis.</p>' : ''}
       <div id="generateStatus" style="margin-top:16px;display:none"></div>
+    </div>
 
-      <div style="display:flex;gap:10px;justify-content:center;margin-top:20px">
-        <button id="btnDownloadHtml" class="diag-btn diag-btn--download" disabled onclick="downloadDiagnostic('html')">
-          <i class="fas fa-download"></i> \u{1F4E5} HTML
-        </button>
-        <button id="btnDownloadPdf" class="diag-btn diag-btn--download" disabled onclick="downloadDiagnostic('pdf')" title="PDF non encore disponible">
-          <i class="fas fa-file-pdf"></i> \u{1F4E5} PDF
-        </button>
+    ` : `
+    <!-- ═══ FULL DIAGNOSTIC REPORT VIEW ═══ -->
+
+    ${incompleteBannerHtml}
+
+    <!-- Executive Summary -->
+    ${execSummaryHtml}
+
+    <!-- Global Score Gauge -->
+    ${gaugeHtml}
+
+    <!-- Priority Attention Points -->
+    ${papHtml}
+
+    <!-- 5 Dimensions -->
+    <div style="margin-bottom:24px">
+      <div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+        <i class="fas fa-layer-group" style="color:#3b82f6"></i> Analyse par dimension
+      </div>
+      ${dimsHtml}
+    </div>
+
+    <!-- Forces & Opportunities (two-column) -->
+    <div class="two-col" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px">
+      <div style="background:#064e3b;border:1px solid #065f46;border-radius:14px;padding:20px 22px">
+        <div style="font-size:15px;font-weight:700;color:#6ee7b7;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+          \u2705 Forces (${forces.length})
+        </div>
+        ${forcesHtml}
+      </div>
+      <div style="background:#172554;border:1px solid #1e3a5f;border-radius:14px;padding:20px 22px">
+        <div style="font-size:15px;font-weight:700;color:#93c5fd;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+          \u{1F4A1} Opportunités d'amélioration (${opps.length})
+        </div>
+        ${oppsHtml}
       </div>
     </div>
 
-    <!-- Preview area -->
-    <div class="diag-card">
-      <div class="diag-card__title"><i class="fas fa-eye" style="color:#2563eb"></i> Aper\u00E7u du diagnostic</div>
-      <div id="diagPreview" class="diag-preview">
-        <i class="fas fa-search" style="font-size:40px;color:#cbd5e1;display:block;margin-bottom:16px"></i>
-        <p style="font-size:15px;font-weight:600;color:#64748b">G\u00E9n\u00E9rer le diagnostic pour voir l'analyse compl\u00E8te</p>
-        <p style="font-size:13px;color:#94a3b8;margin-top:8px">Le rapport s'affichera ici apr\u00E8s g\u00E9n\u00E9ration</p>
-      </div>
+    <!-- Vigilance Points Table -->
+    ${vigilanceHtml}
+
+    <!-- Incoherences -->
+    ${incohHtml}
+
+    <!-- Contextual Risks -->
+    ${risquesCtxHtml}
+
+    <!-- Recommendations -->
+    ${recsHtml}
+
+    <!-- Benchmarks -->
+    ${benchHtml}
+
+    <!-- Next Steps & CTA -->
+    ${nextStepsHtml}
+
+    <!-- Regenerate button -->
+    <div class="gen-card">
+      <button id="btnGenerate" class="gen-btn" onclick="generateDiagnostic()">
+        <i class="fas fa-refresh"></i> Régénérer le diagnostic
+      </button>
+      <div id="generateStatus" style="margin-top:16px;display:none"></div>
     </div>
+
+    <!-- Footer -->
+    ${footerHtml}
+    `}
 
   </div>
 
   <script>
     const diagId = ${diagId ? "'" + diagId + "'" : 'null'};
-    const diagStatus = '${diagStatus}';
 
     function getCookie(name) {
       const v = document.cookie.match('(^|;)\\\\s*' + name + '\\\\s*=\\\\s*([^;]+)');
@@ -2534,9 +2839,9 @@ function renderDiagnosticModulePage(opts: {
       const btn = document.getElementById('btnGenerate');
       const status = document.getElementById('generateStatus');
       btn.disabled = true;
-      btn.innerHTML = '<i class="fas fa-spinner diag-spin"></i> G\u00E9n\u00E9ration en cours...';
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin-custom"></i> Génération en cours...';
       status.style.display = 'block';
-      status.innerHTML = '<p style="color:#2563eb;font-size:13px"><i class="fas fa-circle-notch fa-spin"></i> Analyse des livrables en cours...</p>';
+      status.innerHTML = '<p style="color:#0d9488;font-size:13px"><i class="fas fa-circle-notch fa-spin-custom"></i> Analyse des livrables en cours... Cela peut prendre 30 à 60 secondes.</p>';
 
       try {
         const token = getCookie('auth_token');
@@ -2548,18 +2853,17 @@ function renderDiagnosticModulePage(opts: {
         const data = await res.json();
         
         if (data.success) {
-          status.innerHTML = '<p style="color:#059669;font-size:13px"><i class="fas fa-check-circle"></i> ' + data.message + '</p>';
-          // Reload page to show updated status
-          setTimeout(() => window.location.reload(), 1500);
+          status.innerHTML = '<p style="color:#6ee7b7;font-size:13px"><i class="fas fa-check-circle"></i> ' + data.message + ' Rechargement...</p>';
+          setTimeout(() => window.location.reload(), 1200);
         } else {
-          status.innerHTML = '<p style="color:#dc2626;font-size:13px"><i class="fas fa-exclamation-circle"></i> ' + (data.error || 'Erreur') + '</p>';
+          status.innerHTML = '<p style="color:#fca5a5;font-size:13px"><i class="fas fa-exclamation-circle"></i> ' + (data.error || 'Erreur') + '</p>';
           btn.disabled = false;
-          btn.innerHTML = '<i class="fas fa-search"></i> \u{1F50D} G\u00E9n\u00E9rer le Diagnostic Expert';
+          btn.innerHTML = '<i class="fas fa-search"></i> Générer le Diagnostic Expert';
         }
       } catch (err) {
-        status.innerHTML = '<p style="color:#dc2626;font-size:13px"><i class="fas fa-exclamation-circle"></i> Erreur: ' + err.message + '</p>';
+        status.innerHTML = '<p style="color:#fca5a5;font-size:13px"><i class="fas fa-exclamation-circle"></i> Erreur: ' + err.message + '</p>';
         btn.disabled = false;
-        btn.innerHTML = '<i class="fas fa-search"></i> \u{1F50D} G\u00E9n\u00E9rer le Diagnostic Expert';
+        btn.innerHTML = '<i class="fas fa-search"></i> Générer le Diagnostic Expert';
       }
     }
 
@@ -2569,11 +2873,37 @@ function renderDiagnosticModulePage(opts: {
       window.open('/api/diagnostic/download/' + diagId + '?format=' + format + '&token=' + token, '_blank');
     }
 
-    // On page load: enable download buttons if diagnostic is ready
-    if (diagStatus === 'generated' || diagStatus === 'partial') {
-      document.getElementById('btnDownloadHtml').disabled = false;
-      // PDF remains disabled until implemented
-    }
+    // Animate gauge and bars on load
+    document.addEventListener('DOMContentLoaded', function() {
+      const targetScore = ${scoreGlobal};
+      const circumference = 2 * Math.PI * 52;
+      
+      // Gauge animation
+      const gaugeArc = document.getElementById('gaugeArc');
+      const scoreNum = document.getElementById('scoreNum');
+      if (gaugeArc && scoreNum) {
+        setTimeout(() => {
+          const offset = circumference - (targetScore / 100) * circumference;
+          gaugeArc.style.strokeDashoffset = offset;
+          
+          // Number counter
+          let current = 0;
+          const step = Math.max(1, Math.floor(targetScore / 40));
+          const interval = setInterval(() => {
+            current += step;
+            if (current >= targetScore) { current = targetScore; clearInterval(interval); }
+            scoreNum.textContent = current;
+          }, 35);
+        }, 300);
+      }
+
+      // Dimension bars animation
+      document.querySelectorAll('.dim-bar').forEach((bar, i) => {
+        setTimeout(() => {
+          bar.style.width = bar.getAttribute('data-target') + '%';
+        }, 500 + i * 150);
+      });
+    });
   </script>
 </body>
 </html>`
@@ -2601,8 +2931,8 @@ app.get('/module/diagnostic', async (c) => {
       db.prepare(`SELECT id FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
       db.prepare(`SELECT id FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_pme_data' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
       db.prepare(`SELECT id, status FROM plan_ovo_analyses WHERE user_id = ? AND pme_id = ? ORDER BY created_at DESC LIMIT 1`).bind(payload.userId, pmeId).first(),
-      db.prepare(`SELECT id, version, score, status, sources_used FROM diagnostic_analyses WHERE user_id = ? AND pme_id = ? ORDER BY created_at DESC LIMIT 1`).bind(payload.userId, pmeId).first(),
-      db.prepare('SELECT name, email FROM users WHERE id = ?').bind(payload.userId).first(),
+      db.prepare(`SELECT id, version, score, status, sources_used, analysis_json, created_at FROM diagnostic_analyses WHERE user_id = ? AND pme_id = ? ORDER BY created_at DESC LIMIT 1`).bind(payload.userId, pmeId).first(),
+      db.prepare('SELECT name, email, country FROM users WHERE id = ?').bind(payload.userId).first(),
     ])
 
     const hasBmc = !!bmcRow
@@ -2617,9 +2947,17 @@ app.get('/module/diagnostic', async (c) => {
     const diagId = diagRow ? (diagRow.id as string) : null
     const isPartial = diagStatus === 'partial'
 
+    // Parse analysis_json for rich rendering
+    let analysisData: any = null
+    if (diagRow?.analysis_json) {
+      try { analysisData = JSON.parse(diagRow.analysis_json as string) } catch {}
+    }
+    const diagCreatedAt = diagRow?.created_at ? String(diagRow.created_at) : ''
+
     return c.html(renderDiagnosticModulePage({
       hasBmc, hasSic, hasFramework, hasFrameworkPme, hasPlanOvo,
-      hasDiagnostic, diagStatus, diagScore, diagVersion, diagId, isPartial, user: userRow
+      hasDiagnostic, diagStatus, diagScore, diagVersion, diagId, isPartial, user: userRow,
+      analysis: analysisData, createdAt: diagCreatedAt
     }))
   } catch (error: any) {
     console.error('[Diagnostic Module Page] Error:', error)
