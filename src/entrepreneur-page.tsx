@@ -4779,6 +4779,30 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
       });
 
       html += '</tbody></table></div>';
+      
+      // ── Data source badges ──
+      const ds = ext.metadata?.data_sources || {};
+      const srcLabel = { declared: 'Déclaré', entrepreneur_target: 'Objectif entrepreneur', ai_estimate: 'Estimation IA' };
+      const srcColor = { declared: '#059669', entrepreneur_target: '#2563eb', ai_estimate: '#d97706' };
+      const srcBg = { declared: '#f0fdf4', entrepreneur_target: '#eff6ff', ai_estimate: '#fffbeb' };
+      const srcIcon = { declared: 'fa-check-circle', entrepreneur_target: 'fa-bullseye', ai_estimate: 'fa-robot' };
+      if (Object.keys(ds).length > 0) {
+        html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">';
+        const shownLabels = new Set();
+        const fieldLabels = { ca_current_year: 'CA année N', ca_projections: 'CA projections', charges: 'Charges', investissements: 'Investissements', personnel: 'Personnel', ca_year_minus_2: 'CA N-2', ca_year_minus_1: 'CA N-1' };
+        for (const [field, src] of Object.entries(ds)) {
+          if (!src || shownLabels.has(field + src)) continue;
+          shownLabels.add(field + src);
+          const fl = fieldLabels[field] || field;
+          const sl = srcLabel[src] || src;
+          const sc = srcColor[src] || '#6b7280';
+          const sb = srcBg[src] || '#f9fafb';
+          const si = srcIcon[src] || 'fa-info-circle';
+          html += '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;background:' + sb + ';color:' + sc + ';font-size:11px;font-weight:500;border:1px solid ' + sc + '22"><i class="fas ' + si + '" style="font-size:9px"></i>' + fl + ': ' + sl + '</span>';
+        }
+        html += '</div>';
+      }
+      
       html += '<div style="font-size:11px;color:#9ca3af;margin-top:6px;text-align:right">Montants en ' + currency + '</div>';
       html += '</div>';
 

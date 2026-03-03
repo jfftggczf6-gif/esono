@@ -39,7 +39,7 @@ import { crossAnalyzeBmcFinancials } from './pme-cross-analyzer'
 import { callClaudeForSicExtraction, extractSicSectionsRegex, type SicExtractionResult } from './sic-extraction'
 import { analyzeSicWithClaude, analyzeSicFallback, type SicAnalystResult } from './sic-analyst'
 import { detectCountry, getFiscalParams, buildKBContext, type FiscalParams } from './fiscal-params'
-import { extractOVOData, type DeliverableData as OVODeliverableData, type OVOExtractionResult } from './ovo-extraction-engine'
+import { extractOVOData, type DeliverableData as OVODeliverableData, type OVOExtractionResult, type PmeStructuredData } from './ovo-extraction-engine'
 import { isValidApiKey } from './claude-api'
 import { fillOVOTemplate, gzipCompressSync, gunzipDecompressSync, type FillingStats } from './ovo-excel-filler'
 
@@ -6737,10 +6737,11 @@ app.post('/api/plan-ovo/generate', async (c) => {
     // ═══════════════════════════════════════════════════════
     // STEP A: Read all deliverables in parallel
     // Framework = REQUIRED, BMC/SIC/Diagnostic = optional
+    // framework_pme_data = structured PME data (PRIORITY source for extraction)
     // ═══════════════════════════════════════════════════════
     console.log(`[Plan OVO] Step A: Fetching deliverables for user ${payload.userId}`)
 
-    const [framework, bmc, sic, diagnostic] = await Promise.all([
+    const [framework, bmc, sic, diagnostic, pmeDataRow] = await Promise.all([
       db.prepare(`
         SELECT id, content, score FROM entrepreneur_deliverables
         WHERE user_id = ? AND type = 'framework'
@@ -6760,8 +6761,26 @@ app.post('/api/plan-ovo/generate', async (c) => {
         SELECT id, content, score FROM entrepreneur_deliverables
         WHERE user_id = ? AND type = 'diagnostic'
         ORDER BY created_at DESC LIMIT 1
+      `).bind(payload.userId).first(),
+      db.prepare(`
+        SELECT content FROM entrepreneur_deliverables
+        WHERE user_id = ? AND type = 'framework_pme_data'
+        ORDER BY version DESC LIMIT 1
       `).bind(payload.userId).first()
     ])
+
+    // Parse PME structured data (Module 3 — entrepreneur's declared financials)
+    let pmeData: PmeStructuredData | null = null
+    if (pmeDataRow?.content) {
+      try {
+        pmeData = JSON.parse(pmeDataRow.content as string) as PmeStructuredData
+        console.log(`[Plan OVO] PME data loaded: CA N=${pmeData.historique?.caTotal?.[2]}, activities=${pmeData.activities?.length}, investments=${pmeData.hypotheses?.investissements?.length || 0}`)
+      } catch (e) {
+        console.warn('[Plan OVO] Failed to parse framework_pme_data:', e)
+      }
+    } else {
+      console.warn('[Plan OVO] No framework_pme_data found — extraction will rely on Framework text only')
+    }
 
     // Framework is mandatory
     if (!framework || !framework.content) {
@@ -6803,7 +6822,7 @@ app.post('/api/plan-ovo/generate', async (c) => {
       } as OVODeliverableData : undefined
     }
 
-    console.log(`[Plan OVO] Step A done: framework=${!!framework}, bmc=${!!bmc}, sic=${!!sic}, diag=${!!diagnostic}`)
+    console.log(`[Plan OVO] Step A done: framework=${!!framework}, bmc=${!!bmc}, sic=${!!sic}, diag=${!!diagnostic}, pmeData=${!!pmeData}`)
 
     // ═══════════════════════════════════════════════════════
     // STEP A-bis: Infer country, get fiscal parameters, build KB context
@@ -6893,7 +6912,8 @@ app.post('/api/plan-ovo/generate', async (c) => {
         sic: allDeliverables.sic,
         diagnostic: allDeliverables.diagnostic,
         fiscal,
-        kbContext
+        kbContext,
+        pmeData  // v2: structured PME data for priority enforcement
       })
 
       console.log(`[Plan OVO] Step C done: confidence=${extractionResult.metadata?.confidence_score}, products=${extractionResult.produits?.length}, staff=${extractionResult.personnel?.length}`)
