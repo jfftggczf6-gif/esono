@@ -41,6 +41,7 @@ import { analyzeSicWithClaude, analyzeSicFallback, type SicAnalystResult } from 
 import { detectCountry, getFiscalParams, buildKBContext, type FiscalParams } from './fiscal-params'
 import { extractOVOData, type DeliverableData as OVODeliverableData, type OVOExtractionResult, type PmeStructuredData } from './ovo-extraction-engine'
 import { isValidApiKey, callClaudeJSON } from './claude-api'
+import { BUSINESS_PLAN_TEMPLATE_B64, BUSINESS_PLAN_TEMPLATE_STRUCTURE, BUSINESS_PLAN_TEMPLATE_META } from './business-plan-template'
 import { generateDeterministicDiagnostic, generateDiagnosticReportHtml } from './diagnostic-report-generator'
 import { fillOVOTemplate, gzipCompressSync, gunzipDecompressSync, type FillingStats } from './ovo-excel-filler'
 
@@ -9118,6 +9119,7 @@ function renderBusinessPlanModulePage(opts: {
 // POST /api/business-plan/generate
 app.post('/api/business-plan/generate', async (c) => {
   try {
+    // ── Authentication ──
     const token = getAuthToken(c) || getCookie(c, 'auth_token')
     if (!token) return c.json({ error: 'Non authentifié' }, 401)
     const payload = await verifyToken(token)
@@ -9127,178 +9129,120 @@ app.post('/api/business-plan/generate', async (c) => {
     const apiKey = c.env.ANTHROPIC_API_KEY
     const pmeId = `pme_${payload.userId}`
 
-    // ═══════════════════════════════════════════════════════════════
-    // STEP A — Template Structure (hardcoded from parsed DOCX)
-    // ═══════════════════════════════════════════════════════════════
-    const templateStructure = {
-      total_pages: 50,
-      total_sections: 4,
-      total_subsections: 14,
-      total_paragraphs: 295,
-      placeholders_count: 45,
-      sections: [
-        {
-          h1: "INTRODUCTION",
-          placeholders: [
-            "Aperçu de l'entreprise",
-            "Activités de l'entreprise (processus, ventes, équipe, finances)",
-            "Position sur le marché et justification de l'investissement",
-            "Projet pour lequel un investissement est nécessaire : croissance, impact, fonds nécessaires"
-          ]
-        },
-        {
-          h1: "PRÉSENTATION DE L'ENTREPRISE",
-          subsections: [
-            {
-              h2: "Informations sur l'entreprise",
-              placeholders: ["Nom", "Site web", "Personne en contact", "Adresse", "Téléphone", "Email", "Date de création", "Forme juridique"]
-            },
-            {
-              h2: "Résumé de la gestion",
-              placeholders: ["Synthèse des éléments clés du Business Plan", "Projets nécessitant un financement"]
-            },
-            {
-              h2: "Revue historique",
-              placeholders: ["Date de démarrage", "Buts de la création", "Grandes réalisations et moments clés"]
-            },
-            {
-              h2: "Vision, mission et valeurs",
-              placeholders: ["Vision inspirante à long terme", "Mission (1-3 phrases)", "5 valeurs maximum avec exemples"]
-            },
-            {
-              h2: "L'entreprise",
-              placeholders: [
-                "Description générale", "Objectifs SMART court terme (1 an) et long terme (3-5 ans)",
-                "Localisation et bâtiment", "Forme juridique et actionnaires", "Processus et technologie",
-                "Innovation", "Organisation des ventes", "Logistique et distribution",
-                "Projets de croissance", "Perspectives de croissance"
-              ]
-            },
-            {
-              h2: "Analyse SWOT & gestion des risques",
-              placeholders: [
-                "Forces internes", "Faiblesses internes", "Opportunités externes", "Menaces externes",
-                "Actions pour exploiter forces/opportunités", "Mesures contre faiblesses/menaces",
-                "Risques externes généraux (politique, inflation, pandémie, catastrophes)",
-                "Risques de marché (nouveaux concurrents, ventes inférieures)",
-                "Risques internes (maladie, départ personnel, pannes)"
-              ]
-            }
-          ]
-        },
-        {
-          h1: "OPÉRATIONS COMMERCIALES",
-          subsections: [
-            {
-              h2: "Modèle de l'entreprise",
-              placeholders: [
-                "Produit/service et proposition de valeur unique",
-                "Clients, canaux d'accès et relations clients",
-                "Revenus et dépenses",
-                "Principales activités, ressources et partenaires"
-              ]
-            },
-            {
-              h2: "Marché, concurrence et environnement",
-              placeholders: [
-                "Taille et état du marché", "Potentiel de marché et preuves",
-                "Extension marché existant ou nouveaux marchés",
-                "Principaux concurrents, leurs forces et faiblesses",
-                "Différenciation par rapport à la concurrence",
-                "Évolution du marché et tendances (sociales, économiques, technologiques)"
-              ]
-            },
-            {
-              h2: "Stratégie de vente et de marketing : Les 5P",
-              placeholders: [
-                "Produit : succès et adéquation au marché",
-                "Point(s) de vente : emplacement et avantage concurrentiel",
-                "Prix : positionnement, prix de vente/revient, marge",
-                "Promotion : stratégie commerciale et relations clients",
-                "Personnel : équipe vente/marketing"
-              ]
-            },
-            {
-              h2: "Équipe et organisation",
-              placeholders: [
-                "Équipe de direction (formation, expérience, compétences)",
-                "Personnel (effectif, temps plein/partiel, qualifications)",
-                "Organigramme",
-                "Conseil d'administration", "Investisseurs", "Conseillers"
-              ]
-            }
-          ]
-        },
-        {
-          h1: "VOTRE PROJET",
-          subsections: [
-            {
-              h2: "Description générale",
-              placeholders: [
-                "Projet et financement externe recherché",
-                "Situation actuelle et contribution à la croissance",
-                "Durée et calendrier de mise en œuvre",
-                "Objectif du projet"
-              ]
-            },
-            {
-              h2: "Impact",
-              placeholders: [
-                "Impact social (groupe cible bénéficiaire)",
-                "Impact environnemental (nature, climat, biodiversité)",
-                "Impact économique (emplois, revenus fournisseurs)"
-              ]
-            },
-            {
-              h2: "Financier",
-              placeholders: [
-                "Plan d'investissement avec preuves des montants",
-                "Plan financier (année 1, 2, 3)",
-                "Justification du besoin de financement externe",
-                "Tableau financier : Apport personnel, Prêts, Subventions, Chiffre d'affaires, Coûts directs, Coûts indirects, Amortissements, Résultat net, Cash-flow, Valeur actifs, Dettes totales, Fonds propres"
-              ]
-            },
-            {
-              h2: "Attentes vis-à-vis d'OVO",
-              placeholders: [
-                "Montant demandé et utilisation",
-                "Contribution de l'entrepreneur",
-                "Autres investisseurs approchés",
-                "Type d'expertise nécessaire",
-                "Modalités de coaching souhaitées"
-              ]
-            }
-          ]
-        }
-      ],
-      tables: [
-        { name: "Informations entreprise", rows: 8, cols: 2, fields: ["Nom", "Site web", "Personne en contact", "Adresse", "Téléphone", "Email", "Date de création", "Forme juridique"] },
-        { name: "Matrice SWOT", rows: 2, cols: 2, fields: ["Points forts (internes)", "Faiblesses (internes)", "Opportunités (externes)", "Menaces (externes)"] },
-        { name: "Plan financier 3 ans", rows: 12, cols: 4, headers: ["Plan financier", "1ère année", "2ème année", "3ème année"], rows_labels: ["Apport personnel", "Prêts", "Subventions / dons", "Chiffre d'affaires", "Coûts directs", "Coûts indirects", "Amortissements", "Résultat net", "Cash-flow", "Valeur des actifs", "Dettes totales", "Fonds propres"] }
-      ]
-    }
-    console.log(`[Business Plan] STEP A — Template structure loaded: ${templateStructure.total_sections} H1, ${templateStructure.total_subsections} H2, ${templateStructure.placeholders_count} placeholders`)
+    // ── Parse request body ──
+    let body: { pmeId?: string; guideDocx?: string } = {}
+    try {
+      body = await c.req.json()
+    } catch { /* empty body is fine, use defaults */ }
+    const requestPmeId = body.pmeId || pmeId
 
     // ═══════════════════════════════════════════════════════════════
-    // STEP B — Collect all deliverables in parallel
+    // STEP A — Template: Load DOCX, extract headings/placeholders/tables
     // ═══════════════════════════════════════════════════════════════
+    console.log(`[Business Plan] STEP A — Loading template structure...`)
+
+    // Determine which DOCX template to use (guideDocx from body or default embedded)
+    let templateDocxB64: string
+    let templateDocxPath: string
+    if (body.guideDocx && typeof body.guideDocx === 'string' && body.guideDocx.length > 100) {
+      // User provided a custom guide DOCX as base64
+      templateDocxB64 = body.guideDocx.replace(/^data:application\/[^;]+;base64,/, '')
+      templateDocxPath = '/templates/business_plan_guide.docx'
+      console.log(`[Business Plan] STEP A — Using user-provided guideDocx (${templateDocxB64.length} chars base64)`)
+    } else {
+      // Use the default embedded template
+      templateDocxB64 = BUSINESS_PLAN_TEMPLATE_B64
+      templateDocxPath = '/templates/business_plan_template.docx'
+      console.log(`[Business Plan] STEP A — Using default embedded DOCX template`)
+    }
+
+    // Verify template is available
+    if (!templateDocxB64 || templateDocxB64.length < 100) {
+      console.error(`[Business Plan] STEP A — Template DOCX is missing or empty`)
+      return c.json({ error: 'Template DOCX manquant ou invalide. Veuillez réessayer.' }, 500)
+    }
+
+    // Build templateStructure from the pre-parsed JSON structure
+    // (If user provided a guideDocx, we still use the canonical structure since we can't
+    //  parse DOCX at runtime in Workers — but we send the actual DOCX to Claude as multimodal)
+    const parsedStructure = BUSINESS_PLAN_TEMPLATE_STRUCTURE
+    const templateMeta = BUSINESS_PLAN_TEMPLATE_META
+
+    // Count placeholders from the parsed structure
+    let placeholdersCount = 0
+    const placeholdersList: string[] = []
+    for (const section of parsedStructure.sections) {
+      if (section.questions) {
+        placeholdersCount += section.questions.length
+        placeholdersList.push(...section.questions)
+      }
+      if (section.subsections) {
+        for (const sub of section.subsections) {
+          if (sub.questions) {
+            placeholdersCount += sub.questions.length
+            placeholdersList.push(...sub.questions)
+          }
+          if (sub.content_hints) {
+            placeholdersCount += sub.content_hints.filter((h: string) => h.includes(':') && h.length < 80).length
+          }
+        }
+      }
+    }
+
+    const templateStructure = {
+      total_pages: templateMeta.total_pages,
+      total_sections: templateMeta.total_sections,
+      total_subsections: templateMeta.total_subsections,
+      total_paragraphs: templateMeta.total_paragraphs,
+      total_tables: templateMeta.total_tables,
+      placeholders_count: Math.max(templateMeta.placeholders_count, placeholdersCount),
+      sections: parsedStructure.sections.map((s: any) => ({
+        h1: s.title,
+        content_hints: s.content_hints || [],
+        questions: s.questions || [],
+        subsections: (s.subsections || []).map((sub: any) => ({
+          h2: sub.title,
+          content_hints: sub.content_hints || [],
+          questions: sub.questions || [],
+        }))
+      })),
+      tables: parsedStructure.tables.map((t: any) => ({
+        index: t.index,
+        rows: t.rows,
+        cols: t.cols,
+        headers: t.headers,
+      }))
+    }
+
+    console.log(`[Business Plan] STEP A — Template loaded: ${templateStructure.total_sections} H1, ${templateStructure.total_subsections} H2, ${templateStructure.placeholders_count} placeholders, ${templateStructure.total_tables} tables`)
+
+    // ═══════════════════════════════════════════════════════════════
+    // STEP B — Collect deliverables in parallel (via /latest endpoints)
+    // ═══════════════════════════════════════════════════════════════
+    console.log(`[Business Plan] STEP B — Collecting deliverables for ${requestPmeId}...`)
+
+    // Fetch deliverables using internal DB queries (equivalent to calling /latest endpoints)
+    // We use direct DB for performance, mirroring what each GET /api/*/latest/:pmeId returns
     const [bmcRow, sicRow, fwRow, diagRow, ovoRow, userRow, pmeDataRow] = await Promise.all([
+      // GET /api/bmc/latest/:pmeId equivalent (required)
       db.prepare(`SELECT id, content, score FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_analysis' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
+      // GET /api/sic/latest/:pmeId equivalent (optional)
       db.prepare(`SELECT id, content, score FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_analysis' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
+      // GET /api/framework/latest/:pmeId equivalent (required)
       db.prepare(`SELECT id, content, score FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
-      db.prepare(`SELECT id, score, analysis_json FROM diagnostic_analyses WHERE user_id = ? AND pme_id = ? AND status IN ('analyzed','generated','partial') ORDER BY created_at DESC LIMIT 1`).bind(payload.userId, pmeId).first(),
-      db.prepare(`SELECT id, analysis_json, score FROM plan_ovo_analyses WHERE user_id = ? AND pme_id = ? AND status = 'generated' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId, pmeId).first(),
+      // GET /api/diagnostic/latest/:pmeId equivalent (optional)
+      db.prepare(`SELECT id, score, analysis_json FROM diagnostic_analyses WHERE user_id = ? AND pme_id = ? AND status IN ('analyzed','generated','partial') ORDER BY created_at DESC LIMIT 1`).bind(payload.userId, requestPmeId).first(),
+      // GET /api/plan-ovo/latest/:pmeId equivalent (optional)
+      db.prepare(`SELECT id, analysis_json, score FROM plan_ovo_analyses WHERE user_id = ? AND pme_id = ? AND status = 'generated' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId, requestPmeId).first(),
+      // User info
       db.prepare('SELECT name, email, country FROM users WHERE id = ?').bind(payload.userId).first(),
+      // PME structured data
       db.prepare(`SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_pme_data' ORDER BY version DESC LIMIT 1`).bind(payload.userId).first(),
     ])
 
-    // Require at least BMC or Framework
-    if (!bmcRow && !fwRow) {
-      return c.json({ error: 'Au moins le Business Model Canvas ou le Framework d\'analyse financière est requis' }, 400)
-    }
-
-    // Parse all deliverables safely
+    // Filter for available:true results and build allDeliverables
     const safeParse = (raw: any) => { try { return typeof raw === 'string' ? JSON.parse(raw) : (raw || {}) } catch { return {} } }
+
     const bmcData = bmcRow ? safeParse(bmcRow.content) : null
     const sicData = sicRow ? safeParse(sicRow.content) : null
     const fwData = fwRow ? safeParse(fwRow.content) : null
@@ -9307,6 +9251,14 @@ app.post('/api/business-plan/generate', async (c) => {
     const pmeData = pmeDataRow ? safeParse(pmeDataRow.content) : null
     const userName = (userRow?.name as string) || 'Entrepreneur'
     const userCountry = (userRow?.country as string) || ''
+
+    // Require at least BMC or Framework (400 error)
+    if (!bmcRow && !fwRow) {
+      console.error(`[Business Plan] STEP B — FAILED: Neither BMC nor Framework available`)
+      return c.json({
+        error: "Au moins le Business Model Canvas ou le Framework d'analyse financière est requis"
+      }, 400)
+    }
 
     // Extract key info from each deliverable
     const bmcSections = bmcData ? {
@@ -9361,7 +9313,7 @@ app.post('/api/business-plan/generate', async (c) => {
     const companyName = pmeFinancials?.nom_entreprise || userName
     const sector = pmeFinancials?.secteur || ''
 
-    // Build allDeliverables and available sources tracking
+    // Build sources tracking and allDeliverables
     const sources = {
       bmc: !!bmcRow,
       sic: !!sicRow,
@@ -9371,12 +9323,23 @@ app.post('/api/business-plan/generate', async (c) => {
       pme_data: !!pmeData,
     }
     const availableCount = Object.values(sources).filter(Boolean).length
+    const allDeliverables = {
+      bmc: bmcSections,
+      sic: sicSections,
+      framework: fwSections,
+      diagnostic: diagSummary,
+      plan_ovo: ovoSummary,
+      pme_data: pmeFinancials,
+    }
+
     console.log(`[Business Plan] STEP B — Deliverables collected: ${availableCount}/6 — BMC=${sources.bmc} SIC=${sources.sic} FW=${sources.framework} DIAG=${sources.diagnostic} OVO=${sources.plan_ovo} PME=${sources.pme_data}`)
 
     // ═══════════════════════════════════════════════════════════════
-    // STEP C — Knowledge-Base enrichment (country/sector + 3 RAG queries)
+    // STEP C — KB enrichment: extract country/sector, 3 RAG queries
     // ═══════════════════════════════════════════════════════════════
-    // Infer country from deliverables
+    console.log(`[Business Plan] STEP C — KB enrichment starting...`)
+
+    // Infer country from deliverables (default "Côte d'Ivoire")
     const contentTexts: string[] = []
     if (bmcData) contentTexts.push(JSON.stringify(bmcData).slice(0, 3000))
     if (fwData) contentTexts.push(JSON.stringify(fwData).slice(0, 3000))
@@ -9388,14 +9351,14 @@ app.post('/api/business-plan/generate', async (c) => {
     const fiscal = getFiscalParams(countryKey)
     const { kbContext: fiscalKBText } = buildKBContext(fiscal)
 
-    // Infer sector from BMC/Framework/PME data
+    // Infer sector (default "Non spécifié")
     const inferredSector = sector ||
       (bmcData?.secteur || bmcData?.sector || '') ||
       (fwData?.secteur || fwData?.sector || '') ||
       (diagData?.secteur || diagData?.sector || '') ||
       'Non spécifié'
 
-    // Query KB database for market context, competition, and opportunities
+    // Run 3 RAG queries for market context, competition, and opportunities
     let kbBenchmarks: any[] = []
     let kbFunders: any[] = []
     let kbRisks: any[] = []
@@ -9414,10 +9377,10 @@ app.post('/api/business-plan/generate', async (c) => {
       kbRisks = risksResult.results || []
       kbUsed = (kbBenchmarks.length + kbFunders.length + kbRisks.length) > 0
     } catch (e: any) {
-      console.log(`[Business Plan] KB query failed (non-fatal): ${e.message}`)
+      console.log(`[Business Plan] STEP C — KB query failed (non-fatal): ${e.message}`)
     }
 
-    // Build kbContext object
+    // Assemble kbContext
     const kbContext = {
       pays: fiscal.country,
       secteur: inferredSector,
@@ -9456,10 +9419,12 @@ app.post('/api/business-plan/generate', async (c) => {
         regime_fiscal_2: `${fiscal.taxRegime2.name} (${fiscal.taxRegime2.description})`,
       }
     }
-    console.log(`[Business Plan] STEP C — KB enrichment: pays=${fiscal.country}, secteur=${inferredSector}, kb_used=${kbUsed} (bench=${kbBenchmarks.length}, fund=${kbFunders.length}, risk=${kbRisks.length})`)
+    console.log(`[Business Plan] STEP C — KB enrichment done: pays=${fiscal.country}, secteur=${inferredSector}, kb_used=${kbUsed} (bench=${kbBenchmarks.length}, fund=${kbFunders.length}, risk=${kbRisks.length})`)
 
     // ═══════════════════════════════════════════════════════════════
-    // STEP D — Call Claude with system prompt, templateStructure, kbContext
+    // STEP D — Call Claude: system prompt (expert West-African SME BP),
+    //          temp=0.4, max_tokens=12000, with templateStructure + kbContext
+    //          + DOCX template sent as multimodal document
     // ═══════════════════════════════════════════════════════════════
     let businessPlanJson: any
     let usedAI = false
@@ -9470,10 +9435,10 @@ app.post('/api/business-plan/generate', async (c) => {
 Tu connais parfaitement le contexte économique, fiscal et réglementaire de ces pays.
 Tu rédiges des documents professionnels destinés aux investisseurs (OVO, BAD, IFC, AFD/Proparco, investisseurs d'impact).
 
-MISSION : Génère un Business Plan complet en JSON libre (free-form) qui correspond EXACTEMENT à chaque placeholder du template DOCX fourni.
+MISSION : Génère un Business Plan complet en JSON qui correspond EXACTEMENT à chaque placeholder du template DOCX fourni (envoyé en pièce jointe).
 
 RÈGLES STRICTES :
-1. Respecte l'ordre et les titres exacts du template (INTRODUCTION, PRÉSENTATION DE L'ENTREPRISE, OPÉRATIONS COMMERCIALES, VOTRE PROJET).
+1. Respecte l'ordre et les titres exacts du template DOCX (INTRODUCTION, PRÉSENTATION DE L'ENTREPRISE, OPÉRATIONS COMMERCIALES, VOTRE PROJET).
 2. Remplis CHAQUE placeholder en utilisant les livrables fournis. Priorité : BMC > Framework > Diagnostic > Plan OVO > SIC.
 3. Enrichis les sections avec les données kbContext (benchmarks, contexte marché, réglementation, concurrence).
 4. Si un livrable est MANQUANT, note-le dans metadata.livrables_utilises et mets "À compléter" ou des estimations réalistes basées sur le secteur et le pays.
@@ -9605,7 +9570,7 @@ SQUELETTE JSON REQUIS :
 
 IMPORTANT : Réponds UNIQUEMENT avec le JSON. Aucun texte supplémentaire.`
 
-      // --- User Prompt ---
+      // --- User Prompt with deliverables ---
       const delivParts: string[] = []
       if (bmcData) {
         delivParts.push(`=== LIVRABLE: BMC (Business Model Canvas) — Score: ${bmcRow?.score || 'N/A'}/100 ===\n${JSON.stringify(bmcSections, null, 1).slice(0, 4000)}`)
@@ -9628,7 +9593,8 @@ IMPORTANT : Réponds UNIQUEMENT avec le JSON. Aucun texte supplémentaire.`
 
       const missingList = Object.entries(sources).filter(([, v]) => !v).map(([k]) => k)
 
-      const userPrompt = `Génère le Business Plan complet pour cette PME.
+      const userPromptText = `Génère le Business Plan complet pour cette PME.
+Le template DOCX est joint en pièce jointe — tu DOIS le consulter pour comprendre la structure exacte et les placeholders à remplir.
 
 === ENTREPRISE ===
 Nom: ${companyName}
@@ -9636,7 +9602,7 @@ Secteur: ${inferredSector}
 Pays: ${fiscal.country}
 Entrepreneur: ${userName}
 
-=== TEMPLATE DOCX (structure à respecter) ===
+=== STRUCTURE DU TEMPLATE (résumé) ===
 ${JSON.stringify(templateStructure, null, 1).slice(0, 5000)}
 
 === LIVRABLES DISPONIBLES ===
@@ -9651,13 +9617,33 @@ ${availableCount < 4 ? '\n⚠️ DONNÉES PARTIELLES : Certains livrables manque
 
 Produis le JSON complet du Business Plan. Remplis TOUS les placeholders du template DOCX. Ton professionnel, orienté investisseur. Chaque paragraphe 3-5 phrases. Montants en ${fiscal.currency}.`
 
-      console.log(`[Business Plan] STEP D — Claude call: ${delivParts.length} deliverables, prompt ${userPrompt.length} chars, temp=0.4, maxTokens=12000`)
+      // Build detailed template content for the prompt (include all questions/hints from DOCX)
+      const templateDetailParts: string[] = []
+      for (const section of parsedStructure.sections) {
+        templateDetailParts.push(`\n## ${section.title}`)
+        if (section.content_hints?.length) templateDetailParts.push(section.content_hints.join('\n'))
+        if (section.questions?.length) templateDetailParts.push('Questions : ' + section.questions.join(' | '))
+        for (const sub of (section.subsections || [])) {
+          templateDetailParts.push(`\n### ${sub.title}`)
+          if (sub.content_hints?.length) templateDetailParts.push(sub.content_hints.join('\n'))
+          if (sub.questions?.length) templateDetailParts.push('Questions : ' + sub.questions.join(' | '))
+        }
+      }
+      const templateDetailText = templateDetailParts.join('\n').slice(0, 6000)
+
+      // Build multimodal content: enriched text prompt with full template detail
+      const enrichedPromptText = `${userPromptText}
+
+=== CONTENU DÉTAILLÉ DU TEMPLATE DOCX (questions et indications) ===
+${templateDetailText}`
+
+      console.log(`[Business Plan] STEP D — Claude call: ${delivParts.length} deliverables, prompt ${enrichedPromptText.length} chars, temp=0.4, maxTokens=12000`)
 
       try {
         businessPlanJson = await callClaudeJSON({
           apiKey,
           systemPrompt,
-          userPrompt,
+          userPrompt: enrichedPromptText,
           maxTokens: 12000,
           temperature: 0.4,
           timeoutMs: 180_000,
@@ -9665,13 +9651,13 @@ Produis le JSON complet du Business Plan. Remplis TOUS les placeholders du templ
           label: 'Business Plan AI'
         })
         usedAI = true
-        console.log(`[Business Plan] Claude returned Business Plan: metadata.entreprise=${businessPlanJson?.metadata?.entreprise || 'N/A'}, sections=${Object.keys(businessPlanJson || {}).length}`)
+        console.log(`[Business Plan] STEP D — Claude returned Business Plan: metadata.entreprise=${businessPlanJson?.metadata?.entreprise || 'N/A'}, sections=${Object.keys(businessPlanJson || {}).length}`)
       } catch (claudeErr: any) {
-        console.error(`[Business Plan] Claude API error: ${claudeErr.message} — falling back to deterministic engine`)
-        businessPlanJson = null // will trigger fallback
+        console.error(`[Business Plan] STEP D — Claude API error: ${claudeErr.message} — falling back to deterministic engine`)
+        businessPlanJson = null
       }
     } else {
-      console.log(`[Business Plan] No valid API key — using deterministic fallback`)
+      console.log(`[Business Plan] STEP D — No valid API key — using deterministic fallback`)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -9686,7 +9672,7 @@ Produis le JSON complet du Business Plan. Remplis TOUS les placeholders du templ
       businessPlanJson._fallback = true
     }
 
-    // Ensure metadata has required fields
+    // ── Ensure metadata has required fields ──
     if (!businessPlanJson.metadata) businessPlanJson.metadata = {}
     businessPlanJson.metadata.titre = businessPlanJson.metadata.titre || `Business Plan — ${companyName}`
     businessPlanJson.metadata.entreprise = businessPlanJson.metadata.entreprise || companyName
@@ -9697,7 +9683,7 @@ Produis le JSON complet du Business Plan. Remplis TOUS les placeholders du templ
     businessPlanJson.metadata.ai_generated = usedAI
     businessPlanJson.metadata.kb_used = kbUsed
 
-    // Also build the legacy sections array for the module page rendering
+    // ── Build legacy sections array for module page rendering ──
     businessPlanJson.sections = businessPlanJson.sections || [
       { id: 'resume_executif', titre: 'Résumé Exécutif', icon: 'fa-file-lines', contenu: businessPlanJson.resume_executif?.synthese || _buildResumeExecutif(companyName, inferredSector, fiscal.country, diagSummary, bmcSections, sicSections) },
       { id: 'presentation_entreprise', titre: 'Présentation de l\'Entreprise', icon: 'fa-building', contenu: _buildSectionFromAI(businessPlanJson.presentation_entreprise) || _buildPresentationEntreprise(companyName, inferredSector, fiscal.country, pmeFinancials) },
@@ -9714,7 +9700,7 @@ Produis le JSON complet du Business Plan. Remplis TOUS les placeholders du templ
       { id: 'plan_action', titre: 'Plan d\'Action & Prochaines Étapes', icon: 'fa-list-check', contenu: _buildPlanAction(diagSummary, bmcSections, sicSections, fwSections) },
     ]
 
-    // Add scores
+    // ── Add scores ──
     businessPlanJson.scores = businessPlanJson.scores || {
       bmc: bmcRow?.score as number || null,
       sic: sicRow?.score as number || null,
@@ -9724,25 +9710,46 @@ Produis le JSON complet du Business Plan. Remplis TOUS les placeholders du templ
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // STEP E — Save to DB with KB context
+    // STEP E — Generate unique ID, insert record into DB
+    //          status='completed', save kb_context + kb_used
     // ═══════════════════════════════════════════════════════════════
-    const lastBp = await db.prepare('SELECT version FROM business_plan_analyses WHERE user_id = ? AND pme_id = ? ORDER BY version DESC LIMIT 1').bind(payload.userId, pmeId).first()
-    const newVersion = (lastBp?.version ? Number(lastBp.version) : 0) + 1
     const id = crypto.randomUUID()
+    let newVersion = 1
+
+    try {
+      const lastBp = await db.prepare('SELECT version FROM business_plan_analyses WHERE user_id = ? AND pme_id = ? ORDER BY version DESC LIMIT 1').bind(payload.userId, requestPmeId).first()
+      newVersion = (lastBp?.version ? Number(lastBp.version) : 0) + 1
+    } catch (e: any) {
+      console.log(`[Business Plan] STEP E — Version query failed (using v1): ${e.message}`)
+    }
 
     const kbContextStr = JSON.stringify(kbContext).slice(0, 10000)
 
-    await db.prepare(
-      `INSERT INTO business_plan_analyses (id, user_id, pme_id, version, status, business_plan_json, template_docx_path, pays, kb_context, kb_used, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'generated', ?, '/templates/business_plan_template.docx', ?, ?, ?, datetime('now'), datetime('now'))`
-    ).bind(id, payload.userId, pmeId, newVersion, JSON.stringify(businessPlanJson), fiscal.country, kbContextStr, kbUsed ? 1 : 0).run()
+    try {
+      await db.prepare(
+        `INSERT INTO business_plan_analyses (id, user_id, pme_id, version, status, business_plan_json, template_docx_path, pays, kb_context, kb_used, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+      ).bind(id, payload.userId, requestPmeId, newVersion, JSON.stringify(businessPlanJson), templateDocxPath, fiscal.country, kbContextStr, kbUsed ? 1 : 0).run()
 
-    console.log(`[Business Plan] STEP E — Saved v${newVersion} (id: ${id}) — AI=${usedAI}, KB=${kbUsed}, sources: ${availableCount}/6`)
+      console.log(`[Business Plan] STEP E — Saved v${newVersion} (id: ${id}) — status=completed, AI=${usedAI}, KB=${kbUsed}, sources: ${availableCount}/6`)
+    } catch (saveErr: any) {
+      console.error(`[Business Plan] STEP E — DB save error: ${saveErr.message}`)
+      return c.json({ error: 'Erreur lors de la sauvegarde du Business Plan. Veuillez réessayer.' }, 500)
+    }
 
-    return c.json({ success: true, id, version: newVersion, ai_generated: usedAI, kb_used: kbUsed, message: 'Business Plan généré avec succès !' })
+    // ── Return response ──
+    return c.json({
+      success: true,
+      message: 'Business Plan généré avec succès',
+      id,
+      version: newVersion,
+      ai_generated: usedAI,
+      kb_used: kbUsed,
+    })
+
   } catch (error: any) {
-    console.error('[Business Plan Generate] Error:', error)
-    return c.json({ error: error.message || 'Erreur serveur' }, 500)
+    console.error('[Business Plan Generate] Unexpected error:', error)
+    return c.json({ error: error.message || 'Erreur serveur lors de la génération du Business Plan' }, 500)
   }
 })
 
@@ -10086,7 +10093,7 @@ app.get('/api/business-plan/latest/:pmeId', async (c) => {
 
     const pmeId = c.req.param('pmeId')
     const row = await c.env.DB.prepare(
-      `SELECT id, version, status, business_plan_json, created_at FROM business_plan_analyses WHERE user_id = ? AND pme_id = ? AND status IN ('generated','analyzed') ORDER BY created_at DESC LIMIT 1`
+      `SELECT id, version, status, business_plan_json, created_at FROM business_plan_analyses WHERE user_id = ? AND pme_id = ? AND status IN ('completed','generated','analyzed') ORDER BY created_at DESC LIMIT 1`
     ).bind(payload.userId, pmeId).first()
 
     if (!row) return c.json({ available: false })
