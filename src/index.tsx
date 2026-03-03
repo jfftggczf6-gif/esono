@@ -26,7 +26,7 @@ import {
 import { getScoreLabel, getSectionName } from './ai-feedback'
 import { analyzeWithClaude, type AnalysisResult, type AnswerInput } from './services/ai-analysis'
 import { analyzeSIC, generateSicDiagnosticHtml, getSicScoreLabel, QUESTION_SECTION_MAP, SIC_SECTION_LABELS, type SicAnalysisResult } from './sic-engine'
-import { generateFullSicDeliverable, type SicDeliverableData } from './sic-deliverable-engine'
+import { generateFullSicDeliverable, renderSicDeliverableFromAnalyst, type SicDeliverableData, type SicAnalystDeliverableInput } from './sic-deliverable-engine'
 import { generateFullBmcDeliverable, generateBmcDiagnosticHtml, generateFullBmcDeliverableFallback, type BmcDeliverableData } from './bmc-deliverable-engine'
 import {
   analyzeInputs, generateInputsDiagnosticHtml, getInputsReadinessLabel,
@@ -4089,9 +4089,74 @@ app.get('/api/sic/deliverable', async (c) => {
     const payload = await verifyToken(token)
     if (!payload) return c.json({ error: 'Token invalide' }, 401)
 
-    const moduleCode = c.req.query('module')?.trim() || 'mod2_sic'
     const format = c.req.query('format')?.trim() || 'html'
     const db = c.env.DB
+
+    // ── PRIORITY: Try new flow (sic_analyses table with SIC Analyst data) ──
+    const sicAnalysis = await db.prepare(`
+      SELECT id, analysis_json, extraction_json, score, status
+      FROM sic_analyses WHERE user_id = ?
+      ORDER BY created_at DESC LIMIT 1
+    `).bind(payload.userId).first()
+
+    if (sicAnalysis?.analysis_json) {
+      let analysisData: any
+      let extractionData: any
+      try {
+        analysisData = JSON.parse(sicAnalysis.analysis_json as string)
+        extractionData = sicAnalysis.extraction_json ? JSON.parse(sicAnalysis.extraction_json as string) : null
+      } catch {
+        return c.json({ error: 'Données d\'analyse corrompues' }, 500)
+      }
+
+      // Get user & project info
+      const user = await db.prepare(`SELECT name FROM users WHERE id = ?`).bind(payload.userId).first()
+      const userName = (user?.name as string) ?? 'Entrepreneur'
+
+      // Get project from extraction metadata or from projects table
+      const extractMeta = extractionData?.metadata || {}
+      let companyName = extractMeta.nom_entreprise || ''
+      let sectorStr = extractMeta.secteur || ''
+      let locationStr = extractMeta.zone_geographique || ''
+
+      // If no company name from extraction, try projects table
+      if (!companyName) {
+        const project = await db.prepare(`SELECT name, description FROM projects WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first()
+        companyName = (project?.name as string) || 'Mon Projet'
+      }
+
+      if (format === 'json') {
+        return c.json({ success: true, analysis: analysisData, user: userName, project: companyName })
+      }
+
+      const deliverableInput: SicAnalystDeliverableInput = {
+        companyName,
+        entrepreneurName: userName,
+        sector: sectorStr,
+        location: locationStr,
+        country: "Côte d'Ivoire",
+        analysis: analysisData,
+        extractionJson: extractionData
+      }
+
+      const html = renderSicDeliverableFromAnalyst(deliverableInput)
+
+      // Cache the deliverable HTML
+      try {
+        // Delete previous cache
+        await db.prepare(`DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_html'`).bind(payload.userId).run()
+        const delivId = crypto.randomUUID()
+        await db.prepare(`
+          INSERT INTO entrepreneur_deliverables (id, user_id, type, content, created_at)
+          VALUES (?, ?, 'sic_html', ?, datetime('now'))
+        `).bind(delivId, payload.userId, html).run()
+      } catch { /* ignore cache errors */ }
+
+      return c.html(html)
+    }
+
+    // ── FALLBACK: Old flow (progress table with questions) ──
+    const moduleCode = c.req.query('module')?.trim() || 'mod2_sic'
 
     const module = await db.prepare(`SELECT id FROM modules WHERE module_code = ?`).bind(moduleCode).first()
     if (!module) return c.json({ error: 'Module non trouve' }, 404)
