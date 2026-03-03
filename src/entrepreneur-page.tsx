@@ -4215,6 +4215,17 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
       
       if (type === 'diagnostic' && DIAGNOSTIC_HTML_TEMPLATE && DIAGNOSTIC_HTML_TEMPLATE.length > 100) {
         el.innerHTML = '';
+        // ── Download bar above iframe ──
+        var diagBar = document.createElement('div');
+        diagBar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#f0f4ff,#e8edfb);border:1px solid #a3b8d8;border-radius:12px;margin-bottom:16px';
+        diagBar.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-stethoscope" style="font-size:24px;color:#1e3a5f"></i><div><div style="font-size:14px;font-weight:700;color:#1e3a5f">Diagnostic Expert</div><div style="font-size:12px;color:#4b6584">Disponible en HTML et PDF</div></div></div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button data-download="html" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#1e3a5f;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-code"></i> HTML</button>' +
+          '<button data-download="pdf" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>' +
+          '<a href="/deliverable/diagnostic" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e3a5f;border:1px solid #a3b8d8;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=\'#f0f4ff\'" onmouseout="this.style.background=\'white\'"><i class="fas fa-expand"></i> Pleine page</a>' +
+          '</div>';
+        el.appendChild(diagBar);
+        // ── Iframe ──
         var diagIframe = document.createElement('iframe');
         diagIframe.style.cssText = 'width:100%;min-height:80vh;border:none;border-radius:12px;background:#fff';
         diagIframe.srcdoc = DIAGNOSTIC_HTML_TEMPLATE;
@@ -4224,6 +4235,17 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         el.innerHTML = renderDiagHTML(content, scoresDim, score, sColor);
       } else if (type === 'bmc_analysis' && BMC_HTML_TEMPLATE && BMC_HTML_TEMPLATE.length > 100) {
         el.innerHTML = '';
+        // ── Download bar above iframe ──
+        var bmcBar = document.createElement('div');
+        bmcBar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #93c5fd;border-radius:12px;margin-bottom:16px';
+        bmcBar.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-word" style="font-size:24px;color:#2563eb"></i><div><div style="font-size:14px;font-weight:700;color:#1e40af">BMC Analysé</div><div style="font-size:12px;color:#3b82f6">Téléchargeable en Word ou PDF</div></div></div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button data-download="docx" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#2563eb;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-word"></i> Word (.docx)</button>' +
+          '<button data-download="pdf" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>' +
+          '<a href="/deliverable/bmc_analysis" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e40af;border:1px solid #93c5fd;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=\'#eff6ff\'" onmouseout="this.style.background=\'white\'"><i class="fas fa-expand"></i> Pleine page</a>' +
+          '</div>';
+        el.appendChild(bmcBar);
+        // ── Iframe ──
         var iframe = document.createElement('iframe');
         iframe.style.cssText = 'width:100%;min-height:80vh;border:none;border-radius:12px;background:#fff';
         iframe.srcdoc = BMC_HTML_TEMPLATE;
@@ -4233,6 +4255,17 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         el.innerHTML = renderBMCHTML(content, score, sColor);
       } else if (type === 'sic_analysis' && SIC_HTML_TEMPLATE && SIC_HTML_TEMPLATE.length > 100) {
         el.innerHTML = '';
+        // ── Download bar above iframe ──
+        var sicBar = document.createElement('div');
+        sicBar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #93c5fd;border-radius:12px;margin-bottom:16px';
+        sicBar.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-word" style="font-size:24px;color:#2563eb"></i><div><div style="font-size:14px;font-weight:700;color:#1e40af">SIC Analysé</div><div style="font-size:12px;color:#3b82f6">Téléchargeable en Word ou PDF</div></div></div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button data-download="docx" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#2563eb;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-word"></i> Word (.docx)</button>' +
+          '<button data-download="pdf" style="display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:#7c2d12;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-file-pdf"></i> PDF</button>' +
+          '<a href="/deliverable/sic_analysis" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#1e40af;border:1px solid #93c5fd;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=\'#eff6ff\'" onmouseout="this.style.background=\'white\'"><i class="fas fa-expand"></i> Pleine page</a>' +
+          '</div>';
+        el.appendChild(sicBar);
+        // ── Iframe ──
         var sicIframe = document.createElement('iframe');
         sicIframe.style.cssText = 'width:100%;min-height:80vh;border:none;border-radius:12px;background:#fff';
         sicIframe.srcdoc = SIC_HTML_TEMPLATE;
@@ -4244,6 +4277,16 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         el.innerHTML = renderOVOHTML(content, score, sColor);
       } else if (type === 'framework' && FRAMEWORK_HTML_TEMPLATE && FRAMEWORK_HTML_TEMPLATE.length > 100) {
         el.innerHTML = '';
+        // ── Download bar above iframe ──
+        var fwBar = document.createElement('div');
+        fwBar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border:1px solid #bbf7d0;border-radius:12px;margin-bottom:16px';
+        fwBar.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><i class="fas fa-file-excel" style="font-size:24px;color:#059669"></i><div><div style="font-size:14px;font-weight:700;color:#065f46">📊 Plan Financier Intermédiaire</div><div style="font-size:12px;color:#047857">Framework Analyse PME rempli avec vos données</div></div></div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button id="btn-fw-excel-top" onclick="downloadFrameworkExcelInline()" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;background:#059669;color:white;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 8px rgba(5,150,105,0.3)" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1"><i class="fas fa-download"></i> Télécharger Excel (.xlsx)</button>' +
+          '<a href="/deliverable/framework" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;background:white;color:#065f46;border:1px solid #bbf7d0;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer" onmouseover="this.style.background=\'#f0fdf4\'" onmouseout="this.style.background=\'white\'"><i class="fas fa-expand"></i> Pleine page</a>' +
+          '</div>';
+        el.appendChild(fwBar);
+        // ── Iframe ──
         var fwIframe = document.createElement('iframe');
         fwIframe.style.cssText = 'width:100%;min-height:80vh;border:none;border-radius:12px;background:#fff';
         fwIframe.srcdoc = FRAMEWORK_HTML_TEMPLATE;
