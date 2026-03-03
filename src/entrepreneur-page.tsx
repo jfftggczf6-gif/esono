@@ -8,7 +8,7 @@ import { verifyToken, getAuthToken } from './auth'
 import { orchestrateGeneration, loadKBContext, type OrchestrationResult } from './agents/ai-agents'
 import { renderBMCPage, adaptBMCData } from './deliverable-bmc'
 import { generateFullBmcDeliverable, generateFullBmcDeliverableFallback, type BmcDeliverableData, type KBContextForBmc } from './bmc-deliverable-engine'
-import { generateFullSicDeliverable, generateFullSicDeliverableFallback, type SicDeliverableData } from './sic-deliverable-engine'
+import { generateFullSicDeliverable, generateFullSicDeliverableFallback, renderSicDeliverableFromAnalyst, type SicDeliverableData, type SicAnalystDeliverableInput } from './sic-deliverable-engine'
 import { analyzeInputsWithAI, generateInputsDiagnosticHtml, analyzeInputs, type InputTabKey } from './inputs-engine'
 import { analyzePmeWithAI, analyzePme, generatePmePreviewHtml, generatePmeExcelXml, type PmeInputData } from './framework-pme-engine'
 import { fillFrameworkExcel } from './framework-excel-filler'
@@ -2197,15 +2197,62 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
       }
     }
 
-    // SIC Analysis — serve pre-generated HTML from database
+    // SIC Analysis — serve from sic_analyses (new flow) or pre-generated HTML
     if (dtype === 'sic_analysis') {
+      // 1. Try pre-stored sic_html
       const sicHtml = await c.env.DB.prepare(
         "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_html' ORDER BY version DESC LIMIT 1"
       ).bind(payload.userId).first() as any
       
-      if (sicHtml?.content) {
+      if (sicHtml?.content && sicHtml.content.length > 500) {
         console.log('[SIC Deliverable Page] Serving pre-stored HTML (' + sicHtml.content.length + ' chars)')
         return c.html(sicHtml.content)
+      }
+
+      // 2. Generate from sic_analyses (new SIC Analyst flow)
+      const sicAnalysis = await c.env.DB.prepare(`
+        SELECT analysis_json, extraction_json, score FROM sic_analyses
+        WHERE user_id = ? AND analysis_json IS NOT NULL
+        ORDER BY created_at DESC LIMIT 1
+      `).bind(payload.userId).first() as any
+
+      if (sicAnalysis?.analysis_json) {
+        try {
+          const analysisData = JSON.parse(sicAnalysis.analysis_json)
+          const extractionData = sicAnalysis.extraction_json ? JSON.parse(sicAnalysis.extraction_json) : null
+          const extractMeta = extractionData?.metadata || {}
+
+          // Get project name
+          const project = await c.env.DB.prepare(
+            'SELECT name FROM projects WHERE user_id = ? ORDER BY created_at DESC LIMIT 1'
+          ).bind(payload.userId).first() as any
+
+          const delivInput: SicAnalystDeliverableInput = {
+            companyName: extractMeta.nom_entreprise || (project?.name as string) || 'Mon Projet',
+            entrepreneurName: (user?.name as string) || 'Entrepreneur',
+            sector: extractMeta.secteur || '',
+            location: extractMeta.zone_geographique || '',
+            country: "Côte d'Ivoire",
+            analysis: analysisData,
+            extractionJson: extractionData
+          }
+
+          const html = renderSicDeliverableFromAnalyst(delivInput)
+          console.log('[SIC Deliverable Page] Generated from sic_analyses (' + html.length + ' chars)')
+
+          // Cache for next time
+          try {
+            await c.env.DB.prepare("DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_html'").bind(payload.userId).run()
+            const delivId = crypto.randomUUID()
+            await c.env.DB.prepare(
+              "INSERT INTO entrepreneur_deliverables (id, user_id, type, content, created_at) VALUES (?, ?, 'sic_html', ?, datetime('now'))"
+            ).bind(delivId, payload.userId, html).run()
+          } catch { /* ignore cache error */ }
+
+          return c.html(html)
+        } catch (e) {
+          console.error('[SIC Deliverable Page] Error generating from sic_analyses:', e)
+        }
       }
       // Fallback: continue to generic rendering below
     }
