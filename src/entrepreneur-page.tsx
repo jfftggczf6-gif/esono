@@ -29,6 +29,13 @@ type Bindings = {
 export const entrepreneurRoutes = new Hono<{ Bindings: Bindings }>()
 
 // ─── Helpers ───────────────────────────────────────────────────
+
+// Safe JSON.stringify for embedding in <script> tags
+// Escapes </ to prevent premature closing of script/body/html tags
+function safeJSON(data: any): string {
+  return JSON.stringify(data).replace(/</g, '\\u003c')
+}
+
 function getScoreColor(score: number): string {
   if (score >= 86) return '#059669'  // esono-success
   if (score >= 71) return '#0284c7'  // esono-info
@@ -3151,13 +3158,13 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script>
     // Deliverable data injected from server
-    const DLIV_TYPE = ${JSON.stringify(dtype)};
-    const DLIV_DATA = ${JSON.stringify(content)};
-    const DLIV_SCORE = ${JSON.stringify(dScore)};
-    const DLIV_META = ${JSON.stringify(meta)};
-    const USER_NAME = ${JSON.stringify(user?.name || 'Entrepreneur')};
-    const DLIV_DATE = ${JSON.stringify(new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }))};
-    const PLAN_OVO_ID = ${JSON.stringify(planOvoId)};
+    const DLIV_TYPE = ${safeJSON(dtype)};
+    const DLIV_DATA = ${safeJSON(content)};
+    const DLIV_SCORE = ${safeJSON(dScore)};
+    const DLIV_META = ${safeJSON(meta)};
+    const USER_NAME = ${safeJSON(user?.name || 'Entrepreneur')};
+    const DLIV_DATE = ${safeJSON(new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }))};
+    const PLAN_OVO_ID = ${safeJSON(planOvoId)};
 
     function downloadDeliverable(format) {
       // Find the button that was clicked — try specific IDs first, then generic
@@ -4244,17 +4251,17 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
   <script>
     // ── State ──
     let currentDelivType = 'diagnostic';
-    const deliverables = ${JSON.stringify(delivMap)};
-    const scoresDim = ${JSON.stringify(scoresDim)};
-    const USER_NAME = ${JSON.stringify((user?.name as string) || 'Entrepreneur')};
-    const BMC_HTML_TEMPLATE = ${JSON.stringify(bmcClaudeHtml)};
-    const FRAMEWORK_HTML_TEMPLATE = ${JSON.stringify(frameworkClaudeHtml)};
-    const DIAGNOSTIC_HTML_TEMPLATE = ${JSON.stringify(diagnosticClaudeHtml)};
-    const DIAGNOSTIC_ANALYSIS_JSON = ${JSON.stringify(diagnosticAnalysisJson)};
-    const SIC_HTML_TEMPLATE = ${JSON.stringify(sicClaudeHtml)};
-    const sources = ${JSON.stringify(allUploads.map((u: any) => ({ id: u.id, filename: u.filename, category: u.category })))};
-    const PLAN_OVO_ID = ${JSON.stringify(mainPlanOvoId)};
-    const PLAN_OVO_EXTRACTION = ${JSON.stringify(mainPlanOvoExtraction)};
+    const deliverables = ${safeJSON(delivMap)};
+    const scoresDim = ${safeJSON(scoresDim)};
+    const USER_NAME = ${safeJSON((user?.name as string) || 'Entrepreneur')};
+    const BMC_HTML_TEMPLATE = ${safeJSON(bmcClaudeHtml)};
+    const FRAMEWORK_HTML_TEMPLATE = ${safeJSON(frameworkClaudeHtml)};
+    const DIAGNOSTIC_HTML_TEMPLATE = ${safeJSON(diagnosticClaudeHtml)};
+    const DIAGNOSTIC_ANALYSIS_JSON = ${safeJSON(diagnosticAnalysisJson)};
+    const SIC_HTML_TEMPLATE = ${safeJSON(sicClaudeHtml)};
+    const sources = ${safeJSON(allUploads.map((u: any) => ({ id: u.id, filename: u.filename, category: u.category })))};
+    const PLAN_OVO_ID = ${safeJSON(mainPlanOvoId)};
+    const PLAN_OVO_EXTRACTION = ${safeJSON(mainPlanOvoExtraction)};
 
     // ── Mobile sidebar toggle ──
     function toggleSidebar() {
@@ -4334,7 +4341,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         el.classList.toggle('ev2-deliv-icon--active', el.dataset.type === type);
       });
       // Update title
-      const types = ${JSON.stringify(DELIVERABLE_TYPES)};
+      const types = ${safeJSON(DELIVERABLE_TYPES)};
       const dt = types.find(t => t.type === type);
       const titleEl = document.getElementById('center-title');
       if (titleEl) titleEl.innerHTML = '<i class="fas ' + (dt?.icon || 'fa-file') + '"></i> ' + (dt?.label || type);
@@ -4347,15 +4354,15 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
       if (!el) return;
       const data = deliverables[type];
       if (!data) {
-        const types = ${JSON.stringify(DELIVERABLE_TYPES)};
+        const types = ${safeJSON(DELIVERABLE_TYPES)};
         const dt = types.find(t => t.type === type);
         const deps = dt?.deps || [];
-        const uploadedCats = new Set(${JSON.stringify(Array.from(new Set([
+        const uploadedCats = new Set(${safeJSON(Array.from(new Set([
           ...(uploadsByCategory.bmc ? ['bmc'] : []),
           ...(uploadsByCategory.sic ? ['sic'] : []),
           ...(uploadsByCategory.inputs ? ['inputs'] : []),
         ])))});
-        const depLabels = ${JSON.stringify(DEP_LABELS)};
+        const depLabels = ${safeJSON(DEP_LABELS)};
         const missingList = deps.filter(d => !uploadedCats.has(d)).map(d => depLabels[d] || d);
         if (missingList.length === 0) {
           el.innerHTML = '<div class="ev2-empty"><div class="ev2-empty__icon"><i class="fas fa-wand-magic-sparkles"></i></div><div class="ev2-empty__text">Prêt à être généré</div><div class="ev2-empty__sub">Cliquez sur "Générer les livrables" dans la barre latérale.</div></div>';
@@ -5409,7 +5416,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         
         if (format === 'pdf' || format === 'html') {
           const mainContent = document.getElementById('center-content');
-          const types = ${JSON.stringify(DELIVERABLE_TYPES)};
+          const types = ${safeJSON(DELIVERABLE_TYPES)};
           const dt = types.find(t => t.type === type);
           const dTitle = dt ? dt.label : type;
           const printWin = window.open('', '_blank');
@@ -5428,7 +5435,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         
         if (format === 'docx') {
           const mainContent = document.getElementById('center-content');
-          const types = ${JSON.stringify(DELIVERABLE_TYPES)};
+          const types = ${safeJSON(DELIVERABLE_TYPES)};
           const dt = types.find(t => t.type === type);
           const dTitle = dt ? dt.label : type;
           const htmlContent = '<html><head><meta charset="utf-8"><title>' + dTitle + '</title></head><body>' + (mainContent ? mainContent.innerHTML : '') + '</body></html>';
