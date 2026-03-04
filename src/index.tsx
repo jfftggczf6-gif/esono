@@ -43,6 +43,7 @@ import { extractOVOData, type DeliverableData as OVODeliverableData, type OVOExt
 import { isValidApiKey, callClaudeJSON } from './claude-api'
 import { BUSINESS_PLAN_TEMPLATE_B64, BUSINESS_PLAN_TEMPLATE_STRUCTURE, BUSINESS_PLAN_TEMPLATE_META } from './business-plan-template'
 import { generateDeterministicDiagnostic, generateDiagnosticReportHtml } from './diagnostic-report-generator'
+import { fillDocxTemplate } from './docx-filler'
 import { fillOVOTemplate, gzipCompressSync, gunzipDecompressSync, type FillingStats } from './ovo-excel-filler'
 
 type Bindings = {
@@ -10808,7 +10809,7 @@ app.get('/api/business-plan/latest/:pmeId', async (c) => {
   }
 })
 
-// GET /api/business-plan/download/:id
+// GET /api/business-plan/download/:id?format=docx
 app.get('/api/business-plan/download/:id', async (c) => {
   try {
     const token = getAuthToken(c) || getCookie(c, 'auth_token')
@@ -10817,21 +10818,80 @@ app.get('/api/business-plan/download/:id', async (c) => {
     if (!payload) return c.json({ error: 'Token invalide' }, 401)
 
     const id = c.req.param('id')
+    const format = c.req.query('format') || 'docx'
+    const forceRegenerate = c.req.query('regen') === '1'
+
+    if (format !== 'docx') {
+      return c.json({ error: 'Format non supporté. Utilisez format=docx' }, 400)
+    }
+
+    // Load BP record
     const row = await c.env.DB.prepare(
-      `SELECT generated_docx_base64, status FROM business_plan_analyses WHERE id = ? AND user_id = ?`
+      `SELECT business_plan_json, generated_docx_base64, status, template_docx_path FROM business_plan_analyses WHERE id = ? AND user_id = ?`
     ).bind(id, payload.userId).first()
 
-    if (!row) return c.json({ error: 'Business Plan non trouvé' }, 404)
-    if (!row.generated_docx_base64) return c.json({ error: 'Le fichier Word n\'est pas encore disponible. Génération en cours.' }, 404)
+    if (!row) return c.json({ error: 'Business Plan introuvable' }, 404)
 
-    const buffer = Uint8Array.from(atob(row.generated_docx_base64 as string), ch => ch.charCodeAt(0))
-    return new Response(buffer, {
-      headers: {
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'Content-Disposition': `attachment; filename="Business_Plan_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.docx"`,
+    // Check that the BP has been generated
+    if (!row.business_plan_json) {
+      return c.json({ error: 'Le Business Plan n\'a pas encore été généré. Veuillez d\'abord le générer.' }, 404)
+    }
+
+    let bpData: any
+    try {
+      bpData = JSON.parse(row.business_plan_json as string)
+    } catch {
+      return c.json({ error: 'Erreur: données JSON du Business Plan invalides' }, 500)
+    }
+
+    // Get company name for filename
+    const meta = bpData.metadata || {}
+    const companyName = (meta.entreprise || 'Entreprise')
+      .replace(/[^a-zA-Z0-9\u00C0-\u024F\s_-]/g, '')
+      .replace(/\s+/g, '_')
+      .slice(0, 40)
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    const fileName = `Business_Plan_${companyName}_${dateStr}.docx`
+
+    // Always regenerate from template + JSON (ensures latest template logic is used)
+    try {
+      console.log(`[BP Download] Filling DOCX template for BP ${id}, company: ${meta.entreprise || 'unknown'}`)
+      const filledDocx = fillDocxTemplate(BUSINESS_PLAN_TEMPLATE_B64, bpData)
+      console.log(`[BP Download] DOCX generated: ${filledDocx.length} bytes`)
+
+      // Cache the generated DOCX as base64 for future fast retrieval
+      try {
+        const b64Chunks: string[] = []
+        const chunkSize = 8192
+        for (let i = 0; i < filledDocx.length; i += chunkSize) {
+          const chunk = filledDocx.subarray(i, Math.min(i + chunkSize, filledDocx.length))
+          b64Chunks.push(String.fromCharCode(...chunk))
+        }
+        const b64 = btoa(b64Chunks.join(''))
+        await c.env.DB.prepare(
+          `UPDATE business_plan_analyses SET generated_docx_base64 = ? WHERE id = ?`
+        ).bind(b64, id).run()
+        console.log(`[BP Download] Cached DOCX (${b64.length} chars) for BP ${id}`)
+      } catch (cacheErr: any) {
+        console.warn(`[BP Download] Cache write failed: ${cacheErr.message}`)
       }
-    })
+
+      return new Response(filledDocx, {
+        headers: {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'Content-Disposition': `attachment; filename="${fileName}"`,
+          'Cache-Control': 'no-cache',
+        }
+      })
+    } catch (fillErr: any) {
+      console.error(`[BP Download] DOCX fill error:`, fillErr.message, fillErr.stack)
+      return c.json({
+        error: 'Erreur lors de la génération du document DOCX',
+        details: fillErr.message
+      }, 500)
+    }
   } catch (error: any) {
+    console.error(`[BP Download] Error:`, error.message)
     return c.json({ error: error.message }, 500)
   }
 })
