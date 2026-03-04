@@ -1296,7 +1296,7 @@ export function generatePmePreviewHtml(analysis: PmeAnalysisResult, data: PmeInp
   <style>
     :root { --primary:#2E5090; --primary-light:#D9E2F3; --accent:#4472C4; --green:#059669; --orange:#d97706; --red:#dc2626; }
     * { margin:0; padding:0; box-sizing:border-box; }
-    body { font-family:'Inter',system-ui,sans-serif; background:#f8fafb; color:#1a2332; line-height:1.6; }
+    body { font-family:'Inter',system-ui,sans-serif; background:white; color:#1a2332; line-height:1.6; }
     .container { max-width:1200px; margin:0 auto; padding:0 24px; }
     .header { background:linear-gradient(135deg,#1a2e50 0%,#2E5090 40%,#4472C4 100%); padding:48px 0 56px; color:white; }
     .header h1 { font-size:32px; font-weight:800; }

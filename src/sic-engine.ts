@@ -589,7 +589,7 @@ export function generateSicDiagnosticHtml(
   <title>Diagnostic SIC - ${projectName}</title>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
-    body { font-family:'Inter','IBM Plex Sans',system-ui,sans-serif; background:#f8fafc; color:#1e293b; line-height:1.6; }
+    body { font-family:'Inter','IBM Plex Sans',system-ui,sans-serif; background:white; color:#1e293b; line-height:1.6; }
     .container { max-width:900px; margin:0 auto; padding:32px 24px; }
     .header { text-align:center; margin-bottom:32px; }
     .header h1 { font-size:28px; color:#1e3a5f; margin-bottom:8px; }

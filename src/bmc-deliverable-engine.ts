@@ -797,7 +797,7 @@ function renderBmcDeliverableHtml(analysis: BmcAnalysis, data: BmcDeliverableDat
       --text-muted: ${COLORS.textMuted};
     }
     * { margin:0; padding:0; box-sizing:border-box; }
-    body { font-family:'Inter',system-ui,sans-serif; background:#f8fafb; color:var(--text-dark); line-height:1.6; }
+    body { font-family:'Inter',system-ui,sans-serif; background:white; color:var(--text-dark); line-height:1.6; }
     .bmc-container { max-width:1200px; margin:0 auto; padding:0 24px; }
 
     /* ─── HEADER ─── */
@@ -1199,7 +1199,7 @@ export async function generateBmcDiagnosticHtml(data: BmcDeliverableData): Promi
   <title>Diagnostic BMC - ${companyName}</title>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
-    body { font-family:'Inter','IBM Plex Sans',system-ui,sans-serif; background:#f8fafc; color:#1e293b; line-height:1.6; }
+    body { font-family:'Inter','IBM Plex Sans',system-ui,sans-serif; background:white; color:#1e293b; line-height:1.6; }
     .container { max-width:900px; margin:0 auto; padding:32px 24px; }
     .header { text-align:center; margin-bottom:32px; }
     .header h1 { font-size:28px; color:#2d6a4f; margin-bottom:8px; }

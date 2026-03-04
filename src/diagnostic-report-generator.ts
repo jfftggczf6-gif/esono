@@ -1061,7 +1061,7 @@ export function generateDiagnosticReportHtml(
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Inter', -apple-system, sans-serif; background: #f8fafc; color: #1e293b; line-height: 1.6; }
+    body { font-family: 'Inter', -apple-system, sans-serif; background: white; color: #1e293b; line-height: 1.6; }
     .dr { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
     @media print {
       body { background: white; }

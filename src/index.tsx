@@ -1917,7 +1917,7 @@ function renderPlanOvoModulePage(opts: {
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
     * { font-family: 'Inter', sans-serif; }
-    body { background: #f8fafc; margin: 0; }
+    body { background: white; margin: 0; }
     .ovo-header { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: white; padding: 24px 32px; }
     .ovo-header__back { color: #94a3b8; text-decoration: none; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; margin-bottom: 16px; transition: color 0.2s; }
     .ovo-header__back:hover { color: white; }
@@ -2306,8 +2306,8 @@ function renderDiagnosticModulePage(opts: {
 
   const scoreColor = (s: number) => s >= 86 ? '#059669' : s >= 71 ? '#059669' : s >= 51 ? '#84cc16' : s >= 31 ? '#eab308' : '#f97316'
   const barColor = (s: number) => s > 75 ? '#22c55e' : s >= 60 ? '#eab308' : s >= 40 ? '#f97316' : '#ef4444'
-  const niveauBg = (n: string) => n === 'critique' || n === 'elevee' || n === 'eleve' ? '#7c2d12' : n === 'moyen' || n === 'moyenne' ? '#78350f' : '#1e293b'
-  const niveauColor = (n: string) => n === 'critique' || n === 'elevee' || n === 'eleve' ? '#fbbf24' : n === 'moyen' || n === 'moyenne' ? '#fde68a' : '#94a3b8'
+  const niveauBg = (n: string) => n === 'critique' || n === 'elevee' || n === 'eleve' ? '#fef2f2' : n === 'moyen' || n === 'moyenne' ? '#fffbeb' : '#f8fafc'
+  const niveauColor = (n: string) => n === 'critique' || n === 'elevee' || n === 'eleve' ? '#dc2626' : n === 'moyen' || n === 'moyenne' ? '#d97706' : '#64748b'
   const urgencyBadge = (u: string) => { const ul = (u||'').toLowerCase(); if (ul.includes('imm') || ul.includes('critique') || ul.includes('court')) return '\u{1F534} Critique'; if (ul.includes('important') || ul.includes('moyen')) return '\u{1F7E0} Important'; return '\u{1F7E1} Recommandé' }
   const urgencyBorder = (u: string) => { const ul = (u||'').toLowerCase(); if (ul.includes('imm') || ul.includes('critique') || ul.includes('court')) return '#ef4444'; if (ul.includes('important') || ul.includes('moyen')) return '#f97316'; return '#eab308' }
 
@@ -2391,33 +2391,33 @@ function renderDiagnosticModulePage(opts: {
 
   // Incomplete data banner
   const incompleteBannerHtml = (!donneesCompletes && hasAnalysis) ? `
-    <div style="background:#422006;border:1px solid #92400e;border-radius:12px;padding:18px 24px;margin-bottom:20px;display:flex;align-items:flex-start;gap:14px">
+    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:18px 24px;margin-bottom:20px;display:flex;align-items:flex-start;gap:14px">
       <div style="font-size:24px;flex-shrink:0">\u26A0\uFE0F</div>
       <div>
-        <div style="font-weight:700;color:#fbbf24;font-size:15px;margin-bottom:6px">Données incomplètes</div>
-        <div style="color:#fde68a;font-size:13px;line-height:1.6">${esc(messageIncomplet)}</div>
+        <div style="font-weight:700;color:#92400e;font-size:15px;margin-bottom:6px">Données incomplètes</div>
+        <div style="color:#78350f;font-size:13px;line-height:1.6">${esc(messageIncomplet)}</div>
         <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px">
-          ${Object.entries(livrables).map(([k, v]) => `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:${v ? '#065f46' : '#7c2d12'};color:${v ? '#6ee7b7' : '#fca5a5'}">${v ? '\u2705' : '\u274C'} ${esc(k)}</span>`).join('')}
+          ${Object.entries(livrables).map(([k, v]) => `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:${v ? '#f0fdf4' : '#fef2f2'};color:${v ? '#059669' : '#dc2626'};border:1px solid ${v ? '#bbf7d0' : '#fecaca'}">${v ? '\u2705' : '\u274C'} ${esc(k)}</span>`).join('')}
         </div>
       </div>
     </div>` : ''
 
   // Executive summary
   const execSummaryHtml = hasAnalysis && resumeExec ? `
-    <div style="background:#162032;border-left:4px solid #0d9488;border-radius:0 12px 12px 0;padding:24px 28px;margin-bottom:24px">
-      <div style="font-size:15px;font-weight:700;color:#5eead4;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+    <div style="background:#f0fdfa;border-left:4px solid #0d9488;border-radius:0 12px 12px 0;padding:24px 28px;margin-bottom:24px">
+      <div style="font-size:15px;font-weight:700;color:#0d9488;margin-bottom:14px;display:flex;align-items:center;gap:10px">
         <i class="fas fa-file-lines"></i> Résumé Exécutif
       </div>
-      <div style="font-size:1rem;color:#cbd5e1;line-height:1.8;white-space:pre-line">${esc(resumeExec)}</div>
+      <div style="font-size:1rem;color:#475569;line-height:1.8;white-space:pre-line">${esc(resumeExec)}</div>
     </div>` : ''
 
   // Global score gauge
   const gaugeHtml = hasAnalysis ? `
-    <div style="background:#0f172a;border:1px solid #334155;border-radius:16px;padding:28px;margin-bottom:24px;text-align:center">
-      <div style="font-size:14px;color:#94a3b8;font-weight:600;margin-bottom:16px">Indicateur de progression</div>
+    <div style="background:white;border:1px solid #e2e8f0;border-radius:16px;padding:28px;margin-bottom:24px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+      <div style="font-size:14px;color:#64748b;font-weight:600;margin-bottom:16px">Indicateur de progression</div>
       <div style="position:relative;width:120px;height:120px;margin:0 auto 16px">
         <svg width="120" height="120" viewBox="0 0 120 120">
-          <circle cx="60" cy="60" r="52" fill="none" stroke="#1e293b" stroke-width="10"/>
+          <circle cx="60" cy="60" r="52" fill="none" stroke="#e2e8f0" stroke-width="10"/>
           <circle id="gaugeArc" cx="60" cy="60" r="52" fill="none" stroke="${scoreColor(scoreGlobal)}" stroke-width="10" stroke-linecap="round"
             stroke-dasharray="${2 * Math.PI * 52}" stroke-dashoffset="${2 * Math.PI * 52}" transform="rotate(-90 60 60)"
             style="transition:stroke-dashoffset 1.5s ease-out"/>
@@ -2428,18 +2428,18 @@ function renderDiagnosticModulePage(opts: {
         </div>
       </div>
       <div style="font-size:14px;color:${scoreColor(scoreGlobal)};font-weight:600">${esc(label)}</div>
-      ${diagVersion > 0 ? `<span style="display:inline-block;margin-top:8px;padding:2px 10px;background:#1e293b;border-radius:20px;font-size:11px;color:#94a3b8">v${diagVersion}</span>` : ''}
+      ${diagVersion > 0 ? `<span style="display:inline-block;margin-top:8px;padding:2px 10px;background:#f1f5f9;border-radius:20px;font-size:11px;color:#64748b">v${diagVersion}</span>` : ''}
     </div>` : ''
 
   // Priority attention points (show if not empty OR score < 40)
   const showPap = hasAnalysis && (pap.length > 0 || scoreGlobal < 40)
   const papHtml = showPap ? `
-    <div style="background:#422006;border:1px solid #92400e;border-radius:12px;padding:20px 24px;margin-bottom:24px">
-      <div style="font-size:15px;font-weight:700;color:#fbbf24;margin-bottom:12px;display:flex;align-items:center;gap:10px">
+    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:20px 24px;margin-bottom:24px">
+      <div style="font-size:15px;font-weight:700;color:#92400e;margin-bottom:12px;display:flex;align-items:center;gap:10px">
         \u26A0\uFE0F Points d'attention prioritaires
       </div>
       <ul style="list-style:none;padding:0;margin:0">
-        ${pap.map((p: any) => `<li style="padding:8px 0;color:#fde68a;font-size:14px;line-height:1.5;border-bottom:1px solid #78350f;display:flex;align-items:flex-start;gap:10px">
+        ${pap.map((p: any) => `<li style="padding:8px 0;color:#78350f;font-size:14px;line-height:1.5;border-bottom:1px solid #fde68a;display:flex;align-items:flex-start;gap:10px">
           <span style="color:#f97316;flex-shrink:0">\u25B6</span> ${esc(typeof p === 'string' ? p : p.titre || p.description || JSON.stringify(p))}
         </li>`).join('')}
       </ul>
@@ -2457,53 +2457,53 @@ function renderDiagnosticModulePage(opts: {
     const redFlags = Array.isArray(dim.red_flags) ? dim.red_flags : []
     const postesM = Array.isArray(dim.postes_manquants) ? dim.postes_manquants : []
     return `
-    <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:20px 24px;margin-bottom:14px">
+    <div style="background:white;border:1px solid #e2e8f0;border-radius:14px;padding:20px 24px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
         <div style="display:flex;align-items:center;gap:10px">
           <div style="width:36px;height:36px;border-radius:10px;background:${cfg.color}22;display:flex;align-items:center;justify-content:center">
             <i class="fas ${cfg.icon}" style="color:${cfg.color};font-size:15px"></i>
           </div>
-          <span style="font-size:15px;font-weight:700;color:#e2e8f0">${esc(dim.label || cfg.label)}</span>
+          <span style="font-size:15px;font-weight:700;color:#1e293b">${esc(dim.label || cfg.label)}</span>
         </div>
         <span style="font-size:22px;font-weight:800;color:${barColor(score)}">${score}<span style="font-size:13px;color:#64748b">/100</span></span>
       </div>
-      <div style="background:#1e293b;border-radius:6px;height:12px;overflow:hidden;margin-bottom:14px">
+      <div style="background:#f1f5f9;border-radius:6px;height:12px;overflow:hidden;margin-bottom:14px">
         <div class="dim-bar" data-target="${score}" style="height:100%;width:0%;background:${barColor(score)};border-radius:6px;transition:width 1.2s ease-out"></div>
       </div>
-      <div style="font-size:13px;color:#94a3b8;line-height:1.7">${esc(comment)}</div>
-      ${incoD.length > 0 ? `<div style="margin-top:12px;padding:10px 14px;background:#7c2d1222;border:1px solid #7c2d12;border-radius:8px">
-        <div style="font-size:12px;font-weight:700;color:#fbbf24;margin-bottom:6px"><i class="fas fa-exclamation-triangle"></i> Incohérences détectées</div>
-        ${incoD.map((inc: any) => `<div style="font-size:12px;color:#fca5a5;margin-top:4px">\u2022 ${esc(typeof inc === 'string' ? inc : inc.description || JSON.stringify(inc))}</div>`).join('')}
+      <div style="font-size:13px;color:#64748b;line-height:1.7">${esc(comment)}</div>
+      ${incoD.length > 0 ? `<div style="margin-top:12px;padding:10px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px">
+        <div style="font-size:12px;font-weight:700;color:#dc2626;margin-bottom:6px"><i class="fas fa-exclamation-triangle"></i> Incohérences détectées</div>
+        ${incoD.map((inc: any) => `<div style="font-size:12px;color:#991b1b;margin-top:4px">\u2022 ${esc(typeof inc === 'string' ? inc : inc.description || JSON.stringify(inc))}</div>`).join('')}
       </div>` : ''}
-      ${redFlags.length > 0 ? `<div style="margin-top:10px;padding:10px 14px;background:#7c2d1222;border:1px solid #7c2d12;border-radius:8px">
+      ${redFlags.length > 0 ? `<div style="margin-top:10px;padding:10px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px">
         <div style="font-size:12px;font-weight:700;color:#ef4444;margin-bottom:6px"><i class="fas fa-flag"></i> Red Flags</div>
-        ${redFlags.map((rf: any) => `<div style="font-size:12px;color:#fca5a5;margin-top:4px">\u2022 ${esc(typeof rf === 'string' ? rf : rf.description || JSON.stringify(rf))}</div>`).join('')}
+        ${redFlags.map((rf: any) => `<div style="font-size:12px;color:#991b1b;margin-top:4px">\u2022 ${esc(typeof rf === 'string' ? rf : rf.description || JSON.stringify(rf))}</div>`).join('')}
       </div>` : ''}
-      ${postesM.length > 0 ? `<div style="margin-top:10px;padding:10px 14px;background:#1e293b;border:1px solid #334155;border-radius:8px">
-        <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:6px"><i class="fas fa-list"></i> Postes manquants</div>
-        ${postesM.map((pm: any) => `<div style="font-size:12px;color:#fde68a;margin-top:4px">\u2022 ${esc(pm)}</div>`).join('')}
+      ${postesM.length > 0 ? `<div style="margin-top:10px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px">
+        <div style="font-size:12px;font-weight:700;color:#d97706;margin-bottom:6px"><i class="fas fa-list"></i> Postes manquants</div>
+        ${postesM.map((pm: any) => `<div style="font-size:12px;color:#92400e;margin-top:4px">\u2022 ${esc(pm)}</div>`).join('')}
       </div>` : ''}
     </div>`
   }).join('') : ''
 
   // Forces & Opportunities (two-column)
   const forcesHtml = hasAnalysis && forces.length > 0 ? forces.map((f: any) => `
-    <div style="padding:10px 0;border-bottom:1px solid #064e3b">
-      <div style="font-size:14px;font-weight:600;color:#6ee7b7;display:flex;align-items:flex-start;gap:8px">\u2705 ${esc(f.titre || f)}</div>
-      ${f.justification ? `<div style="font-size:12px;color:#a7f3d0;margin-top:4px;line-height:1.5">${esc(f.justification)}</div>` : ''}
+    <div style="padding:10px 0;border-bottom:1px solid #d1fae5">
+      <div style="font-size:14px;font-weight:600;color:#059669;display:flex;align-items:flex-start;gap:8px">\u2705 ${esc(f.titre || f)}</div>
+      ${f.justification ? `<div style="font-size:12px;color:#065f46;margin-top:4px;line-height:1.5">${esc(f.justification)}</div>` : ''}
     </div>`).join('') : '<div style="color:#64748b;font-size:13px">Aucune force identifiée pour le moment.</div>'
 
   const oppsHtml = hasAnalysis && opps.length > 0 ? opps.map((o: any) => `
-    <div style="padding:10px 0;border-bottom:1px solid #1e3a5f">
-      <div style="font-size:14px;font-weight:600;color:#93c5fd;display:flex;align-items:flex-start;gap:8px">\u{1F4A1} ${esc(o.titre || o)}</div>
-      ${o.justification ? `<div style="font-size:12px;color:#bfdbfe;margin-top:4px;line-height:1.5">${esc(o.justification)}</div>` : ''}
-      ${o.priorite ? `<span style="display:inline-block;margin-top:6px;padding:2px 8px;background:#1e3a5f;border-radius:10px;font-size:10px;color:#93c5fd;font-weight:600">Priorité : ${esc(o.priorite)}</span>` : ''}
+    <div style="padding:10px 0;border-bottom:1px solid #bfdbfe">
+      <div style="font-size:14px;font-weight:600;color:#2563eb;display:flex;align-items:flex-start;gap:8px">\u{1F4A1} ${esc(o.titre || o)}</div>
+      ${o.justification ? `<div style="font-size:12px;color:#1e40af;margin-top:4px;line-height:1.5">${esc(o.justification)}</div>` : ''}
+      ${o.priorite ? `<span style="display:inline-block;margin-top:6px;padding:2px 8px;background:#eff6ff;border-radius:10px;font-size:10px;color:#2563eb;font-weight:600;border:1px solid #bfdbfe">Priorité : ${esc(o.priorite)}</span>` : ''}
     </div>`).join('') : '<div style="color:#64748b;font-size:13px">Aucune opportunité identifiée pour le moment.</div>'
 
   // Vigilance table
   const vigilanceHtml = hasAnalysis && vigilance.length > 0 ? `
-    <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:20px 24px;margin-bottom:24px;overflow-x:auto">
-      <div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:16px;display:flex;align-items:center;gap:10px">
+    <div style="background:white;border:1px solid #e2e8f0;border-radius:14px;padding:20px 24px;margin-bottom:24px;overflow-x:auto;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+      <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:16px;display:flex;align-items:center;gap:10px">
         <i class="fas fa-shield-halved" style="color:#f59e0b"></i> Points de vigilance
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:700px">
@@ -2520,15 +2520,15 @@ function renderDiagnosticModulePage(opts: {
         <tbody>
           ${vigilance.map((v: any) => {
             const niv = (v.niveau || 'moyen').toLowerCase()
-            const rowBg = niv === 'critique' || niv === 'elevee' || niv === 'eleve' ? '#451a03' : niv === 'moyen' || niv === 'moyenne' ? '#422006' : '#1e293b'
-            const rowColor = niv === 'critique' || niv === 'elevee' || niv === 'eleve' ? '#fca5a5' : niv === 'moyen' || niv === 'moyenne' ? '#fde68a' : '#94a3b8'
-            return `<tr style="background:${rowBg};border-bottom:1px solid #334155">
+            const rowBg = niv === 'critique' || niv === 'elevee' || niv === 'eleve' ? '#fef2f2' : niv === 'moyen' || niv === 'moyenne' ? '#fffbeb' : '#f8fafc'
+            const rowColor = niv === 'critique' || niv === 'elevee' || niv === 'eleve' ? '#991b1b' : niv === 'moyen' || niv === 'moyenne' ? '#92400e' : '#475569'
+            return `<tr style="background:${rowBg};border-bottom:1px solid #e2e8f0">
               <td style="padding:10px 12px;color:${rowColor}">${esc(v.categorie || '—')}</td>
               <td style="padding:10px 12px"><span style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${niveauBg(niv)};color:${niveauColor(niv)}">${esc(v.niveau || '—')}</span></td>
-              <td style="padding:10px 12px;color:#94a3b8">${esc(v.probabilite || '—')}</td>
-              <td style="padding:10px 12px;color:#e2e8f0;font-weight:600">${esc(v.titre || '—')}<br/><span style="font-weight:400;font-size:12px;color:#94a3b8">${esc(v.description || '')}</span></td>
+              <td style="padding:10px 12px;color:#64748b">${esc(v.probabilite || '—')}</td>
+              <td style="padding:10px 12px;color:#1e293b;font-weight:600">${esc(v.titre || '—')}<br/><span style="font-weight:400;font-size:12px;color:#64748b">${esc(v.description || '')}</span></td>
               <td style="padding:10px 12px;color:#fbbf24;font-size:12px">${esc(v.impact_financier || '—')}</td>
-              <td style="padding:10px 12px;color:#6ee7b7;font-size:12px">${esc(v.action_recommandee || '—')}</td>
+              <td style="padding:10px 12px;color:#059669;font-size:12px">${esc(v.action_recommandee || '—')}</td>
             </tr>`
           }).join('')}
         </tbody>
@@ -2538,18 +2538,18 @@ function renderDiagnosticModulePage(opts: {
   // Incoherences
   const incohHtml = hasAnalysis && incoherences.length > 0 ? `
     <div style="margin-bottom:24px">
-      <div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+      <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:14px;display:flex;align-items:center;gap:10px">
         <i class="fas fa-triangle-exclamation" style="color:#f97316"></i> Incohérences détectées
       </div>
       ${incoherences.map((inc: any) => `
-        <div style="background:#2a1a0a;border:1px solid #92400e;border-radius:12px;padding:16px 20px;margin-bottom:10px">
+        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:16px 20px;margin-bottom:10px">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-            <span style="font-size:14px;font-weight:700;color:#fbbf24">${esc(inc.type || 'Incohérence')}</span>
-            ${inc.champ ? `<span style="padding:2px 8px;background:#78350f;border-radius:10px;font-size:11px;color:#fde68a">${esc(inc.champ)}</span>` : ''}
-            ${inc.ecart_pct ? `<span style="padding:2px 8px;background:#7c2d12;border-radius:10px;font-size:11px;color:#fca5a5">Écart: ${esc(inc.ecart_pct)}%</span>` : ''}
+            <span style="font-size:14px;font-weight:700;color:#c2410c">${esc(inc.type || 'Incohérence')}</span>
+            ${inc.champ ? `<span style="padding:2px 8px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;font-size:11px;color:#92400e">${esc(inc.champ)}</span>` : ''}
+            ${inc.ecart_pct ? `<span style="padding:2px 8px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;font-size:11px;color:#991b1b">Écart: ${esc(inc.ecart_pct)}%</span>` : ''}
           </div>
-          ${inc.valeurs ? `<div style="font-size:12px;color:#94a3b8;margin-bottom:6px">Valeurs: ${esc(typeof inc.valeurs === 'object' ? JSON.stringify(inc.valeurs) : inc.valeurs)}</div>` : ''}
-          <div style="font-size:13px;color:#fde68a;line-height:1.5">${esc(inc.explication || inc.description || '')}</div>
+          ${inc.valeurs ? `<div style="font-size:12px;color:#64748b;margin-bottom:6px">Valeurs: ${esc(typeof inc.valeurs === 'object' ? JSON.stringify(inc.valeurs) : inc.valeurs)}</div>` : ''}
+          <div style="font-size:13px;color:#78350f;line-height:1.5">${esc(inc.explication || inc.description || '')}</div>
         </div>
       `).join('')}
     </div>` : ''
@@ -2557,24 +2557,24 @@ function renderDiagnosticModulePage(opts: {
   // Recommendations
   const recsHtml = hasAnalysis && recs.length > 0 ? `
     <div style="margin-bottom:24px">
-      <div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+      <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:14px;display:flex;align-items:center;gap:10px">
         <i class="fas fa-clipboard-list" style="color:#3b82f6"></i> Recommandations prioritaires
       </div>
       ${recs.map((r: any, i: number) => `
-        <div style="background:#0f172a;border:1px solid #334155;border-left:4px solid ${urgencyBorder(r.urgence)};border-radius:0 12px 12px 0;padding:18px 22px;margin-bottom:12px">
+        <div style="background:white;border:1px solid #e2e8f0;border-left:4px solid ${urgencyBorder(r.urgence)};border-radius:0 12px 12px 0;padding:18px 22px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px">
             <div style="display:flex;align-items:center;gap:10px">
-              <span style="width:28px;height:28px;border-radius:50%;background:#1e293b;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#e2e8f0">${i + 1}</span>
-              <span style="font-size:14px;font-weight:700;color:#e2e8f0">${esc(r.titre)}</span>
+              <span style="width:28px;height:28px;border-radius:50%;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#1e293b">${i + 1}</span>
+              <span style="font-size:14px;font-weight:700;color:#1e293b">${esc(r.titre)}</span>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               ${r.impact_viabilite ? `<span style="padding:3px 10px;background:#0d9488;border-radius:10px;font-size:11px;font-weight:700;color:white">${esc(r.impact_viabilite)}</span>` : ''}
-              <span style="padding:3px 10px;background:#1e293b;border:1px solid #334155;border-radius:10px;font-size:11px;font-weight:600;color:#e2e8f0">${urgencyBadge(r.urgence)}</span>
+              <span style="padding:3px 10px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:10px;font-size:11px;font-weight:600;color:#475569">${urgencyBadge(r.urgence)}</span>
             </div>
           </div>
-          <div style="font-size:13px;color:#94a3b8;line-height:1.6;margin-bottom:10px">${esc(r.detail)}</div>
-          ${r.action_concrete ? `<div style="font-size:12px;color:#6ee7b7;background:#064e3b44;padding:8px 12px;border-radius:8px;margin-bottom:8px"><i class="fas fa-bolt" style="margin-right:6px"></i>${esc(r.action_concrete)}</div>` : ''}
-          ${r.message_encourageant ? `<div style="font-size:12px;color:#a5b4fc;font-style:italic;margin-top:4px">\u{1F4AA} ${esc(r.message_encourageant)}</div>` : ''}
+          <div style="font-size:13px;color:#64748b;line-height:1.6;margin-bottom:10px">${esc(r.detail)}</div>
+          ${r.action_concrete ? `<div style="font-size:12px;color:#059669;background:#f0fdf4;border:1px solid #bbf7d0;padding:8px 12px;border-radius:8px;margin-bottom:8px"><i class="fas fa-bolt" style="margin-right:6px"></i>${esc(r.action_concrete)}</div>` : ''}
+          ${r.message_encourageant ? `<div style="font-size:12px;color:#6366f1;font-style:italic;margin-top:4px">\u{1F4AA} ${esc(r.message_encourageant)}</div>` : ''}
         </div>
       `).join('')}
     </div>` : ''
@@ -2584,8 +2584,8 @@ function renderDiagnosticModulePage(opts: {
   const benchmarkLabels: Record<string,string> = { marge_brute:'Marge Brute', marge_ebitda:'Marge EBITDA', marge_nette:'Marge Nette', ratio_endettement:"Ratio d'endettement", seuil_rentabilite:'Seuil de Rentabilité' }
   const hasBenchmarks = hasAnalysis && benchmarkKeys.some(k => benchmarks[k])
   const benchHtml = hasBenchmarks ? `
-    <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:20px 24px;margin-bottom:24px;overflow-x:auto">
-      <div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:16px;display:flex;align-items:center;gap:10px">
+    <div style="background:white;border:1px solid #e2e8f0;border-radius:14px;padding:20px 24px;margin-bottom:24px;overflow-x:auto;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+      <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:16px;display:flex;align-items:center;gap:10px">
         <i class="fas fa-chart-bar" style="color:#8b5cf6"></i> Benchmarks sectoriels
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:600px">
@@ -2601,12 +2601,12 @@ function renderDiagnosticModulePage(opts: {
         <tbody>
           ${benchmarkKeys.filter(k => benchmarks[k]).map(k => {
             const b = benchmarks[k]
-            const vCol = (b.verdict || '').toLowerCase().includes('excell') || (b.verdict || '').toLowerCase().includes('bon') || (b.verdict || '').toLowerCase().includes('sup') ? '#6ee7b7' : (b.verdict || '').toLowerCase().includes('bas') || (b.verdict || '').toLowerCase().includes('insuff') ? '#fca5a5' : '#fde68a'
-            return `<tr style="border-bottom:1px solid #334155">
-              <td style="padding:10px 12px;color:#e2e8f0;font-weight:600">${benchmarkLabels[k] || k}</td>
-              <td style="padding:10px 12px;text-align:center;color:#e2e8f0;font-weight:700">${b.entreprise != null ? (typeof b.entreprise === 'number' ? b.entreprise + (k.includes('mois') || k.includes('rentabilite') ? ' mois' : '%') : esc(b.entreprise)) : '—'}</td>
-              <td style="padding:10px 12px;text-align:center;color:#94a3b8">${b.secteur_min != null ? b.secteur_min + ' — ' + (b.secteur_max ?? '') + (k.includes('mois') || k.includes('rentabilite') ? ' mois' : '%') : '—'}</td>
-              <td style="padding:10px 12px;text-align:center;color:#fbbf24;font-size:12px">${esc(b.ecart || '—')}</td>
+            const vCol = (b.verdict || '').toLowerCase().includes('excell') || (b.verdict || '').toLowerCase().includes('bon') || (b.verdict || '').toLowerCase().includes('sup') ? '#059669' : (b.verdict || '').toLowerCase().includes('bas') || (b.verdict || '').toLowerCase().includes('insuff') ? '#dc2626' : '#d97706'
+            return `<tr style="border-bottom:1px solid #e2e8f0">
+              <td style="padding:10px 12px;color:#1e293b;font-weight:600">${benchmarkLabels[k] || k}</td>
+              <td style="padding:10px 12px;text-align:center;color:#1e293b;font-weight:700">${b.entreprise != null ? (typeof b.entreprise === 'number' ? b.entreprise + (k.includes('mois') || k.includes('rentabilite') ? ' mois' : '%') : esc(b.entreprise)) : '—'}</td>
+              <td style="padding:10px 12px;text-align:center;color:#64748b">${b.secteur_min != null ? b.secteur_min + ' — ' + (b.secteur_max ?? '') + (k.includes('mois') || k.includes('rentabilite') ? ' mois' : '%') : '—'}</td>
+              <td style="padding:10px 12px;text-align:center;color:#d97706;font-size:12px">${esc(b.ecart || '—')}</td>
               <td style="padding:10px 12px;text-align:center;color:${vCol};font-weight:600;font-size:12px">${esc(b.verdict || '—')}</td>
             </tr>`
           }).join('')}
@@ -2617,8 +2617,8 @@ function renderDiagnosticModulePage(opts: {
 
   // Contextual risks section
   const risquesCtxHtml = hasAnalysis && risquesCtx.length > 0 ? `
-    <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:20px 24px;margin-bottom:24px">
-      <div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:16px;display:flex;align-items:center;gap:10px">
+    <div style="background:white;border:1px solid #e2e8f0;border-radius:14px;padding:20px 24px;margin-bottom:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+      <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:16px;display:flex;align-items:center;gap:10px">
         <i class="fas fa-exclamation-circle" style="color:#f97316"></i> Risques Contextuels
       </div>
       ${risquesCtx.map((r: any) => {
@@ -2627,32 +2627,32 @@ function renderDiagnosticModulePage(opts: {
         const catBg = cat === 'secteur' ? '#7c3aed' : cat === 'geographique' ? '#2563eb' : '#0891b2'
         const grav = (r.gravite || 'moyenne').toLowerCase()
         return `
-        <div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:16px 18px;margin-bottom:10px">
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px 18px;margin-bottom:10px">
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
             <span style="padding:3px 10px;background:${catBg};border-radius:10px;font-size:11px;font-weight:700;color:white">${catLabel}</span>
             <span style="padding:3px 10px;background:${niveauBg(grav)};border-radius:10px;font-size:11px;font-weight:700;color:${niveauColor(grav)}">${esc(r.gravite || '—')}</span>
-            <span style="padding:3px 10px;background:#1e293b;border:1px solid #475569;border-radius:10px;font-size:11px;color:#94a3b8">${esc(r.probabilite || '—')}</span>
-            ${r.pays ? `<span style="font-size:11px;color:#64748b">${esc(r.pays)}${r.zone ? ' \u2022 ' + esc(r.zone) : ''}</span>` : ''}
+            <span style="padding:3px 10px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:10px;font-size:11px;color:#64748b">${esc(r.probabilite || '—')}</span>
+            ${r.pays ? `<span style="font-size:11px;color:#94a3b8">${esc(r.pays)}${r.zone ? ' \u2022 ' + esc(r.zone) : ''}</span>` : ''}
           </div>
-          <div style="font-size:14px;font-weight:700;color:#e2e8f0;margin-bottom:6px">${esc(r.titre)}</div>
-          <div style="font-size:13px;color:#94a3b8;line-height:1.6;margin-bottom:10px">${esc(r.description || '')}</div>
+          <div style="font-size:14px;font-weight:700;color:#1e293b;margin-bottom:6px">${esc(r.titre)}</div>
+          <div style="font-size:13px;color:#64748b;line-height:1.6;margin-bottom:10px">${esc(r.description || '')}</div>
           ${r.impact_financier ? `<div style="font-size:12px;color:#fbbf24;margin-bottom:8px"><i class="fas fa-coins" style="margin-right:6px"></i>${esc(r.impact_financier)}</div>` : ''}
-          ${r.mitigation ? `<div style="font-size:12px;color:#6ee7b7;background:#064e3b44;padding:8px 12px;border-radius:8px"><i class="fas fa-shield-halved" style="margin-right:6px"></i>${esc(r.mitigation)}</div>` : ''}
+          ${r.mitigation ? `<div style="font-size:12px;color:#059669;background:#f0fdf4;border:1px solid #bbf7d0;padding:8px 12px;border-radius:8px"><i class="fas fa-shield-halved" style="margin-right:6px"></i>${esc(r.mitigation)}</div>` : ''}
         </div>`
       }).join('')}
     </div>` : ''
 
   // Next steps + CTA
   const nextStepsHtml = hasAnalysis ? `
-    <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:20px 24px;margin-bottom:24px">
-      <div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+    <div style="background:white;border:1px solid #e2e8f0;border-radius:14px;padding:20px 24px;margin-bottom:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+      <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:14px;display:flex;align-items:center;gap:10px">
         <i class="fas fa-forward" style="color:#0d9488"></i> Prochaines étapes
       </div>
       <ul style="list-style:none;padding:0;margin:0 0 18px 0">
-        <li style="padding:8px 0;color:#cbd5e1;font-size:14px;border-bottom:1px solid #1e293b;display:flex;align-items:center;gap:10px"><span style="color:#0d9488">1.</span> Compléter les livrables manquants pour affiner le diagnostic</li>
-        <li style="padding:8px 0;color:#cbd5e1;font-size:14px;border-bottom:1px solid #1e293b;display:flex;align-items:center;gap:10px"><span style="color:#0d9488">2.</span> Appliquer les recommandations prioritaires identifiées</li>
-        <li style="padding:8px 0;color:#cbd5e1;font-size:14px;border-bottom:1px solid #1e293b;display:flex;align-items:center;gap:10px"><span style="color:#0d9488">3.</span> Renouveler le diagnostic après les ajustements pour mesurer la progression</li>
-        <li style="padding:8px 0;color:#cbd5e1;font-size:14px;display:flex;align-items:center;gap:10px"><span style="color:#0d9488">4.</span> Utiliser le chat IA pour approfondir les recommandations</li>
+        <li style="padding:8px 0;color:#475569;font-size:14px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:10px"><span style="color:#0d9488">1.</span> Compléter les livrables manquants pour affiner le diagnostic</li>
+        <li style="padding:8px 0;color:#475569;font-size:14px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:10px"><span style="color:#0d9488">2.</span> Appliquer les recommandations prioritaires identifiées</li>
+        <li style="padding:8px 0;color:#475569;font-size:14px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:10px"><span style="color:#0d9488">3.</span> Renouveler le diagnostic après les ajustements pour mesurer la progression</li>
+        <li style="padding:8px 0;color:#475569;font-size:14px;display:flex;align-items:center;gap:10px"><span style="color:#0d9488">4.</span> Utiliser le chat IA pour approfondir les recommandations</li>
       </ul>
       <div style="text-align:center">
         <a href="/chat" style="display:inline-flex;align-items:center;gap:10px;padding:12px 28px;background:linear-gradient(135deg,#0d9488,#0f766e);color:white;border-radius:12px;text-decoration:none;font-size:14px;font-weight:700;box-shadow:0 4px 14px rgba(13,148,136,0.3);transition:all 0.2s">
@@ -2663,8 +2663,8 @@ function renderDiagnosticModulePage(opts: {
 
   // Footer
   const footerHtml = hasAnalysis ? `
-    <div style="text-align:center;padding:20px 0;border-top:1px solid #1e293b;margin-top:20px">
-      <div style="font-size:12px;color:#64748b">Généré par ESANO Diagnostic Expert \u2022 ${genDate}${diagVersion > 0 ? ' \u2022 v' + diagVersion : ''}</div>
+    <div style="text-align:center;padding:20px 0;border-top:1px solid #e2e8f0;margin-top:20px">
+      <div style="font-size:12px;color:#94a3b8">Généré par ESANO Diagnostic Expert \u2022 ${genDate}${diagVersion > 0 ? ' \u2022 v' + diagVersion : ''}</div>
       <div style="font-size:11px;color:#475569;margin-top:6px">Ce diagnostic est indicatif et ne constitue pas un conseil financier formel. Consultez un professionnel pour toute décision d'investissement.</div>
     </div>` : ''
 
@@ -2679,7 +2679,7 @@ function renderDiagnosticModulePage(opts: {
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
-    body { background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    body { background: white; color: #1e293b; min-height: 100vh; }
     .page-container { max-width: 960px; margin: 0 auto; padding: 0 20px 60px; }
 
     /* Header banner */
@@ -2697,7 +2697,7 @@ function renderDiagnosticModulePage(opts: {
     .float-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 
     /* Generate section */
-    .gen-card { background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 24px; margin: 20px 0; text-align: center; }
+    .gen-card { background: white; border: 1px solid #e2e8f0; border-radius: 14px; padding: 24px; margin: 20px 0; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
     .gen-btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 28px; border-radius: 12px; font-size: 15px; font-weight: 700; border: none; cursor: pointer; background: linear-gradient(135deg, #dc2626, #b91c1c); color: white; box-shadow: 0 4px 14px rgba(220,38,38,0.3); transition: all 0.2s; }
     .gen-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(220,38,38,0.4); }
     .gen-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
@@ -2716,6 +2716,7 @@ function renderDiagnosticModulePage(opts: {
       .float-btns, .gen-card, .back-link { display: none !important; }
       body { background: white; color: #1e293b; }
       .page-container { max-width: 100%; padding: 0; }
+      .gen-card { box-shadow: none; }
     }
 
     /* Animations */
@@ -2754,21 +2755,21 @@ function renderDiagnosticModulePage(opts: {
     <!-- ═══ PRE-GENERATION VIEW ═══ -->
 
     <!-- About card -->
-    <div style="background:#1e293b;border:1px solid #334155;border-radius:14px;padding:24px;margin-bottom:20px">
-      <div style="font-size:16px;font-weight:700;color:#e2e8f0;margin-bottom:12px;display:flex;align-items:center;gap:10px">
+    <div style="background:white;border:1px solid #e2e8f0;border-radius:14px;padding:24px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+      <div style="font-size:16px;font-weight:700;color:#1e293b;margin-bottom:12px;display:flex;align-items:center;gap:10px">
         <i class="fas fa-info-circle" style="color:#0d9488"></i> À propos
       </div>
-      <p style="font-size:14px;color:#94a3b8;line-height:1.7">
-        Le <strong style="color:#e2e8f0">Diagnostic Expert</strong> analyse l'ensemble de vos livrables (BMC, SIC, Framework, Plan OVO, Business Plan, ODD) 
+      <p style="font-size:14px;color:#64748b;line-height:1.7">
+        Le <strong style="color:#1e293b">Diagnostic Expert</strong> analyse l'ensemble de vos livrables (BMC, SIC, Framework, Plan OVO, Business Plan, ODD) 
         et produit un rapport complet d'Investment Readiness :
-        <strong style="color:#e2e8f0">score global /100</strong>, analyse sur 5 dimensions, détection des risques et incohérences,
+        <strong style="color:#1e293b">score global /100</strong>, analyse sur 5 dimensions, détection des risques et incohérences,
         forces/faiblesses, recommandations prioritaires, benchmarks sectoriels et résumé exécutif.
       </p>
     </div>
 
     <!-- Sources -->
-    <div style="background:#1e293b;border:1px solid #334155;border-radius:14px;padding:24px;margin-bottom:20px">
-      <div style="font-size:16px;font-weight:700;color:#e2e8f0;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+    <div style="background:white;border:1px solid #e2e8f0;border-radius:14px;padding:24px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+      <div style="font-size:16px;font-weight:700;color:#1e293b;margin-bottom:14px;display:flex;align-items:center;gap:10px">
         <i class="fas fa-database" style="color:#7c3aed"></i> Sources de données (${availableCount}/5)
       </div>
       ${[
@@ -2778,13 +2779,13 @@ function renderDiagnosticModulePage(opts: {
         { has: hasFrameworkPme, icon: 'fa-calculator', label: 'Données PME structurées' },
         { has: hasPlanOvo, icon: 'fa-file-excel', label: 'Plan Financier OVO' },
       ].map(s => `
-        <div style="display:flex;align-items:center;gap:14px;padding:12px 16px;background:${s.has ? '#064e3b44' : '#7c2d1222'};border:1px solid ${s.has ? '#065f46' : '#7c2d12'};border-radius:10px;margin-bottom:8px">
-          <div style="width:36px;height:36px;border-radius:8px;background:${s.has ? '#065f46' : '#7c2d12'};display:flex;align-items:center;justify-content:center;color:${s.has ? '#6ee7b7' : '#fca5a5'};font-size:14px;flex-shrink:0">
+        <div style="display:flex;align-items:center;gap:14px;padding:12px 16px;background:${s.has ? '#f0fdf4' : '#fef2f2'};border:1px solid ${s.has ? '#bbf7d0' : '#fecaca'};border-radius:10px;margin-bottom:8px">
+          <div style="width:36px;height:36px;border-radius:8px;background:${s.has ? '#dcfce7' : '#fee2e2'};display:flex;align-items:center;justify-content:center;color:${s.has ? '#059669' : '#dc2626'};font-size:14px;flex-shrink:0">
             <i class="fas ${s.icon}"></i>
           </div>
           <div style="flex:1">
-            <div style="font-size:14px;font-weight:600;color:#e2e8f0">${s.label}</div>
-            <div style="font-size:12px;color:${s.has ? '#6ee7b7' : '#fca5a5'};margin-top:2px">${s.has ? '<i class="fas fa-check-circle"></i> Disponible' : '<i class="fas fa-times-circle"></i> Non disponible'}</div>
+            <div style="font-size:14px;font-weight:600;color:#1e293b">${s.label}</div>
+            <div style="font-size:12px;color:${s.has ? '#059669' : '#dc2626'};margin-top:2px">${s.has ? '<i class="fas fa-check-circle"></i> Disponible' : '<i class="fas fa-times-circle"></i> Non disponible'}</div>
           </div>
         </div>
       `).join('')}
@@ -2795,7 +2796,7 @@ function renderDiagnosticModulePage(opts: {
       <button id="btnGenerate" class="gen-btn" ${!canGenerate ? 'disabled' : ''} onclick="generateDiagnostic()">
         <i class="fas fa-search"></i> Générer le Diagnostic Expert
       </button>
-      ${!canGenerate ? '<p style="font-size:12px;color:#fca5a5;margin-top:10px">\u26A0\uFE0F Au moins 2 modules complétés sont requis.</p>' : ''}
+      ${!canGenerate ? '<p style="font-size:12px;color:#dc2626;margin-top:10px">\u26A0\uFE0F Au moins 2 modules complétés sont requis.</p>' : ''}
       <div id="generateStatus" style="margin-top:16px;display:none"></div>
     </div>
 
@@ -2815,7 +2816,7 @@ function renderDiagnosticModulePage(opts: {
 
     <!-- 5 Dimensions -->
     <div style="margin-bottom:24px">
-      <div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+      <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:14px;display:flex;align-items:center;gap:10px">
         <i class="fas fa-layer-group" style="color:#3b82f6"></i> Analyse par dimension
       </div>
       ${dimsHtml}
@@ -2823,14 +2824,14 @@ function renderDiagnosticModulePage(opts: {
 
     <!-- Forces & Opportunities (two-column) -->
     <div class="two-col" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px">
-      <div style="background:#064e3b;border:1px solid #065f46;border-radius:14px;padding:20px 22px">
-        <div style="font-size:15px;font-weight:700;color:#6ee7b7;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:14px;padding:20px 22px">
+        <div style="font-size:15px;font-weight:700;color:#059669;margin-bottom:14px;display:flex;align-items:center;gap:10px">
           \u2705 Forces (${forces.length})
         </div>
         ${forcesHtml}
       </div>
-      <div style="background:#172554;border:1px solid #1e3a5f;border-radius:14px;padding:20px 22px">
-        <div style="font-size:15px;font-weight:700;color:#93c5fd;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;padding:20px 22px">
+        <div style="font-size:15px;font-weight:700;color:#2563eb;margin-bottom:14px;display:flex;align-items:center;gap:10px">
           \u{1F4A1} Opportunités d'amélioration (${opps.length})
         </div>
         ${oppsHtml}
@@ -2895,15 +2896,15 @@ function renderDiagnosticModulePage(opts: {
         const data = await res.json();
         
         if (data.success) {
-          status.innerHTML = '<p style="color:#6ee7b7;font-size:13px"><i class="fas fa-check-circle"></i> ' + data.message + ' Rechargement...</p>';
+          status.innerHTML = '<p style="color:#059669;font-size:13px"><i class="fas fa-check-circle"></i> ' + data.message + ' Rechargement...</p>';
           setTimeout(() => window.location.reload(), 1200);
         } else {
-          status.innerHTML = '<p style="color:#fca5a5;font-size:13px"><i class="fas fa-exclamation-circle"></i> ' + (data.error || 'Erreur') + '</p>';
+          status.innerHTML = '<p style="color:#dc2626;font-size:13px"><i class="fas fa-exclamation-circle"></i> ' + (data.error || 'Erreur') + '</p>';
           btn.disabled = false;
           btn.innerHTML = '<i class="fas fa-search"></i> Générer le Diagnostic Expert';
         }
       } catch (err) {
-        status.innerHTML = '<p style="color:#fca5a5;font-size:13px"><i class="fas fa-exclamation-circle"></i> Erreur: ' + err.message + '</p>';
+        status.innerHTML = '<p style="color:#dc2626;font-size:13px"><i class="fas fa-exclamation-circle"></i> Erreur: ' + err.message + '</p>';
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-search"></i> Générer le Diagnostic Expert';
       }
@@ -9108,15 +9109,15 @@ function renderBusinessPlanModulePage(opts: {
   <style>
     :root {
       --bp-violet: #7c3aed;
-      --bp-violet-light: #a78bfa;
-      --bp-violet-bg: rgba(124,58,237,0.08);
-      --bp-violet-glow: rgba(124,58,237,0.25);
-      --bp-dark: #0f172a;
-      --bp-card: #1e293b;
-      --bp-border: #334155;
-      --bp-text: #e2e8f0;
-      --bp-text-muted: #94a3b8;
-      --bp-text-dim: #64748b;
+      --bp-violet-light: #6d28d9;
+      --bp-violet-bg: rgba(124,58,237,0.06);
+      --bp-violet-glow: rgba(124,58,237,0.18);
+      --bp-dark: #ffffff;
+      --bp-card: #ffffff;
+      --bp-border: #e2e8f0;
+      --bp-text: #1e293b;
+      --bp-text-muted: #475569;
+      --bp-text-dim: #94a3b8;
       --bp-success: #059669;
       --bp-warning: #d97706;
       --bp-danger: #dc2626;
@@ -9133,25 +9134,25 @@ function renderBusinessPlanModulePage(opts: {
     }
     *{margin:0;padding:0;box-sizing:border-box}
     html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased}
-    body{background:var(--bp-dark);color:var(--bp-text);font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;line-height:1.6;font-size:var(--bp-body-size)}
+    body{background:white;color:var(--bp-text);font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;line-height:1.6;font-size:var(--bp-body-size)}
 
     /* ===== LAYOUT ===== */
     .bp-layout{display:flex;min-height:100vh}
-    .bp-sidebar{width:var(--bp-sidebar-w);position:fixed;top:0;left:0;bottom:0;background:linear-gradient(180deg,#111827 0%,#0f0d1a 100%);border-right:1px solid var(--bp-border);display:flex;flex-direction:column;z-index:100;transition:transform .3s cubic-bezier(.4,0,.2,1)}
+    .bp-sidebar{width:var(--bp-sidebar-w);position:fixed;top:0;left:0;bottom:0;background:linear-gradient(180deg,#1e1b4b 0%,#312e81 100%);border-right:1px solid #e2e8f0;display:flex;flex-direction:column;z-index:100;transition:transform .3s cubic-bezier(.4,0,.2,1)}
     .bp-sidebar__brand{padding:24px 20px 18px;border-bottom:1px solid var(--bp-border)}
     .bp-sidebar__logo{font-size:22px;font-weight:800;background:linear-gradient(135deg,#7c3aed,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:1.5px}
     .bp-sidebar__company{font-size:11px;color:var(--bp-text-muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .bp-sidebar__progress{padding:16px 20px;border-bottom:1px solid var(--bp-border)}
     .bp-sidebar__progress-label{font-size:11px;font-weight:700;color:var(--bp-text-dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;display:flex;justify-content:space-between}
-    .bp-sidebar__progress-bar{height:6px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden}
+    .bp-sidebar__progress-bar{height:6px;background:rgba(255,255,255,.15);border-radius:3px;overflow:hidden}
     .bp-sidebar__progress-fill{height:100%;background:linear-gradient(90deg,#7c3aed,#a78bfa);border-radius:3px;transition:width .6s ease}
     .bp-sidebar__nav{flex:1;overflow-y:auto;padding:12px 10px;scrollbar-width:thin;scrollbar-color:rgba(124,58,237,.3) transparent}
-    .bp-sidebar__link{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:var(--bp-radius-sm);font-size:13px;font-weight:500;color:var(--bp-text-muted);text-decoration:none;transition:all .2s;cursor:pointer;border:none;background:none;width:100%;text-align:left;position:relative}
-    .bp-sidebar__link:hover{background:var(--bp-violet-bg);color:var(--bp-violet-light)}
+    .bp-sidebar__link{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:var(--bp-radius-sm);font-size:13px;font-weight:500;color:rgba(255,255,255,.7);text-decoration:none;transition:all .2s;cursor:pointer;border:none;background:none;width:100%;text-align:left;position:relative}
+    .bp-sidebar__link:hover{background:rgba(255,255,255,.1);color:white}
     .bp-sidebar__link--active{font-weight:700;color:white;background:rgba(124,58,237,.18)}
     .bp-sidebar__link--active::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:20px;background:var(--bp-violet);border-radius:0 3px 3px 0}
-    .bp-sidebar__icon{width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;background:rgba(124,58,237,.12);color:var(--bp-violet-light)}
-    .bp-sidebar__num{font-size:10px;font-weight:800;color:var(--bp-text-dim);margin-left:auto;min-width:18px;text-align:center}
+    .bp-sidebar__icon{width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;background:rgba(255,255,255,.12);color:#c4b5fd}
+    .bp-sidebar__num{font-size:10px;font-weight:800;color:rgba(255,255,255,.4);margin-left:auto;min-width:18px;text-align:center}
     .bp-sidebar__check{color:var(--bp-success);font-size:10px;margin-left:auto}
     .bp-sidebar__actions{padding:12px 14px;border-top:1px solid var(--bp-border);display:flex;flex-direction:column;gap:8px}
     .bp-sidebar__footer{padding:14px 20px;border-top:1px solid var(--bp-border);font-size:10px;color:var(--bp-text-dim);text-align:center}
@@ -9160,8 +9161,8 @@ function renderBusinessPlanModulePage(opts: {
 
     /* Mobile */
     .bp-mobile-toggle{display:none;position:fixed;top:16px;left:16px;z-index:200;width:44px;height:44px;border-radius:12px;background:var(--bp-violet);color:white;border:none;font-size:18px;cursor:pointer;box-shadow:0 4px 16px var(--bp-violet-glow)}
-    .bp-sidebar__close{display:none;position:absolute;top:16px;right:16px;width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,.1);color:white;border:none;cursor:pointer;font-size:14px}
-    .bp-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:90;backdrop-filter:blur(2px)}
+    .bp-sidebar__close{display:none;position:absolute;top:16px;right:16px;width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,.15);color:white;border:none;cursor:pointer;font-size:14px}
+    .bp-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:90;backdrop-filter:blur(2px)}
 
     /* ===== HEADER ===== */
     .bp-header{padding:36px 40px 30px;background:linear-gradient(135deg,#1e1b4b 0%,#312e81 40%,#4c1d95 100%);position:relative;overflow:hidden}
@@ -9174,8 +9175,8 @@ function renderBusinessPlanModulePage(opts: {
     .bp-header__meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
     .bp-header__tag{display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);backdrop-filter:blur(8px)}
     .bp-header__tag--version{background:rgba(124,58,237,.35);color:#c4b5fd}
-    .bp-header__tag--ai{background:rgba(5,150,105,.25);color:#6ee7b7}
-    .bp-header__tag--status{background:rgba(5,150,105,.2);color:#6ee7b7}
+    .bp-header__tag--ai{background:rgba(5,150,105,.2);color:#059669}
+    .bp-header__tag--status{background:rgba(5,150,105,.15);color:#059669}
     .bp-header__scores{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start}
     .bp-header__score{padding:4px 10px;border-radius:16px;font-size:11px;font-weight:700;background:rgba(255,255,255,.08);color:rgba(255,255,255,.65)}
 
@@ -9183,9 +9184,9 @@ function renderBusinessPlanModulePage(opts: {
     .bp-content{padding:28px 40px 60px;max-width:1100px}
 
     /* ===== SECTIONS ===== */
-    .bp-section{background:var(--bp-card);border:1px solid var(--bp-border);border-radius:var(--bp-radius);margin-bottom:var(--bp-section-gap);overflow:hidden;scroll-margin-top:24px;transition:border-color .3s}
-    .bp-section:hover{border-color:rgba(124,58,237,.25)}
-    .bp-section__head{display:flex;align-items:center;gap:14px;padding:20px 28px;border-bottom:1px solid var(--bp-border);background:rgba(15,23,42,.3)}
+    .bp-section{background:var(--bp-card);border:1px solid var(--bp-border);border-radius:var(--bp-radius);margin-bottom:var(--bp-section-gap);overflow:hidden;scroll-margin-top:24px;transition:border-color .3s;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+    .bp-section:hover{border-color:#c4b5fd}
+    .bp-section__head{display:flex;align-items:center;gap:14px;padding:20px 28px;border-bottom:1px solid var(--bp-border);background:#f8fafc}
     .bp-section__num{width:38px;height:38px;border-radius:var(--bp-radius-sm);display:flex;align-items:center;justify-content:center;color:white;font-size:14px;font-weight:800;flex-shrink:0;background:var(--bp-violet)}
     .bp-section__title{font-size:var(--bp-subtitle-size);font-weight:700;color:var(--bp-text)}
     .bp-section__body{padding:24px 28px}
@@ -9218,56 +9219,56 @@ function renderBusinessPlanModulePage(opts: {
 
     /* ===== CARDS ===== */
     .bp-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
-    .bp-card-item{background:rgba(124,58,237,.05);border:1px solid rgba(124,58,237,.15);border-radius:var(--bp-radius-sm);padding:18px;transition:border-color .2s,transform .2s}
-    .bp-card-item:hover{border-color:rgba(124,58,237,.35);transform:translateY(-1px)}
+    .bp-card-item{background:#faf5ff;border:1px solid #e9d5ff;border-radius:var(--bp-radius-sm);padding:18px;transition:border-color .2s,transform .2s}
+    .bp-card-item:hover{border-color:#c4b5fd;transform:translateY(-1px)}
     .bp-card-item__title{font-size:var(--bp-body-size);font-weight:700;color:var(--bp-text);margin-bottom:6px}
     .bp-card-item__desc{font-size:12.5px;color:var(--bp-text-muted);line-height:1.65}
 
     /* ===== STAT CARDS ===== */
     .bp-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;margin-bottom:20px}
-    .bp-stat{background:linear-gradient(135deg,rgba(124,58,237,.08),rgba(99,102,241,.04));border:1px solid rgba(124,58,237,.18);border-radius:var(--bp-radius-sm);padding:20px;text-align:center}
-    .bp-stat__value{font-size:22px;font-weight:800;color:white;margin-bottom:4px;letter-spacing:-.3px}
+    .bp-stat{background:linear-gradient(135deg,#faf5ff,#eef2ff);border:1px solid #e9d5ff;border-radius:var(--bp-radius-sm);padding:20px;text-align:center}
+    .bp-stat__value{font-size:22px;font-weight:800;color:#1e293b;margin-bottom:4px;letter-spacing:-.3px}
     .bp-stat__label{font-size:11px;color:var(--bp-text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px}
 
     /* ===== TABLES ===== */
     .bp-table-wrap{overflow-x:auto;margin:var(--bp-element-gap) 0;border-radius:var(--bp-radius-sm);border:1px solid var(--bp-border)}
     .bp-table{width:100%;border-collapse:collapse;font-size:13px}
-    .bp-table th{background:rgba(124,58,237,.1);color:var(--bp-violet-light);font-weight:700;padding:12px 16px;text-align:left;border-bottom:2px solid rgba(124,58,237,.2);white-space:nowrap}
-    .bp-table td{padding:10px 16px;border-bottom:1px solid rgba(51,65,85,.25);color:var(--bp-text-muted)}
+    .bp-table th{background:#f5f3ff;color:#6d28d9;font-weight:700;padding:12px 16px;text-align:left;border-bottom:2px solid #e9d5ff;white-space:nowrap}
+    .bp-table td{padding:10px 16px;border-bottom:1px solid #f1f5f9;color:var(--bp-text-muted)}
     .bp-table__label{font-weight:600;color:var(--bp-text)}
     .bp-table__num{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
-    .bp-table__highlight td{background:rgba(124,58,237,.06);font-weight:700;color:var(--bp-text)}
+    .bp-table__highlight td{background:#faf5ff;font-weight:700;color:var(--bp-text)}
     .bp-table--info td:first-child{width:180px;font-weight:600;color:var(--bp-text)}
 
     /* ===== SWOT ===== */
     .bp-swot{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:var(--bp-element-gap) 0}
     .bp-swot__cell{border-radius:var(--bp-radius-sm);padding:18px;min-height:120px}
-    .bp-swot__cell--s{background:rgba(5,150,105,.08);border:1px solid rgba(5,150,105,.2)}
-    .bp-swot__cell--w{background:rgba(234,88,12,.06);border:1px solid rgba(234,88,12,.18)}
-    .bp-swot__cell--o{background:rgba(37,99,235,.06);border:1px solid rgba(37,99,235,.18)}
-    .bp-swot__cell--t{background:rgba(220,38,38,.06);border:1px solid rgba(220,38,38,.18)}
+    .bp-swot__cell--s{background:#f0fdf4;border:1px solid #bbf7d0}
+    .bp-swot__cell--w{background:#fff7ed;border:1px solid #fed7aa}
+    .bp-swot__cell--o{background:#eff6ff;border:1px solid #bfdbfe}
+    .bp-swot__cell--t{background:#fef2f2;border:1px solid #fecaca}
     .bp-swot__header{font-size:13px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px}
-    .bp-swot__cell--s .bp-swot__header{color:#6ee7b7}
-    .bp-swot__cell--w .bp-swot__header{color:#fdba74}
-    .bp-swot__cell--o .bp-swot__header{color:#93c5fd}
-    .bp-swot__cell--t .bp-swot__header{color:#fca5a5}
+    .bp-swot__cell--s .bp-swot__header{color:#059669}
+    .bp-swot__cell--w .bp-swot__header{color:#ea580c}
+    .bp-swot__cell--o .bp-swot__header{color:#2563eb}
+    .bp-swot__cell--t .bp-swot__header{color:#dc2626}
     .bp-swot__item{font-size:12.5px;color:var(--bp-text-muted);padding:4px 0 4px 16px;position:relative}
     .bp-swot__item::before{content:'\u2022';position:absolute;left:2px;font-weight:bold}
 
     /* ===== RISK BADGES ===== */
-    .bp-risk-badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;background:rgba(255,255,255,.06);color:var(--bp-text-muted)}
+    .bp-risk-badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;background:#f1f5f9;color:var(--bp-text-muted)}
 
     /* ===== VMV CARDS ===== */
     .bp-vmv{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:12px 0}
-    .bp-vmv__card{padding:20px;border-radius:var(--bp-radius-sm);background:linear-gradient(135deg,rgba(124,58,237,.06),rgba(99,102,241,.03));border:1px solid rgba(124,58,237,.15)}
-    .bp-vmv__label{font-size:11px;font-weight:700;color:var(--bp-violet-light);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+    .bp-vmv__card{padding:20px;border-radius:var(--bp-radius-sm);background:linear-gradient(135deg,#faf5ff,#eef2ff);border:1px solid #e9d5ff}
+    .bp-vmv__label{font-size:11px;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
     .bp-vmv__text{font-size:13px;color:var(--bp-text-muted);line-height:1.7}
 
     /* ===== ODD BADGES ===== */
-    .bp-odd{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700;background:rgba(225,29,72,.1);color:#fb7185;margin:3px}
+    .bp-odd{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700;background:#fff1f2;color:#e11d48;border:1px solid #fecdd3;margin:3px}
 
     /* ===== CHART ===== */
-    .bp-chart-container{position:relative;height:300px;margin:var(--bp-element-gap) 0;background:rgba(15,23,42,.4);border-radius:var(--bp-radius-sm);padding:16px;border:1px solid var(--bp-border)}
+    .bp-chart-container{position:relative;height:300px;margin:var(--bp-element-gap) 0;background:#f8fafc;border-radius:var(--bp-radius-sm);padding:16px;border:1px solid #e2e8f0}
 
     /* ===== GENERATE VIEW ===== */
     .bp-pregen{max-width:700px;margin:0 auto;padding:40px 0}
@@ -9280,12 +9281,12 @@ function renderBusinessPlanModulePage(opts: {
     .gen-btn--primary:not(:disabled):hover{transform:translateY(-2px);box-shadow:0 8px 28px var(--bp-violet-glow)}
 
     /* ===== DOWNLOAD BAR ===== */
-    .bp-dl-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:18px 24px;background:linear-gradient(135deg,rgba(124,58,237,.1),rgba(99,102,241,.06));border:1px solid rgba(124,58,237,.25);border-radius:var(--bp-radius);margin-bottom:var(--bp-section-gap)}
+    .bp-dl-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:18px 24px;background:linear-gradient(135deg,#f5f3ff,#eef2ff);border:1px solid #e9d5ff;border-radius:var(--bp-radius);margin-bottom:var(--bp-section-gap)}
     .bp-dl-btn{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:var(--bp-radius-sm);font-size:13px;font-weight:700;border:none;cursor:pointer;color:white;text-decoration:none;transition:all .2s}
     .bp-dl-btn--primary{background:var(--bp-violet)}
     .bp-dl-btn--primary:hover{background:#6d28d9;transform:translateY(-1px)}
-    .bp-dl-btn--ghost{background:transparent;border:1px solid var(--bp-border);color:var(--bp-text-muted)}
-    .bp-dl-btn--ghost:hover{background:rgba(255,255,255,.05);border-color:var(--bp-violet-light)}
+    .bp-dl-btn--ghost{background:transparent;border:1px solid #e2e8f0;color:#475569}
+    .bp-dl-btn--ghost:hover{background:#f8fafc;border-color:#7c3aed;color:#7c3aed}
 
     /* ===== BACK TO TOP ===== */
     .bp-totop{position:fixed;bottom:28px;right:28px;width:46px;height:46px;border-radius:50%;background:var(--bp-violet);color:white;border:none;font-size:16px;cursor:pointer;box-shadow:0 4px 16px var(--bp-violet-glow);opacity:0;transform:translateY(12px);transition:all .3s;z-index:100}
@@ -9295,14 +9296,14 @@ function renderBusinessPlanModulePage(opts: {
     /* ===== SHARE MODAL ===== */
     .bp-share-modal{display:none;position:fixed;inset:0;z-index:300;align-items:center;justify-content:center;background:rgba(0,0,0,.65);backdrop-filter:blur(4px)}
     .bp-share-modal--open{display:flex}
-    .bp-share-modal__box{background:var(--bp-card);border:1px solid var(--bp-border);border-radius:var(--bp-radius);padding:32px;max-width:460px;width:90%;position:relative}
-    .bp-share-modal__close{position:absolute;top:16px;right:16px;background:none;border:none;color:var(--bp-text-muted);cursor:pointer;font-size:16px}
-    .bp-share-modal__title{font-size:var(--bp-subtitle-size);font-weight:700;color:var(--bp-text);margin-bottom:16px}
+    .bp-share-modal__box{background:white;border:1px solid #e2e8f0;border-radius:var(--bp-radius);padding:32px;max-width:460px;width:90%;position:relative;box-shadow:0 20px 60px rgba(0,0,0,0.15)}
+    .bp-share-modal__close{position:absolute;top:16px;right:16px;background:none;border:none;color:#94a3b8;cursor:pointer;font-size:16px}
+    .bp-share-modal__title{font-size:var(--bp-subtitle-size);font-weight:700;color:#1e293b;margin-bottom:16px}
     .bp-share-modal__input{display:flex;gap:8px}
-    .bp-share-modal__url{flex:1;background:var(--bp-dark);border:1px solid var(--bp-border);border-radius:var(--bp-radius-xs);padding:10px 14px;color:var(--bp-text);font-size:13px;font-family:monospace}
+    .bp-share-modal__url{flex:1;background:#f8fafc;border:1px solid #e2e8f0;border-radius:var(--bp-radius-xs);padding:10px 14px;color:#1e293b;font-size:13px;font-family:monospace}
     .bp-share-modal__copy{background:var(--bp-violet);color:white;border:none;border-radius:var(--bp-radius-xs);padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer}
     .bp-share-modal__copy:hover{background:#6d28d9}
-    .bp-share-modal__msg{display:none;margin-top:10px;color:#6ee7b7;font-size:12px;font-weight:600}
+    .bp-share-modal__msg{display:none;margin-top:10px;color:#059669;font-size:12px;font-weight:600}
 
     /* ===== PRINT ===== */
     @media print {
@@ -9422,7 +9423,7 @@ function renderBusinessPlanModulePage(opts: {
       <!-- Download bar -->
       <div class="bp-dl-bar">
         <div style="display:flex;align-items:center;gap:14px">
-          <div style="width:44px;height:44px;border-radius:12px;background:rgba(5,150,105,.15);display:flex;align-items:center;justify-content:center"><i class="fas fa-check-circle" style="font-size:22px;color:#6ee7b7"></i></div>
+          <div style="width:44px;height:44px;border-radius:12px;background:rgba(5,150,105,.1);display:flex;align-items:center;justify-content:center"><i class="fas fa-check-circle" style="font-size:22px;color:#059669"></i></div>
           <div>
             <div style="font-size:14px;font-weight:700;color:var(--bp-text)">Business Plan genere avec succes</div>
             <div style="font-size:12px;color:var(--bp-text-muted)">Version ${bpVersion} \u2022 ${availableCount}/5 sources integrees \u2022 Completude ${completenessScore}%</div>
@@ -9662,8 +9663,8 @@ function renderBusinessPlanModulePage(opts: {
                 { has: hasOvo, icon: 'fa-file-excel', label: 'Plan Financier OVO', req: false },
               ].map(s =>
                 '<div class="bp-source-row" style="background:' + (s.has ? 'rgba(5,150,105,.06)' : 'rgba(220,38,38,.04)') + ';border-color:' + (s.has ? 'rgba(5,150,105,.2)' : 'rgba(220,38,38,.15)') + '">' +
-                  '<div class="bp-source-icon" style="background:' + (s.has ? 'rgba(5,150,105,.15)' : 'rgba(220,38,38,.12)') + ';color:' + (s.has ? '#6ee7b7' : '#fca5a5') + '"><i class="fas ' + (s.has ? 'fa-check' : 'fa-times') + '"></i></div>' +
-                  '<div style="flex:1"><div style="font-size:13px;font-weight:600;color:' + (s.has ? '#6ee7b7' : '#fca5a5') + '">' + s.label + '</div>' +
+                  '<div class="bp-source-icon" style="background:' + (s.has ? 'rgba(5,150,105,.1)' : 'rgba(220,38,38,.08)') + ';color:' + (s.has ? '#059669' : '#dc2626') + '"><i class="fas ' + (s.has ? 'fa-check' : 'fa-times') + '"></i></div>' +
+                  '<div style="flex:1"><div style="font-size:13px;font-weight:600;color:' + (s.has ? '#059669' : '#dc2626') + '">' + s.label + '</div>' +
                   '<div style="font-size:11px;color:var(--bp-text-dim)">' + (s.has ? 'Disponible' : 'Non disponible') + ' \u2022 ' + (s.req ? 'Recommande' : 'Optionnel') + '</div></div></div>'
               ).join('')}
             </div>
@@ -9778,8 +9779,8 @@ function renderBusinessPlanModulePage(opts: {
       },
       options:{
         responsive:true,maintainAspectRatio:false,
-        plugins:{legend:{labels:{color:'#94a3b8',font:{family:'Inter',size:12,weight:'600'},padding:16}},tooltip:{backgroundColor:'#1e293b',borderColor:'#334155',borderWidth:1,titleColor:'#e2e8f0',bodyColor:'#94a3b8',padding:12,cornerRadius:8,callbacks:{label:function(c){return c.dataset.label+': '+Number(c.raw).toLocaleString('fr-FR')+' FCFA'}}}},
-        scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{family:'Inter',size:11}}},y:{grid:{color:'rgba(51,65,85,0.3)'},ticks:{color:'#64748b',font:{family:'Inter',size:11},callback:function(v){if(Math.abs(v)>=1e6)return(v/1e6).toFixed(0)+'M';if(Math.abs(v)>=1e3)return(v/1e3).toFixed(0)+'k';return v}}}}
+        plugins:{legend:{labels:{color:'#475569',font:{family:'Inter',size:12,weight:'600'},padding:16}},tooltip:{backgroundColor:'white',borderColor:'#e2e8f0',borderWidth:1,titleColor:'#1e293b',bodyColor:'#475569',padding:12,cornerRadius:8,callbacks:{label:function(c){return c.dataset.label+': '+Number(c.raw).toLocaleString('fr-FR')+' FCFA'}}}},
+        scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{family:'Inter',size:11}}},y:{grid:{color:'rgba(226,232,240,0.6)'},ticks:{color:'#64748b',font:{family:'Inter',size:11},callback:function(v){if(Math.abs(v)>=1e6)return(v/1e6).toFixed(0)+'M';if(Math.abs(v)>=1e3)return(v/1e3).toFixed(0)+'k';return v}}}}
       }
     });
   })();
@@ -9801,7 +9802,7 @@ function renderBusinessPlanModulePage(opts: {
       });
       var data=await res.json();
       if(data.success){
-        if(status)status.innerHTML='<div style="color:#6ee7b7"><i class="fas fa-check-circle"></i> '+(data.message||'Business Plan genere')+(data.ai_generated?' (IA)':'')+'</div>';
+        if(status)status.innerHTML='<div style="color:#059669"><i class="fas fa-check-circle"></i> '+(data.message||'Business Plan genere')+(data.ai_generated?' (IA)':'')+'</div>';
         setTimeout(function(){location.reload()},1200);
       }else{
         if(status)status.innerHTML='<div style="color:#f87171"><i class="fas fa-exclamation-circle"></i> '+(data.error||'Erreur')+'</div>';
