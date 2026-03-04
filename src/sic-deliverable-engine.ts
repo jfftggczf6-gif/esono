@@ -2077,3 +2077,420 @@ export function renderSicDeliverableFromAnalyst(input: SicAnalystDeliverableInpu
 </body>
 </html>`
 }
+
+// ═══════════════════════════════════════════════════════════════
+// REGENERATION — Convert DB sic_analysis JSON to full SIC HTML
+// Used to regenerate sic_html from existing sic_analysis without re-calling Claude
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Convert DB sic_analysis JSON to full SIC HTML
+ * Uses the analyst renderer which expects {score_global, dimensions, canvas_blocs, chiffres_cles}
+ * But our DB format is {score, pillars, odd_alignment, impact_matrix}
+ * So we create a comprehensive HTML directly.
+ */
+export function regenerateSicHtmlFromDbAnalysis(
+  dbAnalysis: {
+    score: number
+    pillars: Array<{ name: string, score: number, analysis: string, recommendations: string[] }>
+    odd_alignment: Array<{ odd: string, relevance: number }>
+    impact_matrix: Record<string, any>
+  },
+  companyData: {
+    companyName: string
+    entrepreneurName: string
+    sector: string
+    location: string
+    country: string
+  }
+): string {
+  const pillars = dbAnalysis.pillars || []
+  const oddAlignment = dbAnalysis.odd_alignment || []
+  const impactMatrix = dbAnalysis.impact_matrix || {}
+  const scoreGlobal = dbAnalysis.score || 0
+  
+  const scoreColor = scoreGlobal >= 71 ? COLORS.primaryLight : scoreGlobal >= 51 ? COLORS.accent : scoreGlobal >= 31 ? COLORS.orange : COLORS.red
+  const dateStr = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+  const locationStr = [companyData.location, companyData.country].filter(Boolean).join(' — ')
+  const sectorStr = companyData.sector || 'Secteur non précisé'
+  
+  // ODD badge helpers
+  const oddColorMap: Record<number, string> = {
+    1: '#e5243b', 2: '#dda63a', 3: '#4c9f38', 4: '#c5192d', 5: '#ff3a21',
+    6: '#26bde2', 7: '#fcc30b', 8: '#a21942', 9: '#fd6925', 10: '#dd1367',
+    11: '#fd9d24', 12: '#bf8b2e', 13: '#3f7e44', 14: '#0a97d9', 15: '#56c02b',
+    16: '#00689d', 17: '#19486a'
+  }
+  
+  const oddLabels: Record<number, string> = {
+    1: 'Pas de pauvreté', 2: 'Faim zéro', 3: 'Bonne santé', 4: 'Éducation de qualité',
+    5: 'Égalité des sexes', 6: 'Eau propre', 7: 'Énergie propre', 8: 'Travail décent',
+    9: 'Industrie et innovation', 10: 'Inégalités réduites', 11: 'Villes durables',
+    12: 'Consommation responsable', 13: 'Lutte changement climatique', 14: 'Vie aquatique',
+    15: 'Vie terrestre', 16: 'Paix et justice', 17: 'Partenariats'
+  }
+  
+  function extractOddNum(oddStr: string): number {
+    const m = oddStr.match(/ODD\s*(\d+)/i)
+    return m ? parseInt(m[1]) : 0
+  }
+  
+  // Pillar score bars
+  const pillarBarsHtml = pillars.map(p => {
+    const barColor = p.score >= 70 ? COLORS.primaryLight : p.score >= 50 ? COLORS.accent : p.score >= 30 ? COLORS.orange : COLORS.red
+    return `<div style="padding:12px 16px;border-radius:10px;background:#fafbfc;border:1px solid rgba(0,0,0,0.05);margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <span style="font-size:14px;font-weight:600;">${p.name}</span>
+        <span style="font-weight:700;color:${barColor};font-size:16px;">${p.score}%</span>
+      </div>
+      <div style="height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;margin-bottom:6px;">
+        <div style="height:100%;width:${p.score}%;background:${barColor};border-radius:3px;"></div>
+      </div>
+      <div style="font-size:12px;color:#666;line-height:1.5;">${p.analysis}</div>
+    </div>`
+  }).join('')
+  
+  // ODD badges
+  const oddBadgesHtml = oddAlignment.map(o => {
+    const num = extractOddNum(o.odd)
+    const color = oddColorMap[num] || '#666'
+    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:6px;background:${color};color:white;font-size:12px;font-weight:600;">ODD ${num}</span>`
+  }).join('')
+  
+  // ODD table rows
+  const oddTableHtml = oddAlignment.map(o => {
+    const num = extractOddNum(o.odd)
+    const color = oddColorMap[num] || '#666'
+    const label = oddLabels[num] || o.odd
+    const barColor = o.relevance >= 80 ? COLORS.primaryLight : o.relevance >= 60 ? COLORS.accent : o.relevance >= 40 ? COLORS.orange : COLORS.red
+    return `<tr>
+      <td><span style="display:inline-flex;padding:3px 8px;border-radius:6px;background:${color};color:white;font-size:12px;font-weight:700;">ODD ${num}</span></td>
+      <td style="font-weight:600;">${label}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div style="flex:1;height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;">
+            <div style="height:100%;width:${o.relevance}%;background:${barColor};border-radius:3px;"></div>
+          </div>
+          <span style="font-weight:700;color:${barColor};font-size:13px;">${o.relevance}%</span>
+        </div>
+      </td>
+    </tr>`
+  }).join('')
+  
+  // Impact matrix
+  const fmtNum = (n: any) => typeof n === 'number' && n > 0 ? n.toLocaleString('fr-FR') : (typeof n === 'string' ? n : '—')
+  
+  // Recommendations from all pillars
+  const allRecos = pillars.flatMap(p => (p.recommendations || []))
+  const recoHtml = allRecos.slice(0, 10).map((r, i) => 
+    `<div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:10px;padding:10px 14px;border-radius:10px;background:#fafbfc;border-left:3px solid ${i < 3 ? COLORS.primaryLight : i < 6 ? COLORS.accent : COLORS.orange};">
+      <span style="background:${i < 3 ? COLORS.primaryLight : i < 6 ? COLORS.accent : COLORS.orange};color:white;font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;white-space:nowrap;">${i < 3 ? 'PRIORITÉ' : i < 6 ? 'MOYEN TERME' : 'LONG TERME'}</span>
+      <span style="font-size:13px;line-height:1.5;">${r}</span>
+    </div>`
+  ).join('')
+  
+  // Forces & vigilances
+  const forces = pillars.filter(p => p.score >= 70)
+  const vigilances = pillars.filter(p => p.score < 60)
+  
+  // Missing indicators
+  const missingIndicators = Array.isArray(impactMatrix.indicateurs_manquants) 
+    ? impactMatrix.indicateurs_manquants 
+    : []
+  
+  // Synthesis text
+  const topPillars = pillars.filter(p => p.score >= 70).map(p => p.name).join(', ')
+  const weakPillars = pillars.filter(p => p.score < 60).map(p => p.name).join(', ')
+  const syntheseText = `Score global SIC : ${scoreGlobal}%. ` +
+    (topPillars ? `Points forts : ${topPillars}. ` : '') +
+    (weakPillars ? `Points d'amélioration : ${weakPillars}. ` : '') +
+    `${oddAlignment.length} ODD ciblés. ` +
+    (impactMatrix.beneficiaires_directs ? `${fmtNum(impactMatrix.beneficiaires_directs)} bénéficiaires directs identifiés. ` : '') +
+    (impactMatrix.impact_climatique_potentiel ? `Impact climatique : ${impactMatrix.impact_climatique_potentiel}.` : '')
+
+  return `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Social Impact Canvas — ${companyData.companyName}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: ${COLORS.primary};
+      --primary-light: ${COLORS.primaryLight};
+      --accent: ${COLORS.accent};
+      --orange: ${COLORS.orange};
+      --red: ${COLORS.red};
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Inter',system-ui,sans-serif; background:white; color:#2d3748; line-height:1.6; }
+    .sic-container { max-width:1200px; margin:0 auto; padding:0 24px; }
+    .sic-header {
+      background: linear-gradient(135deg, #1a3e20 0%, #1b5e20 40%, #2e7d32 100%);
+      padding: 48px 0 56px; color: white; position: relative; overflow: hidden;
+    }
+    .sic-header::before {
+      content:''; position:absolute; top:-50%; right:-10%;
+      width:400px; height:400px; border-radius:50%; background:rgba(255,255,255,0.04);
+    }
+    .sic-score-hero {
+      background:white; border-radius:20px; margin:-36px 24px 0;
+      position:relative; z-index:10; box-shadow:0 8px 32px rgba(0,0,0,0.1);
+      padding:32px 40px; display:grid; grid-template-columns:auto 1fr; gap:32px; align-items:center;
+    }
+    .sic-score-circle {
+      width:130px; height:130px; border-radius:50%;
+      display:flex; flex-direction:column; align-items:center; justify-content:center; color:white;
+    }
+    .sic-card {
+      background:white; border-radius:16px; padding:32px;
+      margin:24px 0; border:1px solid rgba(0,0,0,0.08);
+    }
+    .sic-section-title {
+      font-size:20px; font-weight:700; color:${COLORS.primary};
+      display:flex; align-items:center; gap:10px; margin-bottom:20px;
+    }
+    .sic-synthese {
+      background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+      border: 1px solid #86efac; border-radius:12px; padding:20px;
+      font-size:14px; line-height:1.7; color:#14532d; margin-bottom:20px;
+    }
+    .sic-kpi-grid {
+      display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));
+      gap:16px; margin-bottom:24px;
+    }
+    .sic-kpi-card {
+      background:#fafbfc; border-radius:12px; padding:20px; text-align:center;
+      border:1px solid rgba(0,0,0,0.05);
+    }
+    .sic-kpi-card__label { font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:#888; margin-bottom:4px; }
+    .sic-kpi-card__value { font-size:28px; font-weight:800; }
+    .sic-canvas-grid {
+      display:grid; grid-template-columns:repeat(2, 1fr); gap:16px; margin:20px 0;
+    }
+    .sic-canvas-cell {
+      padding:16px; border:1px solid #e2e8f0; border-radius:12px; min-height:120px;
+    }
+    .sic-canvas-cell__header {
+      font-size:11px; font-weight:700; text-transform:uppercase;
+      letter-spacing:0.5px; color:white; padding:4px 10px;
+      border-radius:4px; display:inline-block; margin-bottom:10px;
+    }
+    .sic-canvas-cell__bullet {
+      font-size:12px; color:#2d3748; margin-bottom:5px; line-height:1.5;
+      padding-left:14px; position:relative;
+    }
+    .sic-canvas-cell__bullet::before {
+      content:'›'; position:absolute; left:0; color:${COLORS.primaryLight}; font-weight:700;
+    }
+    table { width:100%; border-collapse:collapse; margin:16px 0; }
+    th { background:#f8fafc; padding:10px 12px; text-align:left; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; color:#64748b; border-bottom:2px solid #e2e8f0; }
+    td { padding:10px 12px; border-bottom:1px solid #f1f5f9; font-size:13px; }
+    .sic-footer {
+      background:linear-gradient(135deg, #1a3e20 0%, #1b5e20 40%, #2e7d32 100%);
+      border-radius:16px; padding:40px; margin:24px 0 48px;
+      color:white; text-align:center;
+    }
+    @media (max-width:768px) {
+      .sic-score-hero { grid-template-columns:1fr; text-align:center; }
+      .sic-canvas-grid { grid-template-columns:1fr; }
+      .sic-kpi-grid { grid-template-columns:repeat(2, 1fr); }
+    }
+    @media print {
+      .sic-score-hero { box-shadow:none; border:1px solid #e5e7eb; }
+      .sic-card { page-break-inside:avoid; }
+    }
+  </style>
+</head>
+<body>
+  <!-- ═══ HEADER ═══ -->
+  <div class="sic-header">
+    <div class="sic-container" style="position:relative;z-index:1;">
+      <div style="width:56px;height:56px;background:rgba(255,255,255,0.15);border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:24px;margin-bottom:16px;">🌍</div>
+      <div style="font-size:36px;font-weight:800;letter-spacing:-0.5px;margin-bottom:4px;">SOCIAL IMPACT CANVAS</div>
+      <div style="font-size:18px;font-weight:600;opacity:0.95;">Projet de ${companyData.companyName}</div>
+      <div style="font-size:14px;opacity:0.75;margin-top:4px;">${locationStr}</div>
+      <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
+        <span style="padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;background:rgba(255,255,255,0.15);">${sectorStr}</span>
+        <span style="padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;background:rgba(255,255,255,0.15);">Analyse — ${dateStr}</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 14px;border-radius:20px;font-size:11px;font-weight:600;background:rgba(99,102,241,0.25);border:1px solid rgba(99,102,241,0.4);">🤖 Analyse propulsée par Claude AI</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="sic-container">
+    <!-- ═══ SCORE HERO ═══ -->
+    <div class="sic-score-hero">
+      <div>
+        <div class="sic-score-circle" style="background:${scoreColor};">
+          <span style="font-size:42px;font-weight:800;line-height:1;">${scoreGlobal}%</span>
+          <span style="font-size:13px;opacity:0.85;">Score SIC Global</span>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:13px;color:#999;margin-bottom:4px;">Maturité de l'impact social</div>
+        <div style="font-size:16px;font-weight:600;color:${scoreColor};margin-bottom:8px;">
+          ${scoreGlobal >= 80 ? '🏆 Impact Exemplaire' : scoreGlobal >= 60 ? '📈 Impact Prometteur' : scoreGlobal >= 40 ? '🔨 Impact en Construction' : '🌱 Impact Émergent'}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px;font-size:13px;">
+          <span>${pillars.length} piliers analysés</span>
+          <span>${oddAlignment.length} ODD ciblés</span>
+          <span>${fmtNum(impactMatrix.beneficiaires_directs)} bénéficiaires directs</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ SYNTHÈSE ═══ -->
+    <div class="sic-card">
+      <div class="sic-section-title">🧠 Synthèse Globale — Diagnostic Expert</div>
+      <div class="sic-synthese">${syntheseText}</div>
+    </div>
+
+    <!-- ═══ KPI ═══ -->
+    <div class="sic-card">
+      <div class="sic-section-title">📊 Chiffres Clés d'Impact</div>
+      <div class="sic-kpi-grid">
+        <div class="sic-kpi-card">
+          <div class="sic-kpi-card__label">Bénéficiaires directs</div>
+          <div class="sic-kpi-card__value" style="color:${COLORS.primaryLight};">${fmtNum(impactMatrix.beneficiaires_directs)}</div>
+        </div>
+        <div class="sic-kpi-card">
+          <div class="sic-kpi-card__label">Bénéficiaires indirects</div>
+          <div class="sic-kpi-card__value" style="color:${COLORS.accent};">${fmtNum(impactMatrix.beneficiaires_indirects)}</div>
+        </div>
+        <div class="sic-kpi-card">
+          <div class="sic-kpi-card__label">Régions couvertes</div>
+          <div class="sic-kpi-card__value" style="color:${COLORS.orange};">${fmtNum(impactMatrix.regions_couvertes)}</div>
+        </div>
+        <div class="sic-kpi-card">
+          <div class="sic-kpi-card__label">Ménages cibles</div>
+          <div class="sic-kpi-card__value" style="color:${COLORS.primary};">${fmtNum(impactMatrix.menages_cibles)}</div>
+        </div>
+        <div class="sic-kpi-card">
+          <div class="sic-kpi-card__label">ODD ciblés</div>
+          <div class="sic-kpi-card__value" style="color:${COLORS.primaryLight};">${oddAlignment.length}</div>
+        </div>
+        <div class="sic-kpi-card">
+          <div class="sic-kpi-card__label">Impact climatique</div>
+          <div class="sic-kpi-card__value" style="color:${COLORS.primary};font-size:16px;">${impactMatrix.impact_climatique_potentiel || '—'}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ PILIERS ═══ -->
+    <div class="sic-card">
+      <div class="sic-section-title">📋 Diagnostic par Pilier</div>
+      ${pillarBarsHtml}
+    </div>
+
+    <!-- ═══ CANVAS IMPACT ═══ -->
+    <div class="sic-card">
+      <div class="sic-section-title">🗂️ Canvas d'Impact Social</div>
+      <div class="sic-canvas-grid">
+        ${pillars.map(p => {
+          const bullets = p.analysis.split(/(?<=[.!?])\s+/).filter(s => s.length > 15).slice(0, 4)
+          const bg = p.score >= 70 ? COLORS.primaryLight : p.score >= 50 ? COLORS.accent : COLORS.orange
+          return `<div class="sic-canvas-cell">
+            <div class="sic-canvas-cell__header" style="background:${bg}">${p.name.toUpperCase()}</div>
+            ${bullets.map(b => `<div class="sic-canvas-cell__bullet">${b}</div>`).join('')}
+          </div>`
+        }).join('')}
+        <div class="sic-canvas-cell">
+          <div class="sic-canvas-cell__header" style="background:${COLORS.primary}">🌍 ODD CIBLÉS</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
+            ${oddBadgesHtml}
+          </div>
+          ${oddAlignment.slice(0, 4).map(o => {
+            const num = extractOddNum(o.odd)
+            return `<div class="sic-canvas-cell__bullet">${oddLabels[num] || o.odd} (${o.relevance}%)</div>`
+          }).join('')}
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ ODD DÉTAIL ═══ -->
+    ${oddAlignment.length > 0 ? `
+    <div class="sic-card">
+      <div class="sic-section-title">🌍 Contribution aux ODD — Détail</div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:80px;">ODD</th>
+            <th>Intitulé</th>
+            <th style="width:200px;">Pertinence</th>
+          </tr>
+        </thead>
+        <tbody>${oddTableHtml}</tbody>
+      </table>
+    </div>` : ''}
+
+    <!-- ═══ INDICATEURS MANQUANTS ═══ -->
+    ${missingIndicators.length > 0 ? `
+    <div class="sic-card">
+      <div class="sic-section-title">⚠️ Indicateurs Manquants</div>
+      <div style="display:grid;gap:8px;">
+        ${missingIndicators.map((ind: string) => 
+          `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:#fff3e0;border-left:3px solid ${COLORS.orange};">
+            <span style="color:${COLORS.orange};font-weight:700;">⚠</span>
+            <span style="font-size:13px;">${ind}</span>
+          </div>`
+        ).join('')}
+      </div>
+    </div>` : ''}
+
+    <!-- ═══ FORCES & VIGILANCES ═══ -->
+    <div class="sic-card">
+      <div class="sic-section-title">💪 Forces & Points de Vigilance</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+        <div>
+          <h3 style="font-size:15px;font-weight:700;color:${COLORS.primaryLight};margin-bottom:12px;">✅ Forces (${forces.length})</h3>
+          ${forces.map(f => `<div style="padding:10px 14px;border-radius:10px;background:${COLORS.primaryBg};border-left:3px solid ${COLORS.primaryLight};margin-bottom:8px;">
+            <div style="font-size:14px;font-weight:600;color:${COLORS.primary};margin-bottom:4px;">${f.name} (${f.score}%)</div>
+            <div style="font-size:12px;color:#14532d;line-height:1.5;">${f.analysis.slice(0, 200)}</div>
+          </div>`).join('')}
+        </div>
+        <div>
+          <h3 style="font-size:15px;font-weight:700;color:${COLORS.orange};margin-bottom:12px;">⚠ Vigilances (${vigilances.length})</h3>
+          ${vigilances.map(v => `<div style="padding:10px 14px;border-radius:10px;background:#fff8e1;border-left:3px solid ${COLORS.orange};margin-bottom:8px;">
+            <div style="font-size:14px;font-weight:600;color:${COLORS.orange};margin-bottom:4px;">${v.name} (${v.score}%)</div>
+            <div style="font-size:12px;color:#7c2d12;line-height:1.5;">${v.analysis.slice(0, 200)}</div>
+            ${v.recommendations?.[0] ? `<div style="font-size:12px;font-weight:600;color:${COLORS.accent};margin-top:4px;">→ ${v.recommendations[0]}</div>` : ''}
+          </div>`).join('')}
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ RECOMMANDATIONS ═══ -->
+    ${allRecos.length > 0 ? `
+    <div class="sic-card">
+      <div class="sic-section-title">🎯 Recommandations</div>
+      ${recoHtml}
+    </div>` : ''}
+
+    <!-- ═══ CERTIFICATIONS & BAILLEURS ═══ -->
+    ${impactMatrix.potentiel_certification || impactMatrix.alignement_bailleurs ? `
+    <div class="sic-card">
+      <div class="sic-section-title">🏅 Potentiel de Certification & Financements</div>
+      ${impactMatrix.potentiel_certification ? `<div style="padding:14px 18px;border-radius:10px;background:${COLORS.primaryBg};border-left:3px solid ${COLORS.primaryLight};margin-bottom:12px;">
+        <div style="font-size:14px;font-weight:600;color:${COLORS.primary};">🏅 Certification</div>
+        <div style="font-size:13px;margin-top:4px;">${impactMatrix.potentiel_certification}</div>
+      </div>` : ''}
+      ${impactMatrix.alignement_bailleurs ? `<div style="padding:14px 18px;border-radius:10px;background:${COLORS.accentLight};border-left:3px solid ${COLORS.accent};margin-bottom:12px;">
+        <div style="font-size:14px;font-weight:600;color:${COLORS.accent};">💰 Alignement Bailleurs</div>
+        <div style="font-size:13px;margin-top:4px;">${impactMatrix.alignement_bailleurs}</div>
+      </div>` : ''}
+    </div>` : ''}
+
+    <!-- ═══ FOOTER ═══ -->
+    <div class="sic-footer">
+      <div style="font-size:22px;font-weight:800;margin-bottom:4px;">SOCIAL IMPACT CANVAS</div>
+      <div style="font-size:16px;font-weight:500;opacity:0.9;">${companyData.companyName}</div>
+      <div style="font-size:14px;opacity:0.75;margin-top:4px;">Score : ${scoreGlobal}% · ${oddAlignment.length} ODD · ${sectorStr}</div>
+      <div style="font-size:12px;opacity:0.6;margin-top:8px;">${companyData.entrepreneurName} · ${dateStr}</div>
+      <div style="font-style:italic;font-size:13px;opacity:0.7;margin-top:16px;">Social Impact Canvas — Analyse propulsée par Claude AI — e-SONO</div>
+    </div>
+  </div>
+</body>
+</html>`
+}

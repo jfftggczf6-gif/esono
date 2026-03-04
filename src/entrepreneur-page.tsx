@@ -979,8 +979,31 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
         const b64End = text.indexOf('\n\n---')
         rawUploads[u.category] = b64End > 7 ? text.substring(7, b64End) : ''
       } else if (text.startsWith('base64:')) {
-        documentTexts[u.category] = `[Fichier binaire: ${u.filename}]`
-        rawUploads[u.category] = text.substring(7)
+        // Try to extract text from binary files (DOCX, PDF)
+        const b64Data = text.substring(7)
+        rawUploads[u.category] = b64Data
+        const fname = (u.filename || '').toLowerCase()
+        if (fname.endsWith('.docx')) {
+          try {
+            const binaryStr = atob(b64Data)
+            const bytes = new Uint8Array(binaryStr.length)
+            for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
+            const docText = parseDocx(bytes)
+            if (docText && docText.length > 50) {
+              documentTexts[u.category] = docText.slice(0, 15000)
+              markdownUploads[u.category] = docText.slice(0, 15000)
+              console.log(`[Generate] DOCX text extracted from base64 for ${u.category}: ${docText.length}ch`)
+            } else {
+              documentTexts[u.category] = `[Fichier binaire: ${u.filename}]`
+              console.warn(`[Generate] DOCX text too short for ${u.category}: ${docText?.length || 0}ch`)
+            }
+          } catch (docxErr: any) {
+            documentTexts[u.category] = `[Fichier binaire: ${u.filename}]`
+            console.warn(`[Generate] DOCX parsing failed for ${u.category}:`, docxErr.message)
+          }
+        } else {
+          documentTexts[u.category] = `[Fichier binaire: ${u.filename}]`
+        }
       } else {
         documentTexts[u.category] = text.slice(0, 12000)
       }
@@ -1772,7 +1795,26 @@ entrepreneurRoutes.post('/api/chat/message', async (c) => {
           } else if (extractedIdx !== -1) {
             documentTexts[u.category] = text.substring(extractedIdx + extractedMarker.length).slice(0, 6000)
           } else if (text.startsWith('base64:')) {
-            documentTexts[u.category] = `[Fichier binaire: ${u.filename}]`
+            // Try DOCX text extraction from base64
+            const b64Data = text.substring(7)
+            const fname = (u.filename || '').toLowerCase()
+            if (fname.endsWith('.docx')) {
+              try {
+                const binaryStr = atob(b64Data)
+                const bytes = new Uint8Array(binaryStr.length)
+                for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
+                const docText = parseDocx(bytes)
+                if (docText && docText.length > 50) {
+                  documentTexts[u.category] = docText.slice(0, 6000)
+                } else {
+                  documentTexts[u.category] = `[Fichier binaire: ${u.filename}]`
+                }
+              } catch {
+                documentTexts[u.category] = `[Fichier binaire: ${u.filename}]`
+              }
+            } else {
+              documentTexts[u.category] = `[Fichier binaire: ${u.filename}]`
+            }
           } else {
             documentTexts[u.category] = text.slice(0, 6000)
           }

@@ -27,8 +27,8 @@ import {
 import { getScoreLabel, getSectionName } from './ai-feedback'
 import { analyzeWithClaude, type AnalysisResult, type AnswerInput } from './services/ai-analysis'
 import { analyzeSIC, generateSicDiagnosticHtml, getSicScoreLabel, QUESTION_SECTION_MAP, SIC_SECTION_LABELS, type SicAnalysisResult } from './sic-engine'
-import { generateFullSicDeliverable, renderSicDeliverableFromAnalyst, type SicDeliverableData, type SicAnalystDeliverableInput } from './sic-deliverable-engine'
-import { generateFullBmcDeliverable, generateBmcDiagnosticHtml, generateFullBmcDeliverableFallback, type BmcDeliverableData } from './bmc-deliverable-engine'
+import { generateFullSicDeliverable, renderSicDeliverableFromAnalyst, regenerateSicHtmlFromDbAnalysis, type SicDeliverableData, type SicAnalystDeliverableInput } from './sic-deliverable-engine'
+import { generateFullBmcDeliverable, generateBmcDiagnosticHtml, generateFullBmcDeliverableFallback, regenerateBmcHtmlFromDbAnalysis, type BmcDeliverableData } from './bmc-deliverable-engine'
 import {
   analyzeInputs, generateInputsDiagnosticHtml, getInputsReadinessLabel,
   INPUT_TAB_ORDER, INPUT_TAB_LABELS, TAB_COACHING, TAB_FIELDS, scoreTab,
@@ -5197,6 +5197,195 @@ app.post('/api/sic/deliverable/refresh', async (c) => {
   } catch (error) {
     console.error('SIC refresh error:', error)
     return c.json({ error: 'Erreur serveur' }, 500)
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════
+// REGENERATE DELIVERABLES — Rebuild BMC/SIC HTML from existing analysis JSON
+// ═══════════════════════════════════════════════════════════════
+
+app.post('/api/regenerate-deliverables', async (c) => {
+  try {
+    const userId = (c.get as any)('userId') || c.req.query('userId')
+    if (!userId) return c.json({ error: 'userId requis' }, 400)
+    
+    const db = (c.env as any).DB
+    const results: Record<string, { success: boolean, size?: number, error?: string }> = {}
+    
+    // Get user info
+    const user = await db.prepare('SELECT name, email FROM users WHERE id = ?').bind(userId).first() as any
+    
+    // Get company data from framework_pme_data
+    const pmeRow = await db.prepare(`
+      SELECT content FROM entrepreneur_deliverables 
+      WHERE user_id = ? AND type = 'framework_pme_data' 
+      ORDER BY created_at DESC LIMIT 1
+    `).bind(userId).first() as any
+    
+    let companyData = {
+      companyName: user?.name || 'Entreprise',
+      entrepreneurName: user?.name || 'Entrepreneur',
+      sector: '',
+      location: '',
+      country: ''
+    }
+    
+    if (pmeRow?.content) {
+      try {
+        const pme = JSON.parse(pmeRow.content)
+        companyData.companyName = pme.companyName || pme.company_name || companyData.companyName
+        companyData.sector = pme.sector || ''
+        companyData.location = pme.location || pme.headquarters || ''
+        companyData.country = pme.country || ''
+      } catch {}
+    }
+    
+    console.log(`[Regenerate] Starting for user ${userId}: ${companyData.companyName}`)
+    
+    // ─── BMC HTML Regeneration ───
+    try {
+      const bmcAnalysisRow = await db.prepare(`
+        SELECT content FROM entrepreneur_deliverables 
+        WHERE user_id = ? AND type = 'bmc_analysis' 
+        ORDER BY created_at DESC LIMIT 1
+      `).bind(userId).first() as any
+      
+      if (bmcAnalysisRow?.content) {
+        const bmcAnalysis = JSON.parse(bmcAnalysisRow.content)
+        
+        if (bmcAnalysis.blocks && Array.isArray(bmcAnalysis.blocks)) {
+          const newBmcHtml = regenerateBmcHtmlFromDbAnalysis(bmcAnalysis, companyData)
+          
+          // Delete old bmc_html and insert new
+          await db.prepare('DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = ?')
+            .bind(userId, 'bmc_html').run()
+          await db.prepare(`
+            INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, created_at)
+            VALUES (?, ?, 'bmc_html', ?, ?, datetime('now'))
+          `).bind(
+            crypto.randomUUID(), userId, newBmcHtml, bmcAnalysis.score || 0
+          ).run()
+          
+          results.bmc_html = { success: true, size: newBmcHtml.length }
+          console.log(`[Regenerate] BMC HTML: ${newBmcHtml.length} bytes`)
+        } else {
+          results.bmc_html = { success: false, error: 'bmc_analysis has no blocks array' }
+        }
+      } else {
+        results.bmc_html = { success: false, error: 'No bmc_analysis found' }
+      }
+    } catch (e: any) {
+      results.bmc_html = { success: false, error: e.message }
+      console.error('[Regenerate] BMC error:', e.message)
+    }
+    
+    // ─── SIC HTML Regeneration ───
+    try {
+      const sicAnalysisRow = await db.prepare(`
+        SELECT content FROM entrepreneur_deliverables 
+        WHERE user_id = ? AND type = 'sic_analysis' 
+        ORDER BY created_at DESC LIMIT 1
+      `).bind(userId).first() as any
+      
+      if (sicAnalysisRow?.content) {
+        const sicAnalysis = JSON.parse(sicAnalysisRow.content)
+        
+        if (sicAnalysis.pillars && Array.isArray(sicAnalysis.pillars)) {
+          const newSicHtml = regenerateSicHtmlFromDbAnalysis(sicAnalysis, companyData)
+          
+          // Delete old sic_html and insert new
+          await db.prepare('DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = ?')
+            .bind(userId, 'sic_html').run()
+          await db.prepare(`
+            INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, created_at)
+            VALUES (?, ?, 'sic_html', ?, ?, datetime('now'))
+          `).bind(
+            crypto.randomUUID(), userId, newSicHtml, sicAnalysis.score || 0
+          ).run()
+          
+          results.sic_html = { success: true, size: newSicHtml.length }
+          console.log(`[Regenerate] SIC HTML: ${newSicHtml.length} bytes`)
+        } else {
+          results.sic_html = { success: false, error: 'sic_analysis has no pillars array' }
+        }
+      } else {
+        results.sic_html = { success: false, error: 'No sic_analysis found' }
+      }
+    } catch (e: any) {
+      results.sic_html = { success: false, error: e.message }
+      console.error('[Regenerate] SIC error:', e.message)
+    }
+    
+    // ─── Business Plan sync: copy latest from business_plan_analyses to entrepreneur_deliverables ───
+    try {
+      const bpRow = await db.prepare(`
+        SELECT id, business_plan_json, version FROM business_plan_analyses 
+        WHERE user_id = ? AND status = 'completed' 
+        ORDER BY created_at DESC LIMIT 1
+      `).bind(userId).first() as any
+      
+      if (bpRow?.business_plan_json) {
+        const bpJson = JSON.parse(bpRow.business_plan_json)
+        // Build simplified sections for entrepreneur_deliverables preview
+        const bpSections = bpJson.sections || []
+        let simplifiedSections: any[] = []
+        
+        if (bpSections.length > 0) {
+          simplifiedSections = bpSections
+        } else {
+          // Build sections from rich format
+          const sectionMap: Array<{key: string, title: string}> = [
+            { key: 'resume_executif', title: 'Résumé Exécutif' },
+            { key: 'presentation_entreprise', title: 'Présentation de l\'Entreprise' },
+            { key: 'analyse_marche', title: 'Analyse de Marché' },
+            { key: 'model_economique', title: 'Modèle Économique' },
+            { key: 'offre_produit_service', title: 'Offre Produit/Service' },
+            { key: 'strategie_marketing', title: 'Stratégie Marketing' },
+            { key: 'plan_operationnel', title: 'Plan Opérationnel' },
+            { key: 'impact_social', title: 'Impact Social' },
+            { key: 'plan_financier', title: 'Plan Financier' },
+            { key: 'analyse_swot', title: 'Analyse SWOT & Risques' },
+            { key: 'besoins_financement', title: 'Besoins de Financement' },
+          ]
+          for (const { key, title } of sectionMap) {
+            const section = bpJson[key]
+            if (section) {
+              const content = typeof section === 'string' ? section :
+                section.synthese || section.description || section.description_generale || 
+                JSON.stringify(section).slice(0, 1000)
+              simplifiedSections.push({ title, content })
+            }
+          }
+        }
+        
+        const bpContent = JSON.stringify({
+          score: bpJson.scores?.bmc || bpJson.score || 0,
+          sections: simplifiedSections,
+          metadata: bpJson.metadata
+        })
+        
+        await db.prepare('DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = ?')
+          .bind(userId, 'business_plan').run()
+        await db.prepare(`
+          INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, created_at)
+          VALUES (?, ?, 'business_plan', ?, ?, ?, datetime('now'))
+        `).bind(crypto.randomUUID(), userId, bpContent, bpJson.scores?.bmc || 0, bpRow.version || 1).run()
+        
+        results.business_plan = { success: true, size: bpContent.length, sections: simplifiedSections.length }
+        console.log(`[Regenerate] BP synced: ${bpContent.length} bytes, ${simplifiedSections.length} sections`)
+      } else {
+        results.business_plan = { success: false, error: 'No business_plan_analyses found' }
+      }
+    } catch (e: any) {
+      results.business_plan = { success: false, error: e.message }
+      console.error('[Regenerate] BP sync error:', e.message)
+    }
+    
+    return c.json({ success: true, results, companyData })
+    
+  } catch (e: any) {
+    console.error('[Regenerate] Fatal error:', e)
+    return c.json({ error: e.message }, 500)
   }
 })
 

@@ -1252,3 +1252,225 @@ export async function generateBmcDiagnosticHtml(data: BmcDeliverableData): Promi
 </body>
 </html>`
 }
+
+// ═══════════════════════════════════════════════════════════════
+// REGENERATION — Convert DB analysis JSON to full BmcAnalysis + HTML
+// Used to regenerate bmc_html from existing bmc_analysis without re-calling Claude
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Maps a DB block name (e.g. "Segments Clients") to the BMC_SECTIONS key system
+ */
+function findSectionByName(name: string): { qId: number, key: string, label: string, icon: string } | null {
+  const normalized = name.toLowerCase().trim()
+  for (const [qIdStr, sec] of Object.entries(BMC_SECTIONS)) {
+    if (sec.label.toLowerCase() === normalized || sec.key.replace(/_/g, ' ') === normalized) {
+      return { qId: Number(qIdStr), ...sec }
+    }
+  }
+  // Fuzzy match
+  const fuzzyMap: Record<string, number> = {
+    'segment': 1, 'client': 1, 'cible': 1,
+    'proposition': 2, 'valeur': 2,
+    'canaux': 3, 'canal': 3, 'distribution': 3,
+    'relation': 4,
+    'flux': 5, 'revenu': 5, 'revenue': 5,
+    'ressource': 6,
+    'activit': 7,
+    'partenaire': 8,
+    'coût': 9, 'cout': 9, 'cost': 9, 'structure': 9,
+  }
+  for (const [keyword, qId] of Object.entries(fuzzyMap)) {
+    if (normalized.includes(keyword)) {
+      const sec = BMC_SECTIONS[qId]
+      return { qId, ...sec }
+    }
+  }
+  return null
+}
+
+/**
+ * Extract clean bullet points from an analysis text paragraph
+ */
+function analysisToBullets(analysis: string): string[] {
+  if (!analysis || analysis.trim().length < 10) return []
+  
+  // Split on sentence boundaries
+  const sentences = analysis
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 15 && s.length < 200)
+  
+  // Take the most informative sentences (containing data, specifics)
+  const scored = sentences.map(s => {
+    let score = 0
+    if (/\d/.test(s)) score += 3  // Has numbers
+    if (/XOF|FCFA|CFA|%|€/.test(s)) score += 2  // Has financial data
+    if (/région|zone|Sénégal|Kaolack|Thiès|Tambacounda/i.test(s)) score += 2  // Has location
+    if (s.length > 40) score += 1
+    if (/PAYG|solaire|kit|mobile money|Wave|Orange/i.test(s)) score += 1
+    return { text: s, score }
+  })
+  
+  scored.sort((a, b) => b.score - a.score)
+  return scored.slice(0, 5).map(s => s.text)
+}
+
+/**
+ * Convert the simplified DB analysis format to full BmcAnalysis + render HTML
+ * 
+ * @param dbAnalysis - The JSON stored in DB: {score, blocks[{name, score, analysis, recommendations}], coherence_score, warnings}
+ * @param companyData - Company metadata for the HTML header
+ * @returns Full HTML string
+ */
+export function regenerateBmcHtmlFromDbAnalysis(
+  dbAnalysis: {
+    score: number
+    blocks: Array<{ name: string, score: number, analysis: string, recommendations: string[] }>
+    coherence_score?: number
+    warnings?: string[]
+  },
+  companyData: {
+    companyName: string
+    entrepreneurName: string
+    sector: string
+    location: string
+    country: string
+  }
+): string {
+  const blocks = dbAnalysis.blocks || []
+  
+  // Convert blocks to BmcBlocScore with canvasSummary from analysis text
+  const blocScores: BmcBlocScore[] = blocks.map(block => {
+    const section = findSectionByName(block.name)
+    return {
+      key: section?.key || block.name.toLowerCase().replace(/\s+/g, '_'),
+      label: section?.label || block.name,
+      score: Math.max(0, Math.min(100, Math.round(block.score))),
+      comment: block.analysis || '',
+      canvasSummary: analysisToBullets(block.analysis)
+    }
+  })
+  
+  // Ensure all 9 BMC sections exist
+  for (const [qIdStr, sec] of Object.entries(BMC_SECTIONS)) {
+    if (!blocScores.find(b => b.key === sec.key)) {
+      blocScores.push({
+        key: sec.key,
+        label: sec.label,
+        score: 0,
+        comment: 'Bloc non analysé',
+        canvasSummary: []
+      })
+    }
+  }
+  
+  // Generate forces from high-scoring blocks
+  const forces: BmcForce[] = blocks
+    .filter(b => b.score >= 70)
+    .slice(0, 4)
+    .map(b => {
+      const firstSentence = b.analysis.split(/[.!?]/)[0] || b.name
+      return {
+        title: b.name + ' — Score élevé (' + b.score + '%)',
+        description: b.analysis.slice(0, 300)
+      }
+    })
+  
+  // Generate vigilances from low-scoring blocks
+  const vigilances: BmcVigilance[] = blocks
+    .filter(b => b.score < 60)
+    .slice(0, 4)
+    .map(b => ({
+      title: b.name + ' — À améliorer (' + b.score + '%)',
+      description: b.analysis.slice(0, 200),
+      action: (b.recommendations && b.recommendations[0]) || 'Compléter la documentation de ce bloc'
+    }))
+  
+  // Generate SWOT from blocks
+  const swot: SwotData = {
+    forces: blocks.filter(b => b.score >= 70).map(b => b.name + ' (' + b.score + '%) : ' + (b.analysis.split('.')[0] || '')),
+    faiblesses: blocks.filter(b => b.score < 50).map(b => b.name + ' (' + b.score + '%) : documentation insuffisante'),
+    opportunites: blocks
+      .flatMap(b => (b.recommendations || []).slice(0, 1))
+      .filter(Boolean)
+      .slice(0, 4),
+    menaces: (dbAnalysis.warnings || []).slice(0, 4)
+  }
+  
+  // Generate recommendations from block recommendations
+  const allRecos = blocks.flatMap(b => (b.recommendations || []))
+  const recommendations: BmcRecommendation[] = [
+    {
+      horizon: 'court_terme',
+      horizonLabel: '📌 Court terme (0-3 mois)',
+      items: allRecos.slice(0, 4)
+    },
+    {
+      horizon: 'moyen_terme',
+      horizonLabel: '🎯 Moyen terme (3-12 mois)',
+      items: allRecos.slice(4, 8)
+    },
+    {
+      horizon: 'long_terme',
+      horizonLabel: '🚀 Long terme (12+ mois)',
+      items: allRecos.slice(8, 12)
+    }
+  ].filter(r => r.items.length > 0)
+  
+  // Maturity checks
+  const avgScore = dbAnalysis.score
+  const maturityChecks: { label: string, status: 'ok' | 'warning' | 'action' }[] = [
+    { label: 'Business Model Canvas complet', status: blocks.filter(b => b.score > 0).length >= 7 ? 'ok' : 'warning' },
+    { label: 'Scoring par bloc réalisé', status: 'ok' },
+    { label: 'Analyse de cohérence inter-blocs', status: dbAnalysis.coherence_score && dbAnalysis.coherence_score > 60 ? 'ok' : 'warning' },
+    { label: 'Recommandations d\'amélioration', status: allRecos.length >= 5 ? 'ok' : 'warning' },
+    { label: 'Forces et vigilances identifiées', status: forces.length > 0 && vigilances.length > 0 ? 'ok' : 'warning' },
+    { label: 'Score global ≥ 70%', status: avgScore >= 70 ? 'ok' : avgScore >= 50 ? 'warning' : 'action' },
+  ]
+  
+  // Build syntheseGlobale
+  const topBlocks = blocks.filter(b => b.score >= 70).map(b => b.name).join(', ')
+  const weakBlocks = blocks.filter(b => b.score < 50).map(b => b.name).join(', ')
+  const syntheseGlobale = `Score global BMC : ${avgScore}%. Points forts : ${topBlocks || 'aucun bloc ≥ 70%'}. ` +
+    (weakBlocks ? `Points d'amélioration : ${weakBlocks}. ` : '') +
+    `${blocks.length} blocs analysés sur 9 du canvas.`
+  
+  // Extract financial data from blocks
+  const revenueBlock = blocks.find(b => b.name.toLowerCase().includes('revenu') || b.name.toLowerCase().includes('flux'))
+  const costBlock = blocks.find(b => b.name.toLowerCase().includes('coût') || b.name.toLowerCase().includes('cost'))
+  const caMatch = revenueBlock?.analysis.match(/(\d[\d\s,.]*)\s*(XOF|FCFA|CFA)/i)
+  const coutMatch = costBlock?.analysis.match(/(\d[\d\s,.]*)\s*(XOF|FCFA|CFA)/i)
+  const margeMatch = revenueBlock?.analysis.match(/marge.*?(\d+)\s*%/i) || revenueBlock?.analysis.match(/(\d+)\s*%.*marge/i)
+  
+  const analysis: BmcAnalysis = {
+    globalScore: avgScore,
+    blocScores,
+    forces,
+    vigilances,
+    swot,
+    recommendations,
+    maturityChecks,
+    propositionDeValeur: blocks.find(b => b.name.toLowerCase().includes('proposition'))?.analysis?.slice(0, 200) || '',
+    caMensuel: caMatch ? caMatch[1].trim() + ' ' + caMatch[2] : '—',
+    margeBrute: margeMatch ? margeMatch[1] + '%' : '—',
+    coutTotal: coutMatch ? coutMatch[1].trim() + ' ' + coutMatch[2] : '—',
+    aiSource: 'claude',
+    syntheseGlobale
+  }
+  
+  // Build a minimal BmcDeliverableData with empty answers (not needed since canvasSummary is populated)
+  const data: BmcDeliverableData = {
+    companyName: companyData.companyName,
+    entrepreneurName: companyData.entrepreneurName,
+    sector: companyData.sector,
+    location: companyData.location,
+    country: companyData.country,
+    brandName: '',
+    tagline: '',
+    analysisDate: new Date().toISOString(),
+    answers: new Map()
+  }
+  
+  return renderBmcDeliverableHtml(analysis, data)
+}
