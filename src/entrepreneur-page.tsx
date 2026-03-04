@@ -1934,79 +1934,56 @@ entrepreneurRoutes.get('/api/download/framework-excel', async (c) => {
       }
     }
 
-    // Priority 2: Build from uploaded inputs
+    // Priority 2: Build from uploaded inputs (NO AI calls — instant deterministic parsing only)
     if (!pmeData) {
       const inputsUpload = await c.env.DB.prepare(
         "SELECT filename, extracted_text FROM uploads WHERE user_id = ? AND category = 'inputs' ORDER BY uploaded_at DESC LIMIT 1"
       ).bind(payload.userId).first() as any
       
-      if (inputsUpload) {
-        // Priority 2: Parse from extracted text (works for ANY company)
-        // CORRECTION 1 CONFORME: Use AI extraction with Markdown tables when possible
-        if (inputsUpload.extracted_text) {
-          const fullText = inputsUpload.extracted_text || ''
-          const mdMarker = '---MARKDOWN_TABLES---'
-          const extractedMarker = '---EXTRACTED_TEXT---'
-          const mdIdx = fullText.indexOf(mdMarker)
-          const extractedIdx = fullText.indexOf(extractedMarker)
-          const apiKey = c.env.ANTHROPIC_API_KEY || ''
-          
-          // Extract base64, markdown, and legacy text sections
-          let b64Part = ''
-          let mdPart = ''
-          let legacyPart = ''
-          
-          if (mdIdx !== -1 && extractedIdx !== -1) {
-            // NEW 3-section format
-            const b64End = fullText.indexOf('\n\n---')
-            b64Part = b64End > 7 ? fullText.substring(7, b64End) : ''
-            mdPart = fullText.substring(mdIdx + mdMarker.length, extractedIdx).trim()
-            legacyPart = fullText.substring(extractedIdx + extractedMarker.length)
-          } else if (extractedIdx !== -1) {
-            // OLD 2-section format
-            const b64End = fullText.indexOf('\n\n---')
-            b64Part = b64End > 7 ? fullText.substring(7, b64End) : ''
-            legacyPart = fullText.substring(extractedIdx + extractedMarker.length)
-          } else if (fullText.startsWith('base64:')) {
-            b64Part = fullText.substring(7).split('\n')[0]
-          } else if (fullText.length > 200 && /chiffre|ca\s*total|fcfa|revenus/i.test(fullText)) {
-            legacyPart = fullText
+      if (inputsUpload?.extracted_text) {
+        const fullText = inputsUpload.extracted_text || ''
+        const extractedMarker = '---EXTRACTED_TEXT---'
+        const extractedIdx = fullText.indexOf(extractedMarker)
+        
+        // Extract base64 and legacy text sections
+        let b64Part = ''
+        let legacyPart = ''
+        
+        if (extractedIdx !== -1) {
+          const b64End = fullText.indexOf('\n\n---')
+          b64Part = b64End > 7 ? fullText.substring(7, b64End) : ''
+          legacyPart = fullText.substring(extractedIdx + extractedMarker.length)
+        } else if (fullText.startsWith('base64:')) {
+          b64Part = fullText.substring(7).split('\n')[0]
+        } else if (fullText.length > 200 && /chiffre|ca\s*total|fcfa|revenus/i.test(fullText)) {
+          legacyPart = fullText
+        }
+        
+        // Try structured parser from base64 first (most reliable)
+        if (!pmeData && b64Part.length > 100) {
+          const structuredResult = tryParseInputsEntrepreneur(b64Part)
+          if (structuredResult) {
+            pmeData = structuredResult
+            console.log(`[Download Excel] Priority 2: Structured parser from stored b64`)
           }
-          
-          // CORRECTION 1: Try AI extraction with best available text
-          const bestText = mdPart || legacyPart
-          if (bestText.length > 100 && apiKey.length >= 20) {
-            try {
-              console.log(`[Download Excel] CORRECTION 1: AI extraction (markdown=${!!mdPart}, base64=${!!b64Part})`)
-              const enriched = await buildPmeInputWithAI(
-                bestText, apiKey, companyName, userCountry,
-                (text: string, name: string, country: string) => buildPmeInputDataFromText(legacyPart || text, name, country),
-                b64Part || undefined
-              )
-              pmeData = enriched.data
-              console.log(`[Download Excel] AI extraction: source=${enriched.quality.source}, confidence=${enriched.quality.confiance}`)
-            } catch (aiErr: any) {
-              console.warn('[Download Excel] AI extraction failed, using regex:', aiErr.message)
-            }
-          }
-          
-          // Fallback to regex if AI failed
-          if (!pmeData && legacyPart.length > 100) {
-            pmeData = buildPmeInputDataFromText(legacyPart, companyName, userCountry)
-            console.log('[Download Excel] Regex fallback from legacy text')
-          }
-          
-          // Last resort: try to parse binary XLSX
-          if (!pmeData && b64Part.length > 100) {
-            try {
-              const xlsxBytes = b64ToUint8(b64Part)
-              const sheets = parseXlsx(xlsxBytes)
-              const textContent = xlsxToText(sheets)
-              pmeData = buildPmeInputDataFromText(textContent, companyName, userCountry)
-              console.log('[Download Excel] Built PmeInputData from binary XLSX parse')
-            } catch (e: any) {
-              console.error('[Download Excel] XLSX parse error:', e.message)
-            }
+        }
+        
+        // Fallback to regex text extraction
+        if (!pmeData && legacyPart.length > 100) {
+          pmeData = buildPmeInputDataFromText(legacyPart, companyName, userCountry)
+          console.log('[Download Excel] Priority 2: Regex from legacy text')
+        }
+        
+        // Last resort: parse binary XLSX
+        if (!pmeData && b64Part.length > 100) {
+          try {
+            const xlsxBytes = b64ToUint8(b64Part)
+            const sheets = parseXlsx(xlsxBytes)
+            const textContent = xlsxToText(sheets)
+            pmeData = buildPmeInputDataFromText(textContent, companyName, userCountry)
+            console.log('[Download Excel] Priority 2: Regex from XLSX binary')
+          } catch (e: any) {
+            console.error('[Download Excel] XLSX parse error:', e.message)
           }
         }
       }
@@ -2033,39 +2010,9 @@ entrepreneurRoutes.get('/api/download/framework-excel', async (c) => {
 
     console.log(`[Download Excel] PmeInputData: CA=[${pmeData.historique.caTotal.join(',')}], company=${pmeData.companyName}`)
 
-    // Run analysis
-    const apiKey = c.env.ANTHROPIC_API_KEY || ''
-    
-    // CORRECTION 3: Cross-analysis BMC ↔ Financial for download too
-    let bmcContent = ''
-    try {
-      let bmcDel = await c.env.DB.prepare(
-        "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_analysis' ORDER BY version DESC LIMIT 1"
-      ).bind(payload.userId).first<any>()
-      if (bmcDel?.content && bmcDel.content.length > 100) {
-        bmcContent = bmcDel.content.slice(0, 6000)
-      }
-      if (!bmcContent) {
-        bmcDel = await c.env.DB.prepare(
-          "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_html' ORDER BY version DESC LIMIT 1"
-        ).bind(payload.userId).first<any>()
-        if (bmcDel?.content && bmcDel.content.length > 100) {
-          bmcContent = bmcDel.content.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').slice(0, 6000)
-        }
-      }
-    } catch {}
-
-    let analysis
-    try {
-      const baseAnalysis = analyzePme(pmeData)
-      let crossAnalysis
-      try {
-        crossAnalysis = await crossAnalyzeBmcFinancials(bmcContent, pmeData, baseAnalysis, apiKey)
-      } catch {}
-      analysis = await analyzePmeWithAI(pmeData, apiKey, undefined, crossAnalysis)
-    } catch {
-      analysis = analyzePme(pmeData)
-    }
+    // Use deterministic analysis for Excel download (no AI call = instant response)
+    // The AI-enriched analysis is already stored in framework_html deliverable
+    let analysis = analyzePme(pmeData)
 
     // Fill the real Excel template
     const xlsxBytes = fillFrameworkExcel(pmeData, analysis)
@@ -5394,7 +5341,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
     }
 
     async function downloadFrameworkExcelInline() {
-      const btn = document.getElementById('btn-download-inline');
+      const btn = document.getElementById('btn-download-inline') || document.getElementById('btn-fw-excel-top');
       if (btn) { btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Génération...'; btn.disabled = true; }
       try {
         const resp = await fetch('/api/download/framework-excel', { credentials: 'include' });
