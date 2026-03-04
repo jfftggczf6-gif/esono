@@ -3105,7 +3105,7 @@ app.get('/module/business-plan', async (c) => {
     const pmeId = `pme_${payload.userId}`
 
     const [bpRow, bmcRow, sicRow, fwRow, diagRow, ovoRow, userRow] = await Promise.all([
-      db.prepare(`SELECT id, version, status, business_plan_json, created_at FROM business_plan_analyses WHERE user_id = ? AND pme_id = ? ORDER BY created_at DESC LIMIT 1`).bind(payload.userId, pmeId).first(),
+      db.prepare(`SELECT id, version, status, business_plan_json, created_at FROM business_plan_analyses WHERE user_id = ? AND pme_id = ? AND status IN ('completed','generated','analyzed') ORDER BY created_at DESC LIMIT 1`).bind(payload.userId, pmeId).first(),
       db.prepare(`SELECT id FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_analysis' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
       db.prepare(`SELECT id FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_analysis' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
       db.prepare(`SELECT id FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
@@ -3116,7 +3116,7 @@ app.get('/module/business-plan', async (c) => {
 
     const hasBmc = !!bmcRow, hasSic = !!sicRow, hasFramework = !!fwRow, hasDiag = !!diagRow, hasOvo = !!ovoRow
     const canGenerate = hasBmc || hasFramework
-    const hasBp = !!(bpRow && (bpRow.status === 'generated' || bpRow.status === 'analyzed'))
+    const hasBp = !!(bpRow && (bpRow.status === 'completed' || bpRow.status === 'generated' || bpRow.status === 'analyzed'))
     const bpVersion = bpRow?.version ? Number(bpRow.version) : 0
     const bpId = bpRow?.id as string || null
     const bpStatus = bpRow?.status as string || 'none'
@@ -8916,202 +8916,839 @@ function renderBusinessPlanModulePage(opts: {
   userName: string; availableCount: number; embedded?: boolean; bpData?: any;
 }): string {
   const { hasBmc, hasSic, hasFramework, hasDiag, hasOvo, canGenerate, hasBp, bpVersion, bpId, bpStatus, userName, availableCount, embedded, bpData } = opts
-  const esc = (s: any) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+  const esc = (s: any) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')
+  const nl2br = (s: any) => esc(s).replace(/\n/g, '<br>')
+  const fmtNum = (n: any) => { const v = Number(n); if (isNaN(v)) return String(n ?? '\u2014'); return v.toLocaleString('fr-FR') }
+  const fmtCurrency = (n: any) => { const v = Number(String(n).replace(/\s/g,'')); if (isNaN(v)) return String(n ?? '\u2014'); if (Math.abs(v) >= 1e9) return (v/1e9).toFixed(1) + ' Mrd'; if (Math.abs(v) >= 1e6) return (v/1e6).toFixed(1) + 'M'; if (Math.abs(v) >= 1e3) return Math.round(v/1e3) + 'k'; return v.toLocaleString('fr-FR') }
+  const fmtCurrencyFull = (n: any) => { const v = Number(String(n).replace(/\s/g,'')); if (isNaN(v)) return String(n ?? '\u2014'); return v.toLocaleString('fr-FR') + ' FCFA' }
 
-  // Build sections HTML if BP data is available
-  const sectionsHtml = (hasBp && bpData?.sections) ? bpData.sections.map((sec: any, i: number) => {
-    const iconMap: Record<string,string> = {'fa-file-lines':'fa-file-lines','fa-building':'fa-building','fa-diagram-project':'fa-diagram-project','fa-hand-holding-heart':'fa-hand-holding-heart','fa-chart-bar':'fa-chart-bar','fa-chart-line':'fa-chart-line','fa-stethoscope':'fa-stethoscope','fa-list-check':'fa-list-check'}
-    const icon = sec.icon && iconMap[sec.icon] ? sec.icon : 'fa-file'
-    const colors = ['#4338ca','#059669','#2563eb','#7c3aed','#d97706','#ea580c','#0d9488','#dc2626']
-    const color = colors[i % colors.length]
-    return `<div class="bp-section" id="bp-sec-${i}">
-      <div class="bp-section__head">
-        <div class="bp-section__num" style="background:${color}">${i + 1}</div>
-        <div class="bp-section__title"><i class="fas ${esc(icon)}" style="color:${color};margin-right:8px"></i>${esc(sec.titre)}</div>
-      </div>
-      <div class="bp-section__body">${esc(sec.contenu).replace(/\n/g, '<br>')}</div>
-    </div>`
-  }).join('') : ''
+  // Data shortcuts
+  const meta = bpData?.metadata || {}
+  const resume = bpData?.resume_executif || bpData?.executive_summary || {}
+  const presentation = bpData?.presentation_entreprise || bpData?.company_presentation || {}
+  const swot = bpData?.analyse_swot || bpData?.swot_analysis || {}
+  const marche = bpData?.analyse_marche || bpData?.market_analysis || {}
+  const offre = bpData?.offre_produit_service || bpData?.product_service || {}
+  const marketing = bpData?.strategie_marketing || bpData?.marketing_strategy || {}
+  const modele = bpData?.model_economique || bpData?.modele_economique || bpData?.economic_model || {}
+  const operations = bpData?.plan_operationnel || bpData?.operational_plan || {}
+  const impact = bpData?.impact_social || bpData?.social_impact || {}
+  const financier = bpData?.plan_financier || bpData?.financial_plan || {}
+  const gouvernance = bpData?.gouvernance || bpData?.governance || {}
+  const risques = bpData?.risques_mitigation || bpData?.risk_mitigation || bpData?.risques || []
+  const attentes = bpData?.attentes_ovo || {}
+  const annexes = bpData?.annexes || {}
+  const scores = bpData?.scores || {}
 
-  // Table des matières
-  const tocHtml = (hasBp && bpData?.sections) ? `<div class="bp-card">
-    <div class="bp-card__title"><i class="fas fa-list-ol" style="color:#6366f1"></i> Table des matières</div>
-    <div style="display:flex;flex-direction:column;gap:6px">
-      ${bpData.sections.map((sec: any, i: number) => `
-        <a href="#bp-sec-${i}" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:10px;background:rgba(99,102,241,0.08);text-decoration:none;transition:background 0.2s;cursor:pointer" onclick="event.preventDefault();document.getElementById('bp-sec-${i}').scrollIntoView({behavior:'smooth'})">
-          <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:#4338ca;color:white;font-size:12px;font-weight:700;flex-shrink:0">${i + 1}</span>
-          <span style="font-size:13px;font-weight:600;color:#c7d2fe">${esc(sec.titre)}</span>
-        </a>
-      `).join('')}
-    </div>
-  </div>` : ''
+  const companyName = meta.entreprise || userName
+  const sectorName = meta.secteur || 'Non spécifie'
+  const countryName = meta.pays || "Cote d'Ivoire"
+  const genDate = meta.date_generation ? new Date(meta.date_generation).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : ''
+  const isAI = meta.ai_generated === true
 
-  // Sources summary
-  const sourcesUsed = bpData?.meta?.sources_utilisees || {}
-  const scoresMeta = bpData?.scores || {}
+  // Section definitions for navigation
+  const navSections = [
+    { id: 'resume', icon: 'fa-file-lines', label: 'Resume Executif', num: 1 },
+    { id: 'presentation', icon: 'fa-building', label: 'Presentation Entreprise', num: 2 },
+    { id: 'marche', icon: 'fa-chart-pie', label: 'Analyse Marche', num: 3 },
+    { id: 'offre', icon: 'fa-box-open', label: 'Offre Produit/Service', num: 4 },
+    { id: 'marketing', icon: 'fa-bullhorn', label: 'Strategie Marketing', num: 5 },
+    { id: 'modele', icon: 'fa-diagram-project', label: 'Modele Economique', num: 6 },
+    { id: 'operations', icon: 'fa-users-gear', label: 'Plan Operationnel', num: 7 },
+    { id: 'impact', icon: 'fa-hand-holding-heart', label: 'Impact Social', num: 8 },
+    { id: 'financier', icon: 'fa-chart-bar', label: 'Plan Financier', num: 9 },
+    { id: 'gouvernance', icon: 'fa-landmark', label: 'Gouvernance & Projet', num: 10 },
+    { id: 'risques', icon: 'fa-shield-halved', label: 'Risques & Mitigation', num: 11 },
+    { id: 'annexes', icon: 'fa-paperclip', label: 'Annexes', num: 12 },
+  ]
+
+  // Helpers
+  const renderList = (arr: any[], field?: string): string => {
+    if (!arr || !Array.isArray(arr) || arr.length === 0) return '<p class="bp-empty">Aucune donnee disponible</p>'
+    return '<ul class="bp-list">' + arr.map(item => {
+      const text = typeof item === 'string' ? item : (field ? item[field] : Object.values(item).filter(Boolean).join(' \u2014 '))
+      return '<li>' + esc(text) + '</li>'
+    }).join('') + '</ul>'
+  }
+  const renderKV = (obj: any, labels?: Record<string, string>): string => {
+    if (!obj || typeof obj !== 'object') return ''
+    return Object.entries(obj).filter(([, v]) => v && v !== 'A completer').map(([k, v]) => {
+      const label = labels?.[k] || k.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase())
+      const val = typeof v === 'string' ? v : Array.isArray(v) ? v.join(', ') : JSON.stringify(v)
+      return '<div class="bp-kv"><span class="bp-kv__label">' + esc(label) + '</span><span class="bp-kv__value">' + nl2br(val) + '</span></div>'
+    }).join('')
+  }
+  const badge = (text: string, color: string, bg: string) => '<span class="bp-badge" style="color:' + color + ';background:' + bg + '">' + esc(text) + '</span>'
+  const renderPara = (text: any, fallback?: string): string => {
+    const t = typeof text === 'string' ? text : (typeof text === 'object' && text !== null ? Object.values(text).filter(v => typeof v === 'string').join('\n\n') : '')
+    if (!t || t === 'A completer') return fallback ? '<p class="bp-empty">' + esc(fallback) + '</p>' : ''
+    return '<div class="bp-para">' + nl2br(t) + '</div>'
+  }
+  const renderCards = (items: any[], titleField: string, descField?: string): string => {
+    if (!items || !Array.isArray(items) || items.length === 0) return '<p class="bp-empty">Aucune donnee disponible</p>'
+    return '<div class="bp-cards">' + items.map(item => {
+      const title = typeof item === 'string' ? item : (item[titleField] || '')
+      const desc = descField && typeof item === 'object' ? (item[descField] || '') : ''
+      return '<div class="bp-card-item"><div class="bp-card-item__title">' + esc(title) + '</div>' + (desc ? '<div class="bp-card-item__desc">' + nl2br(desc) + '</div>' : '') + '</div>'
+    }).join('') + '</div>'
+  }
+
+  // Build financial table HTML
+  const finTable = financier.tableau_financier_3ans || {}
+  const finRows: [string, any][] = [
+    ['Apport personnel', finTable.apport_personnel],
+    ['Prets', finTable.prets],
+    ['Subventions / dons', finTable.subventions_dons],
+    ["Chiffre d'affaires", finTable.chiffre_affaires],
+    ['Couts directs', finTable.couts_directs],
+    ['Couts indirects', finTable.couts_indirects],
+    ['Amortissements', finTable.amortissements],
+    ['Resultat net', finTable.resultat_net],
+    ['Cash-flow', finTable.cash_flow],
+    ['Valeur des actifs', finTable.valeur_actifs],
+    ['Dettes totales', finTable.dettes_totales],
+    ['Fonds propres', finTable.fonds_propres],
+  ]
+  const finTableHtml = finRows.some(([, v]) => Array.isArray(v) && v.length > 0) ? ('<div class="bp-table-wrap"><table class="bp-table"><thead><tr><th>Plan financier</th><th>1ere annee</th><th>2eme annee</th><th>3eme annee</th></tr></thead><tbody>' + finRows.map(([label, values]) => {
+    const isHL = label === "Chiffre d'affaires" || label === 'Resultat net' || label === 'Cash-flow'
+    const vals = Array.isArray(values) ? values : ['\u2014','\u2014','\u2014']
+    return '<tr class="' + (isHL ? 'bp-table__highlight' : '') + '"><td class="bp-table__label">' + esc(label) + '</td>' + vals.map((v: any) => '<td class="bp-table__num">' + esc(fmtCurrency(v)) + '</td>').join('') + '</tr>'
+  }).join('') + '</tbody></table></div>') : ''
+
+  // Chart data for financial projections
+  const caVals = Array.isArray(finTable.chiffre_affaires) ? finTable.chiffre_affaires.map((v: any) => Number(String(v).replace(/\s/g,''))) : []
+  const rnVals = Array.isArray(finTable.resultat_net) ? finTable.resultat_net.map((v: any) => Number(String(v).replace(/\s/g,''))) : []
+  const cfVals = Array.isArray(finTable.cash_flow) ? finTable.cash_flow.map((v: any) => Number(String(v).replace(/\s/g,''))) : []
+  const hasChartData = caVals.length === 3 && caVals.every((v: number) => !isNaN(v))
+
+  // SWOT matrix
+  const swotHtml = (swot.forces?.length || swot.faiblesses?.length || swot.opportunites?.length || swot.menaces?.length) ? ('<div class="bp-swot"><div class="bp-swot__cell bp-swot__cell--s"><div class="bp-swot__header"><i class="fas fa-plus-circle"></i> Forces</div>' + (swot.forces || []).map((f: string) => '<div class="bp-swot__item">' + esc(f) + '</div>').join('') + '</div><div class="bp-swot__cell bp-swot__cell--w"><div class="bp-swot__header"><i class="fas fa-minus-circle"></i> Faiblesses</div>' + (swot.faiblesses || []).map((f: string) => '<div class="bp-swot__item">' + esc(f) + '</div>').join('') + '</div><div class="bp-swot__cell bp-swot__cell--o"><div class="bp-swot__header"><i class="fas fa-arrow-up-right-dots"></i> Opportunites</div>' + (swot.opportunites || []).map((f: string) => '<div class="bp-swot__item">' + esc(f) + '</div>').join('') + '</div><div class="bp-swot__cell bp-swot__cell--t"><div class="bp-swot__header"><i class="fas fa-triangle-exclamation"></i> Menaces</div>' + (swot.menaces || []).map((f: string) => '<div class="bp-swot__item">' + esc(f) + '</div>').join('') + '</div></div>') : ''
+
+  // Risk table
+  const riskTableHtml = Array.isArray(risques) && risques.length > 0 ? ('<div class="bp-table-wrap"><table class="bp-table"><thead><tr><th>Risque</th><th>Probabilite</th><th>Impact</th><th>Mitigation</th></tr></thead><tbody>' + risques.map((r: any) => '<tr><td>' + esc(r.risque || r.type_risque || '') + '</td><td><span class="bp-risk-badge">' + esc(r.probabilite || '\u2014') + '</span></td><td><span class="bp-risk-badge">' + esc(r.impact || r.gravite || '\u2014') + '</span></td><td>' + esc(r.mitigation || '\u2014') + '</td></tr>').join('') + '</tbody></table></div>') : ''
+
+  // Company info table
+  const infoTable = presentation.informations_table || {}
+  const infoEntries: [string, any][] = [['Nom', infoTable.nom], ['Site web', infoTable.site_web], ['Personne en contact', infoTable.contact], ['Adresse', infoTable.adresse], ['Telephone', infoTable.telephone], ['Email', infoTable.email], ['Date de creation', infoTable.date_creation], ['Forme juridique', infoTable.forme_juridique]]
+  const infoTableHtml = Object.keys(infoTable).length > 0 ? ('<div class="bp-table-wrap"><table class="bp-table bp-table--info"><tbody>' + infoEntries.map(([l, v]) => '<tr><td class="bp-table__label">' + esc(l) + '</td><td>' + esc(v || '\u2014') + '</td></tr>').join('') + '</tbody></table></div>') : ''
+
+  // Scores badges
+  const scoresBadges = [
+    scores.bmc !== null && scores.bmc !== undefined ? 'BMC: ' + scores.bmc + '/100' : null,
+    scores.framework !== null && scores.framework !== undefined ? 'Framework: ' + scores.framework + '/100' : null,
+    scores.diagnostic !== null && scores.diagnostic !== undefined ? 'Diagnostic: ' + scores.diagnostic + '/100' : null,
+    scores.plan_ovo !== null && scores.plan_ovo !== undefined ? 'Plan OVO: ' + scores.plan_ovo + '/100' : null,
+  ].filter(Boolean)
+
+  // Section completeness calculation
+  const sectionData: Record<string,any> = { resume, presentation, marche, offre, marketing, modele, operations, impact, financier, gouvernance, risques, annexes }
+  const sectionComplete = navSections.map(s => {
+    const d = sectionData[s.id]
+    if (!d) return { ...s, filled: false }
+    if (Array.isArray(d)) return { ...s, filled: d.length > 0 }
+    if (typeof d === 'object') {
+      const vals = Object.values(d).filter(v => v && v !== 'A completer')
+      return { ...s, filled: vals.length > 0 }
+    }
+    return { ...s, filled: !!d }
+  })
+  const filledCount = sectionComplete.filter(s => s.filled).length
+  const completePct = Math.round((filledCount / 12) * 100)
 
   return `<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>ESANO | Business Plan</title>
-  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <title>ESONO | Business Plan \u2014 ${esc(companyName)}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css" rel="stylesheet">
+  ${hasChartData ? '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"><\/script>' : ''}
   <style>
+    :root {
+      --bp-violet: #7c3aed; --bp-violet-light: #a78bfa; --bp-violet-bg: rgba(124,58,237,0.08);
+      --bp-violet-dark: #5b21b6; --bp-violet-glow: rgba(124,58,237,0.25);
+      --bp-dark: #0f172a; --bp-card: #1e293b; --bp-border: #334155;
+      --bp-text: #e2e8f0; --bp-text-muted: #94a3b8; --bp-text-dim: #64748b;
+      --bp-success: #059669; --bp-warning: #d97706; --bp-danger: #dc2626; --bp-info: #0284c7;
+      --bp-radius: 14px; --bp-radius-sm: 10px; --bp-radius-xs: 6px;
+      --bp-title: 24px; --bp-subtitle: 18px; --bp-body: 14px;
+      --bp-gap-section: 24px; --bp-gap-element: 16px;
+    }
     *{margin:0;padding:0;box-sizing:border-box}
-    body{background:#0f172a;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh}
-    .bp-banner{background:linear-gradient(135deg,#1e3a5f 0%,#4338ca 100%);padding:28px 32px;display:flex;align-items:center;gap:16px}
-    .bp-banner__logo{width:48px;height:48px;background:rgba(255,255,255,0.15);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:white}
-    .bp-banner__title{font-size:18px;font-weight:800;color:white;letter-spacing:1px}
-    .bp-banner__sub{font-size:13px;color:rgba(255,255,255,0.7);margin-top:2px}
-    .page-container{max-width:900px;margin:0 auto;padding:20px 24px}
-    .back-link{display:inline-flex;align-items:center;gap:6px;color:#64748b;text-decoration:none;font-size:13px;margin:16px 0;transition:color 0.2s}
-    .back-link:hover{color:#94a3b8}
-    .bp-card{background:#1e293b;border:1px solid #334155;border-radius:14px;padding:24px;margin-bottom:20px}
-    .bp-card__title{font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:14px;display:flex;align-items:center;gap:10px}
-    .bp-section{background:#1e293b;border:1px solid #334155;border-radius:14px;padding:0;margin-bottom:16px;overflow:hidden}
-    .bp-section__head{display:flex;align-items:center;gap:14px;padding:18px 24px;background:rgba(67,56,202,0.06);border-bottom:1px solid #334155}
-    .bp-section__num{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:white;font-size:14px;font-weight:800;flex-shrink:0}
-    .bp-section__title{font-size:15px;font-weight:700;color:#e2e8f0}
-    .bp-section__body{padding:20px 24px;font-size:13.5px;color:#94a3b8;line-height:1.8}
-    .source-row{display:flex;align-items:center;gap:14px;padding:10px 14px;border-radius:10px;margin-bottom:6px;border:1px solid}
-    .gen-btn{display:inline-flex;align-items:center;gap:10px;padding:14px 32px;border-radius:12px;font-size:15px;font-weight:700;border:none;cursor:pointer;color:white;transition:all 0.2s;box-shadow:0 4px 14px rgba(0,0,0,0.3)}
-    .gen-btn:disabled{opacity:0.4;cursor:not-allowed}
-    .gen-btn--primary{background:linear-gradient(135deg,#4338ca,#6366f1)}
-    .gen-btn--primary:not(:disabled):hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(67,56,202,0.4)}
-    .dl-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 20px;background:linear-gradient(135deg,rgba(67,56,202,0.15),rgba(99,102,241,0.1));border:1px solid #4338ca;border-radius:14px;margin-bottom:20px}
-    .dl-btn{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;font-size:13px;font-weight:700;border:none;cursor:pointer;color:white;text-decoration:none;transition:all 0.2s}
-    .dl-btn--docx{background:#4338ca}
-    .dl-btn--docx:hover{background:#3730a3}
-    .preview-area{background:#1e293b;border:1px solid #334155;border-radius:14px;padding:40px;text-align:center;min-height:300px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
-    .preview-area i{font-size:48px;color:#334155}
-    .preview-area p{font-size:14px;color:#64748b}
-    ${embedded ? '.bp-banner{padding:20px 24px}.back-link,.float-btns,.gen-card{display:none!important}' : ''}
-    @media(max-width:768px){.bp-banner{padding:20px 16px}.page-container{padding:16px}.bp-section__head{padding:14px 16px}.bp-section__body{padding:16px}}
-    @media print{body{background:white;color:black}.bp-banner,.back-link,.gen-btn,.dl-bar{display:none!important}.bp-section{border-color:#ddd}.bp-section__body{color:#333}}
+    html{scroll-behavior:smooth;scroll-padding-top:20px}
+    body{background:var(--bp-dark);color:var(--bp-text);font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;line-height:1.6;font-size:var(--bp-body)}
+
+    /* ===== LAYOUT ===== */
+    .bp-layout{display:flex;min-height:100vh}
+    .bp-sidebar{width:290px;position:fixed;top:0;left:0;bottom:0;background:linear-gradient(180deg,#1a1040 0%,#111827 100%);border-right:1px solid rgba(124,58,237,0.2);display:flex;flex-direction:column;z-index:100;transition:transform 0.3s cubic-bezier(.4,0,.2,1)}
+    .bp-sidebar__brand{padding:24px 22px 20px;border-bottom:1px solid rgba(124,58,237,0.15)}
+    .bp-sidebar__logo{font-size:22px;font-weight:800;background:linear-gradient(135deg,#7c3aed,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:1.5px}
+    .bp-sidebar__company{font-size:12px;color:var(--bp-text-muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+    /* Progress ring in sidebar */
+    .bp-sidebar__progress{padding:16px 22px;border-bottom:1px solid rgba(124,58,237,0.1)}
+    .bp-progress-ring{display:flex;align-items:center;gap:14px}
+    .bp-progress-ring__circle{width:48px;height:48px;position:relative;flex-shrink:0}
+    .bp-progress-ring__circle svg{transform:rotate(-90deg)}
+    .bp-progress-ring__pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:var(--bp-violet-light)}
+    .bp-progress-ring__info{font-size:12px;color:var(--bp-text-muted);line-height:1.5}
+    .bp-progress-ring__info strong{color:var(--bp-text);display:block;font-size:13px}
+
+    .bp-sidebar__nav{flex:1;overflow-y:auto;padding:10px 10px;scrollbar-width:thin;scrollbar-color:rgba(124,58,237,0.3) transparent}
+    .bp-sidebar__nav::-webkit-scrollbar{width:4px}
+    .bp-sidebar__nav::-webkit-scrollbar-thumb{background:rgba(124,58,237,0.3);border-radius:4px}
+    .bp-nav-item{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:var(--bp-radius-sm);font-size:13px;font-weight:500;color:var(--bp-text-muted);text-decoration:none;transition:all 0.2s;cursor:pointer;border:none;background:none;width:100%;text-align:left;position:relative}
+    .bp-nav-item:hover{background:var(--bp-violet-bg);color:var(--bp-violet-light)}
+    .bp-nav-item--active{background:rgba(124,58,237,0.18);color:white;font-weight:700}
+    .bp-nav-item--active::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--bp-violet)}
+    .bp-nav-item__icon{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;background:rgba(124,58,237,0.12);color:var(--bp-violet-light)}
+    .bp-nav-item__check{margin-left:auto;font-size:10px;opacity:0.5}
+    .bp-nav-item__check--done{color:#6ee7b7;opacity:1}
+
+    .bp-sidebar__actions{padding:14px 16px;border-top:1px solid rgba(124,58,237,0.1);display:flex;flex-direction:column;gap:8px}
+    .bp-sidebar__footer{padding:14px 22px;border-top:1px solid rgba(124,58,237,0.08);font-size:11px;color:var(--bp-text-dim);text-align:center}
+
+    .bp-main{margin-left:290px;flex:1;min-width:0}
+
+    /* Mobile toggle */
+    .bp-mobile-toggle{display:none;position:fixed;top:16px;left:16px;z-index:200;width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,var(--bp-violet),var(--bp-violet-dark));color:white;border:none;font-size:18px;cursor:pointer;box-shadow:0 4px 16px var(--bp-violet-glow)}
+    .bp-sidebar__close{display:none;position:absolute;top:20px;right:16px;width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,0.08);color:white;border:none;cursor:pointer;font-size:14px}
+    .bp-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:90;backdrop-filter:blur(4px)}
+
+    /* ===== HEADER ===== */
+    .bp-header{padding:36px 44px 32px;background:linear-gradient(135deg,#1e1040 0%,#2e1065 40%,#4c1d95 70%,#5b21b6 100%);position:relative;overflow:hidden}
+    .bp-header::before{content:'';position:absolute;top:-80%;right:-15%;width:500px;height:500px;border-radius:50%;background:radial-gradient(circle,rgba(124,58,237,0.2),transparent 70%)}
+    .bp-header::after{content:'';position:absolute;bottom:-60%;left:10%;width:400px;height:400px;border-radius:50%;background:radial-gradient(circle,rgba(167,139,250,0.1),transparent 70%)}
+    .bp-header__back{display:inline-flex;align-items:center;gap:8px;color:rgba(255,255,255,0.5);text-decoration:none;font-size:13px;font-weight:500;margin-bottom:20px;transition:color 0.2s;position:relative;z-index:1}
+    .bp-header__back:hover{color:white}
+    .bp-header__row{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;position:relative;z-index:1}
+    .bp-header__title{font-size:var(--bp-title);font-weight:800;color:white;line-height:1.25;letter-spacing:-0.3px}
+    .bp-header__meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+    .bp-header__tag{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:600;background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.8);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.06)}
+    .bp-header__tag--version{background:rgba(124,58,237,0.35);color:#c4b5fd;border-color:rgba(124,58,237,0.3)}
+    .bp-header__tag--ai{background:rgba(5,150,105,0.25);color:#6ee7b7;border-color:rgba(5,150,105,0.2)}
+    .bp-header__scores{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start}
+    .bp-header__score{padding:5px 12px;border-radius:16px;font-size:11px;font-weight:700;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.65);border:1px solid rgba(255,255,255,0.05)}
+
+    /* ===== CONTENT ===== */
+    .bp-content{padding:var(--bp-gap-section) 44px 60px}
+
+    /* ===== SECTION BLOCKS ===== */
+    .bp-section{background:var(--bp-card);border:1px solid var(--bp-border);border-radius:var(--bp-radius);margin-bottom:var(--bp-gap-section);overflow:hidden;scroll-margin-top:20px;transition:border-color 0.3s}
+    .bp-section:hover{border-color:rgba(124,58,237,0.25)}
+    .bp-section__head{display:flex;align-items:center;gap:16px;padding:22px 28px;border-bottom:1px solid var(--bp-border);background:rgba(15,23,42,0.3)}
+    .bp-section__num{width:40px;height:40px;border-radius:var(--bp-radius-sm);display:flex;align-items:center;justify-content:center;color:white;font-size:15px;font-weight:800;flex-shrink:0;background:var(--bp-violet);box-shadow:0 2px 8px var(--bp-violet-glow)}
+    .bp-section__title{font-size:var(--bp-subtitle);font-weight:700;color:var(--bp-text)}
+    .bp-section__body{padding:var(--bp-gap-section) 28px}
+
+    /* ===== SUB-SECTIONS ===== */
+    .bp-sub{margin-bottom:var(--bp-gap-section)}
+    .bp-sub:last-child{margin-bottom:0}
+    .bp-sub__title{font-size:15px;font-weight:700;color:var(--bp-text);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid rgba(124,58,237,0.12);display:flex;align-items:center;gap:10px}
+    .bp-sub__title i{color:var(--bp-violet-light);font-size:13px}
+
+    /* ===== PARAGRAPHS ===== */
+    .bp-para{font-size:var(--bp-body);color:var(--bp-text-muted);line-height:1.85;margin-bottom:var(--bp-gap-element)}
+    .bp-para:last-child{margin-bottom:0}
+    .bp-empty{font-size:13px;color:var(--bp-text-dim);font-style:italic;padding:10px 0}
+
+    /* ===== LISTS ===== */
+    .bp-list{list-style:none;padding:0;margin:0}
+    .bp-list li{position:relative;padding:7px 0 7px 24px;font-size:14px;color:var(--bp-text-muted);line-height:1.75}
+    .bp-list li::before{content:'';position:absolute;left:2px;top:16px;width:8px;height:8px;border-radius:50%;background:var(--bp-violet);opacity:0.5}
+
+    /* ===== KEY-VALUE ===== */
+    .bp-kv{display:flex;gap:16px;padding:12px 0;border-bottom:1px solid rgba(51,65,85,0.25)}
+    .bp-kv:last-child{border-bottom:none}
+    .bp-kv__label{font-size:13px;font-weight:600;color:var(--bp-text);min-width:170px;flex-shrink:0}
+    .bp-kv__value{font-size:13px;color:var(--bp-text-muted);flex:1}
+
+    /* ===== BADGES ===== */
+    .bp-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700}
+    .bp-badges{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
+
+    /* ===== CARDS ===== */
+    .bp-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:var(--bp-gap-element)}
+    .bp-card-item{background:rgba(124,58,237,0.05);border:1px solid rgba(124,58,237,0.12);border-radius:var(--bp-radius-sm);padding:18px;transition:border-color 0.2s,transform 0.2s}
+    .bp-card-item:hover{border-color:rgba(124,58,237,0.3);transform:translateY(-1px)}
+    .bp-card-item__title{font-size:14px;font-weight:700;color:var(--bp-text);margin-bottom:8px}
+    .bp-card-item__desc{font-size:13px;color:var(--bp-text-muted);line-height:1.65}
+
+    /* ===== STAT CARDS ===== */
+    .bp-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:var(--bp-gap-element);margin-bottom:20px}
+    .bp-stat{background:linear-gradient(135deg,rgba(124,58,237,0.08),rgba(99,102,241,0.05));border:1px solid rgba(124,58,237,0.15);border-radius:var(--bp-radius-sm);padding:20px;text-align:center}
+    .bp-stat__value{font-size:22px;font-weight:800;color:white;margin-bottom:6px}
+    .bp-stat__label{font-size:11px;color:var(--bp-text-dim);font-weight:600;text-transform:uppercase;letter-spacing:0.6px}
+
+    /* ===== TABLES ===== */
+    .bp-table-wrap{overflow-x:auto;margin:var(--bp-gap-element) 0;border-radius:var(--bp-radius-sm);border:1px solid var(--bp-border)}
+    .bp-table{width:100%;border-collapse:collapse;font-size:13px}
+    .bp-table th{background:rgba(124,58,237,0.1);color:var(--bp-violet-light);font-weight:700;padding:14px 18px;text-align:left;border-bottom:2px solid rgba(124,58,237,0.2);white-space:nowrap}
+    .bp-table td{padding:12px 18px;border-bottom:1px solid rgba(51,65,85,0.25);color:var(--bp-text-muted)}
+    .bp-table__label{font-weight:600;color:var(--bp-text)}
+    .bp-table__num{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
+    .bp-table__highlight td{background:rgba(124,58,237,0.06);font-weight:700;color:var(--bp-text)}
+    .bp-table--info td:first-child{width:190px;font-weight:600;color:var(--bp-text)}
+
+    /* ===== SWOT ===== */
+    .bp-swot{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:var(--bp-gap-element) 0}
+    .bp-swot__cell{border-radius:var(--bp-radius-sm);padding:18px;min-height:130px}
+    .bp-swot__cell--s{background:rgba(5,150,105,0.08);border:1px solid rgba(5,150,105,0.2)}
+    .bp-swot__cell--w{background:rgba(234,88,12,0.06);border:1px solid rgba(234,88,12,0.15)}
+    .bp-swot__cell--o{background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.15)}
+    .bp-swot__cell--t{background:rgba(220,38,38,0.06);border:1px solid rgba(220,38,38,0.15)}
+    .bp-swot__header{font-size:14px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+    .bp-swot__cell--s .bp-swot__header{color:#6ee7b7}
+    .bp-swot__cell--w .bp-swot__header{color:#fdba74}
+    .bp-swot__cell--o .bp-swot__header{color:#93c5fd}
+    .bp-swot__cell--t .bp-swot__header{color:#fca5a5}
+    .bp-swot__item{font-size:13px;color:var(--bp-text-muted);padding:5px 0 5px 16px;position:relative;line-height:1.6}
+    .bp-swot__item::before{content:'\u2022';position:absolute;left:0;font-weight:bold}
+
+    /* ===== RISK BADGES ===== */
+    .bp-risk-badge{display:inline-block;padding:3px 12px;border-radius:12px;font-size:11px;font-weight:700;background:rgba(255,255,255,0.05);color:var(--bp-text-muted)}
+
+    /* ===== VMV CARDS ===== */
+    .bp-vmv{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:var(--bp-gap-element);margin:14px 0}
+    .bp-vmv__card{padding:20px;border-radius:var(--bp-radius-sm);background:linear-gradient(135deg,rgba(124,58,237,0.06),rgba(99,102,241,0.04));border:1px solid rgba(124,58,237,0.1)}
+    .bp-vmv__label{font-size:11px;font-weight:700;color:var(--bp-violet-light);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:8px}
+    .bp-vmv__text{font-size:13px;color:var(--bp-text-muted);line-height:1.7}
+
+    /* ===== ODD BADGES ===== */
+    .bp-odd{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:700;background:rgba(225,29,72,0.1);color:#fb7185;margin:3px;border:1px solid rgba(225,29,72,0.15)}
+
+    /* ===== CHART CONTAINER ===== */
+    .bp-chart-wrap{position:relative;height:320px;margin:var(--bp-gap-element) 0;background:rgba(15,23,42,0.4);border-radius:var(--bp-radius-sm);padding:20px;border:1px solid var(--bp-border)}
+
+    /* ===== GENERATE VIEW ===== */
+    .bp-pregen{max-width:720px;margin:0 auto;padding:40px 0}
+    .bp-source-row{display:flex;align-items:center;gap:14px;padding:14px 18px;border-radius:var(--bp-radius-sm);margin-bottom:10px;border:1px solid;transition:transform 0.2s}
+    .bp-source-row:hover{transform:translateX(4px)}
+    .bp-source-icon{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+    .gen-btn{display:inline-flex;align-items:center;gap:10px;padding:16px 40px;border-radius:14px;font-size:16px;font-weight:700;border:none;cursor:pointer;color:white;transition:all 0.25s;box-shadow:0 4px 20px var(--bp-violet-glow)}
+    .gen-btn:disabled{opacity:0.35;cursor:not-allowed;box-shadow:none}
+    .gen-btn--primary{background:linear-gradient(135deg,#7c3aed,#6366f1)}
+    .gen-btn--primary:not(:disabled):hover{transform:translateY(-2px);box-shadow:0 8px 30px var(--bp-violet-glow)}
+
+    /* ===== DOWNLOAD BAR ===== */
+    .bp-dl-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;padding:18px 26px;background:linear-gradient(135deg,rgba(124,58,237,0.1),rgba(99,102,241,0.06));border:1px solid rgba(124,58,237,0.2);border-radius:var(--bp-radius);margin-bottom:var(--bp-gap-section)}
+    .bp-dl-btn{display:inline-flex;align-items:center;gap:8px;padding:10px 22px;border-radius:var(--bp-radius-sm);font-size:13px;font-weight:700;border:none;cursor:pointer;color:white;text-decoration:none;transition:all 0.2s}
+    .bp-dl-btn--primary{background:var(--bp-violet)}
+    .bp-dl-btn--primary:hover{background:var(--bp-violet-dark);transform:translateY(-1px)}
+    .bp-dl-btn--ghost{background:transparent;border:1px solid var(--bp-border);color:var(--bp-text-muted)}
+    .bp-dl-btn--ghost:hover{background:rgba(255,255,255,0.04);border-color:rgba(124,58,237,0.3)}
+
+    /* ===== SHARE MODAL ===== */
+    .bp-share-modal{display:none;position:fixed;inset:0;z-index:300;align-items:center;justify-content:center;background:rgba(0,0,0,0.7);backdrop-filter:blur(6px)}
+    .bp-share-modal--open{display:flex}
+    .bp-share-modal__box{background:var(--bp-card);border:1px solid var(--bp-border);border-radius:var(--bp-radius);padding:32px;max-width:440px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.5)}
+    .bp-share-modal__title{font-size:18px;font-weight:700;color:var(--bp-text);margin-bottom:16px;display:flex;align-items:center;gap:10px}
+    .bp-share-modal__close{position:absolute;top:16px;right:16px;background:none;border:none;color:var(--bp-text-muted);font-size:18px;cursor:pointer}
+    .bp-share-input{width:100%;padding:12px 16px;background:var(--bp-dark);border:1px solid var(--bp-border);border-radius:var(--bp-radius-sm);color:var(--bp-text);font-size:13px;margin-bottom:12px}
+    .bp-share-input:focus{outline:none;border-color:var(--bp-violet)}
+
+    /* ===== BACK TO TOP ===== */
+    .bp-totop{position:fixed;bottom:28px;right:28px;width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,var(--bp-violet),var(--bp-violet-dark));color:white;border:none;font-size:16px;cursor:pointer;box-shadow:0 4px 16px var(--bp-violet-glow);opacity:0;transform:translateY(12px);transition:all 0.3s;z-index:100}
+    .bp-totop--visible{opacity:1;transform:translateY(0)}
+    .bp-totop:hover{transform:translateY(-2px);box-shadow:0 8px 24px var(--bp-violet-glow)}
+
+    /* ===== PRINT ===== */
+    @media print {
+      body{background:white!important;color:#1f2937!important;font-size:11pt}
+      .bp-sidebar,.bp-mobile-toggle,.bp-totop,.bp-dl-bar,.gen-btn,.bp-header__back,.bp-sidebar__actions,.bp-overlay,.bp-share-modal{display:none!important}
+      .bp-main{margin-left:0!important}
+      .bp-header{background:#f3f0ff!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;padding:24px 20px!important}
+      .bp-header__title{color:#4c1d95!important;font-size:20pt!important}
+      .bp-header__tag{background:#ede9fe!important;color:#5b21b6!important;border:1px solid #c4b5fd!important}
+      .bp-content{padding:16px 20px!important}
+      .bp-section{border:1px solid #e5e7eb!important;break-inside:avoid;margin-bottom:16px!important;box-shadow:none!important}
+      .bp-section__head{background:#f9fafb!important;border-bottom:1px solid #e5e7eb!important}
+      .bp-section__num{background:#7c3aed!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .bp-section__title{color:#1f2937!important}
+      .bp-section__body{padding:16px 20px!important}
+      .bp-para,.bp-list li,.bp-kv__value,.bp-swot__item,.bp-table td,.bp-card-item__desc,.bp-vmv__text{color:#374151!important}
+      .bp-kv__label,.bp-table__label,.bp-card-item__title,.bp-sub__title{color:#1f2937!important}
+      .bp-chart-wrap{height:250px!important;border:1px solid #e5e7eb!important}
+      .bp-swot__cell{border:1px solid #d1d5db!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      a{color:#4c1d95!important;text-decoration:none}
+    }
+
+    /* ===== RESPONSIVE ===== */
+    @media(max-width:1024px){
+      .bp-sidebar{transform:translateX(-100%)}
+      .bp-sidebar--open{transform:translateX(0);box-shadow:8px 0 40px rgba(0,0,0,0.5)}
+      .bp-sidebar__close{display:flex;align-items:center;justify-content:center}
+      .bp-mobile-toggle{display:flex;align-items:center;justify-content:center}
+      .bp-overlay--visible{display:block}
+      .bp-main{margin-left:0}
+      .bp-header{padding:24px 20px 22px}
+      .bp-header__title{font-size:20px}
+      .bp-content{padding:20px 16px 60px}
+      .bp-section__head{padding:18px 20px}
+      .bp-section__body{padding:20px}
+      .bp-swot{grid-template-columns:1fr}
+      .bp-kv{flex-direction:column;gap:4px}
+      .bp-kv__label{min-width:auto}
+    }
+    @media(max-width:640px){
+      .bp-cards{grid-template-columns:1fr}
+      .bp-stats{grid-template-columns:1fr 1fr}
+      .bp-vmv{grid-template-columns:1fr}
+      .bp-header__row{flex-direction:column}
+      .bp-dl-bar{flex-direction:column;text-align:center}
+      .bp-chart-wrap{height:240px;padding:12px}
+    }
+    ${embedded ? '.bp-sidebar,.bp-mobile-toggle,.bp-header__back,.bp-sidebar__actions,.bp-totop,.bp-overlay{display:none!important}.bp-main{margin-left:0!important}' : ''}
   </style>
 </head>
 <body>
-  <div class="bp-banner">
-    <div class="bp-banner__logo">\u{1F4C4}</div>
-    <div>
-      <div class="bp-banner__title">BUSINESS PLAN \u2014 DOCUMENT COMPLET</div>
-      <div class="bp-banner__sub">${esc(bpData?.meta?.entreprise || userName)} \u2022 Synth\u00E8se compl\u00E8te pour investisseurs${bpVersion > 0 ? ' \u2022 v' + bpVersion : ''}</div>
+
+<!-- Mobile toggle -->
+<button class="bp-mobile-toggle" onclick="toggleSidebar()" aria-label="Menu">
+  <i class="fas fa-bars"></i>
+</button>
+<div class="bp-overlay" id="bpOverlay" onclick="toggleSidebar()"></div>
+
+<div class="bp-layout">
+  <!-- SIDEBAR -->
+  ${hasBp ? `
+  <aside class="bp-sidebar" id="bpSidebar">
+    <button class="bp-sidebar__close" onclick="toggleSidebar()" aria-label="Fermer"><i class="fas fa-times"></i></button>
+    <div class="bp-sidebar__brand">
+      <div class="bp-sidebar__logo">ESONO</div>
+      <div class="bp-sidebar__company">${esc(companyName)} \u2014 v${bpVersion}</div>
     </div>
-  </div>
-
-  <div class="page-container">
-    ${embedded ? '' : '<a href="/entrepreneur" class="back-link"><i class="fas fa-arrow-left"></i> Retour au tableau de bord</a>'}
-
-    ${hasBp ? `
-    <!-- Download bar -->
-    <div class="dl-bar">
-      <div style="display:flex;align-items:center;gap:12px">
-        <i class="fas fa-check-circle" style="font-size:28px;color:#6ee7b7"></i>
-        <div>
-          <div style="font-size:14px;font-weight:700;color:#e2e8f0">Business Plan g\u00E9n\u00E9r\u00E9 avec succ\u00E8s</div>
-          <div style="font-size:12px;color:#94a3b8">Version ${bpVersion} \u2022 ${availableCount}/5 sources int\u00E9gr\u00E9es \u2022 ${bpData?.sections?.length || 0} sections</div>
+    <div class="bp-sidebar__progress">
+      <div class="bp-progress-ring">
+        <div class="bp-progress-ring__circle">
+          <svg width="48" height="48" viewBox="0 0 48 48">
+            <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(124,58,237,0.15)" stroke-width="4"/>
+            <circle cx="24" cy="24" r="20" fill="none" stroke="#7c3aed" stroke-width="4" stroke-linecap="round" stroke-dasharray="${Math.round(125.6 * completePct / 100)} 125.6"/>
+          </svg>
+          <span class="bp-progress-ring__pct">${completePct}%</span>
+        </div>
+        <div class="bp-progress-ring__info">
+          <strong>${filledCount}/12 sections</strong>
+          Completude du plan
         </div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${bpId ? `<a href="/api/business-plan/download/${bpId}?format=docx" class="dl-btn dl-btn--docx"><i class="fas fa-file-word"></i> Word (.docx)</a>` : ''}
-        ${!embedded ? `<a href="/module/business-plan" class="dl-btn" style="background:#1e293b;border:1px solid #4338ca"><i class="fas fa-expand"></i> Pleine page</a>` : ''}
+    </div>
+    <nav class="bp-sidebar__nav" id="bpNav">
+      ${sectionComplete.map(s => `
+        <a class="bp-nav-item" data-section="${s.id}" onclick="scrollToSection('${s.id}');closeSidebar()">
+          <span class="bp-nav-item__icon"><i class="fas ${s.icon}"></i></span>
+          <span>${esc(s.label)}</span>
+          <span class="bp-nav-item__check ${s.filled ? 'bp-nav-item__check--done' : ''}"><i class="fas ${s.filled ? 'fa-check-circle' : 'fa-circle'}"></i></span>
+        </a>
+      `).join('')}
+    </nav>
+    <div class="bp-sidebar__actions">
+      ${bpId ? '<a href="/api/business-plan/download/' + bpId + '?format=docx" class="bp-dl-btn bp-dl-btn--primary" style="justify-content:center"><i class="fas fa-file-word"></i> Telecharger Word</a>' : ''}
+      <button class="bp-dl-btn bp-dl-btn--ghost" style="justify-content:center" onclick="window.print()"><i class="fas fa-print"></i> Imprimer / PDF</button>
+      <button class="bp-dl-btn bp-dl-btn--ghost" style="justify-content:center" onclick="openShareModal()"><i class="fas fa-share-nodes"></i> Partager</button>
+    </div>
+    <div class="bp-sidebar__footer">Genere par ESONO${genDate ? ' \u2022 ' + genDate : ''}</div>
+  </aside>` : ''}
+
+  <!-- MAIN -->
+  <main class="bp-main">
+    <!-- Header -->
+    <div class="bp-header">
+      ${embedded ? '' : '<a href="/entrepreneur" class="bp-header__back"><i class="fas fa-arrow-left"></i> Retour au tableau de bord</a>'}
+      <div class="bp-header__row">
+        <div>
+          <div class="bp-header__title">${hasBp ? 'Business Plan \u2014 ' + esc(companyName) : 'Business Plan'}</div>
+          <div class="bp-header__meta">
+            ${hasBp ? `
+              <span class="bp-header__tag"><i class="fas fa-globe-africa"></i> ${esc(countryName)}</span>
+              <span class="bp-header__tag"><i class="fas fa-industry"></i> ${esc(sectorName)}</span>
+              ${genDate ? '<span class="bp-header__tag"><i class="fas fa-calendar"></i> ' + genDate + '</span>' : ''}
+              <span class="bp-header__tag bp-header__tag--version"><i class="fas fa-code-branch"></i> Version ${bpVersion}</span>
+              ${isAI ? '<span class="bp-header__tag bp-header__tag--ai"><i class="fas fa-robot"></i> IA</span>' : ''}
+            ` : '<span class="bp-header__tag"><i class="fas fa-info-circle"></i> Document non encore genere</span>'}
+          </div>
+        </div>
+        ${hasBp && scoresBadges.length > 0 ? '<div class="bp-header__scores">' + scoresBadges.map(s => '<span class="bp-header__score">' + esc(s) + '</span>').join('') + '</div>' : ''}
       </div>
     </div>
 
-    <!-- Table of contents -->
-    ${tocHtml}
+    <div class="bp-content">
+    ${hasBp ? `
 
-    <!-- Sections -->
-    ${sectionsHtml}
+      <!-- Download bar -->
+      <div class="bp-dl-bar">
+        <div style="display:flex;align-items:center;gap:14px">
+          <div style="width:44px;height:44px;border-radius:12px;background:rgba(5,150,105,0.15);display:flex;align-items:center;justify-content:center">
+            <i class="fas fa-check-circle" style="font-size:22px;color:#6ee7b7"></i>
+          </div>
+          <div>
+            <div style="font-size:15px;font-weight:700;color:var(--bp-text)">Business Plan genere avec succes</div>
+            <div style="font-size:12px;color:var(--bp-text-muted)">Version ${bpVersion} \u2022 ${availableCount}/5 sources integrees \u2022 ${filledCount}/12 sections remplies</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${bpId ? '<a href="/api/business-plan/download/' + bpId + '?format=docx" class="bp-dl-btn bp-dl-btn--primary"><i class="fas fa-file-word"></i> Word</a>' : ''}
+          <button class="bp-dl-btn bp-dl-btn--ghost" onclick="window.print()"><i class="fas fa-print"></i> PDF</button>
+          <button class="bp-dl-btn bp-dl-btn--ghost" onclick="openShareModal()"><i class="fas fa-share-nodes"></i> Partager</button>
+          <button class="bp-dl-btn bp-dl-btn--ghost" onclick="generateBusinessPlan()"><i class="fas fa-rotate"></i> Regenerer</button>
+        </div>
+      </div>
 
-    <!-- Regenerate -->
-    ${embedded ? '' : `<div class="gen-card" style="text-align:center;margin-top:24px;padding:20px">
-      <button class="gen-btn gen-btn--primary" onclick="generateBusinessPlan()">
-        <i class="fas fa-refresh"></i> Reg\u00E9n\u00E9rer le Business Plan
-      </button>
-      <div id="generateStatus" style="margin-top:16px;display:none"></div>
-    </div>`}
+      <!-- 1. RESUME EXECUTIF -->
+      <div class="bp-section" id="bp-resume">
+        <div class="bp-section__head">
+          <div class="bp-section__num">1</div>
+          <div class="bp-section__title"><i class="fas fa-file-lines" style="color:var(--bp-violet);margin-right:10px"></i>Resume Executif</div>
+        </div>
+        <div class="bp-section__body">
+          ${renderPara(resume.synthese, 'Synthese non disponible')}
+          ${resume.points_cles?.length ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-star"></i> Points cles</div>' + renderList(resume.points_cles) + '</div>' : ''}
+          ${(resume.montant_recherche && resume.montant_recherche !== 'A completer') || (resume.usage_fonds && resume.usage_fonds !== 'A completer') ? '<div class="bp-stats">' + (resume.montant_recherche && resume.montant_recherche !== 'A completer' ? '<div class="bp-stat"><div class="bp-stat__value">' + esc(resume.montant_recherche) + '</div><div class="bp-stat__label">Financement recherche</div></div>' : '') + (resume.usage_fonds && resume.usage_fonds !== 'A completer' ? '<div class="bp-stat" style="grid-column:span 2"><div class="bp-stat__value" style="font-size:14px">' + esc(resume.usage_fonds) + '</div><div class="bp-stat__label">Utilisation des fonds</div></div>' : '') + '</div>' : ''}
+        </div>
+      </div>
+
+      <!-- 2. PRESENTATION ENTREPRISE -->
+      <div class="bp-section" id="bp-presentation">
+        <div class="bp-section__head">
+          <div class="bp-section__num" style="background:#2563eb">2</div>
+          <div class="bp-section__title"><i class="fas fa-building" style="color:#2563eb;margin-right:10px"></i>Presentation de l'Entreprise</div>
+        </div>
+        <div class="bp-section__body">
+          ${infoTableHtml ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-id-card"></i> Informations</div>' + infoTableHtml + '</div>' : ''}
+          ${renderPara(presentation.description_generale)}
+          ${presentation.revue_historique ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-clock-rotate-left"></i> Historique</div>' + renderPara(presentation.revue_historique.raison_creation) + (presentation.revue_historique.realisations_cles?.length ? renderList(presentation.revue_historique.realisations_cles) : '') + '</div>' : ''}
+          ${presentation.vision_mission_valeurs ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-eye"></i> Vision, Mission & Valeurs</div><div class="bp-vmv">' + (presentation.vision_mission_valeurs.vision ? '<div class="bp-vmv__card"><div class="bp-vmv__label">Vision</div><div class="bp-vmv__text">' + nl2br(presentation.vision_mission_valeurs.vision) + '</div></div>' : '') + (presentation.vision_mission_valeurs.mission ? '<div class="bp-vmv__card"><div class="bp-vmv__label">Mission</div><div class="bp-vmv__text">' + nl2br(presentation.vision_mission_valeurs.mission) + '</div></div>' : '') + (Array.isArray(presentation.vision_mission_valeurs.valeurs) ? presentation.vision_mission_valeurs.valeurs.map((v: any) => '<div class="bp-vmv__card"><div class="bp-vmv__label">' + esc(v.valeur || 'Valeur') + '</div><div class="bp-vmv__text">' + esc(v.exemple || '') + '</div></div>').join('') : '') + '</div></div>' : ''}
+          ${presentation.objectifs_smart ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-bullseye"></i> Objectifs SMART</div>' + (presentation.objectifs_smart.court_terme_1an?.length ? '<div style="margin-bottom:14px"><strong style="font-size:12px;color:var(--bp-violet-light)">Court terme (1 an)</strong>' + renderList(presentation.objectifs_smart.court_terme_1an) + '</div>' : '') + (presentation.objectifs_smart.long_terme_3_5ans?.length ? '<div><strong style="font-size:12px;color:var(--bp-violet-light)">Long terme (3-5 ans)</strong>' + renderList(presentation.objectifs_smart.long_terme_3_5ans) + '</div>' : '') + '</div>' : ''}
+        </div>
+      </div>
+
+      <!-- 3. ANALYSE MARCHE -->
+      <div class="bp-section" id="bp-marche">
+        <div class="bp-section__head">
+          <div class="bp-section__num" style="background:#059669">3</div>
+          <div class="bp-section__title"><i class="fas fa-chart-pie" style="color:#059669;margin-right:10px"></i>Analyse de Marche</div>
+        </div>
+        <div class="bp-section__body">
+          ${renderPara(marche.taille_marche)}
+          ${renderPara(marche.potentiel_croissance)}
+          ${marche.tendances?.length ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-arrow-trend-up"></i> Tendances</div>' + renderList(marche.tendances) + '</div>' : ''}
+          ${Array.isArray(marche.concurrents) && marche.concurrents.length > 0 ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-users"></i> Concurrence</div>' + renderCards(marche.concurrents, 'nom', 'forces') + '</div>' : ''}
+          ${renderPara(marche.differenciation)}
+          ${swotHtml ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-th-large"></i> Matrice SWOT</div>' + swotHtml + '</div>' : ''}
+          ${swot.gestion_risques?.length ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-shield-halved"></i> Gestion des risques</div><div class="bp-table-wrap"><table class="bp-table"><thead><tr><th>Type de risque</th><th>Gravite</th><th>Mitigation</th></tr></thead><tbody>' + swot.gestion_risques.map((r: any) => '<tr><td>' + esc(r.type_risque || '') + '</td><td><span class="bp-risk-badge">' + esc(r.gravite || '') + '</span></td><td>' + esc(r.mitigation || '') + '</td></tr>').join('') + '</tbody></table></div></div>' : ''}
+        </div>
+      </div>
+
+      <!-- 4. OFFRE PRODUIT/SERVICE -->
+      <div class="bp-section" id="bp-offre">
+        <div class="bp-section__head">
+          <div class="bp-section__num" style="background:#0891b2">4</div>
+          <div class="bp-section__title"><i class="fas fa-box-open" style="color:#0891b2;margin-right:10px"></i>Offre Produit / Service</div>
+        </div>
+        <div class="bp-section__body">
+          ${renderPara(offre.description)}
+          ${offre.proposition_valeur ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-gem"></i> Proposition de valeur</div>' + renderPara(offre.proposition_valeur) + '</div>' : ''}
+          ${offre.probleme_resolu ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-lightbulb"></i> Probleme resolu</div>' + renderPara(offre.probleme_resolu) + '</div>' : ''}
+          ${offre.avantage_concurrentiel ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-trophy"></i> Avantage concurrentiel</div>' + renderPara(offre.avantage_concurrentiel) + '</div>' : ''}
+        </div>
+      </div>
+
+      <!-- 5. STRATEGIE MARKETING -->
+      <div class="bp-section" id="bp-marketing">
+        <div class="bp-section__head">
+          <div class="bp-section__num" style="background:#d97706">5</div>
+          <div class="bp-section__title"><i class="fas fa-bullhorn" style="color:#d97706;margin-right:10px"></i>Strategie Marketing (5P)</div>
+        </div>
+        <div class="bp-section__body">
+          ${marketing.produit ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-cube"></i> Produit</div>' + renderPara(marketing.produit) + '</div>' : ''}
+          ${marketing.point_de_vente ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-store"></i> Point de vente</div>' + renderPara(marketing.point_de_vente) + '</div>' : ''}
+          ${marketing.prix ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-tag"></i> Prix</div>' + (typeof marketing.prix === 'object' ? renderKV(marketing.prix, { prix_vente: 'Prix de vente', prix_revient: 'Prix de revient', marge: 'Marge', strategie: 'Strategie' }) : renderPara(marketing.prix)) + '</div>' : ''}
+          ${marketing.promotion ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-megaphone"></i> Promotion</div>' + renderPara(marketing.promotion) + '</div>' : ''}
+          ${marketing.personnel ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-user-tie"></i> Personnel</div>' + renderPara(marketing.personnel) + '</div>' : ''}
+        </div>
+      </div>
+
+      <!-- 6. MODELE ECONOMIQUE -->
+      <div class="bp-section" id="bp-modele">
+        <div class="bp-section__head">
+          <div class="bp-section__num" style="background:#4338ca">6</div>
+          <div class="bp-section__title"><i class="fas fa-diagram-project" style="color:#4338ca;margin-right:10px"></i>Modele Economique</div>
+        </div>
+        <div class="bp-section__body">
+          <div class="bp-cards">
+            ${[
+              { icon: 'fa-users', title: 'Segments clients', value: modele.segments_clients },
+              { icon: 'fa-truck', title: 'Canaux de distribution', value: modele.canaux_distribution },
+              { icon: 'fa-handshake', title: 'Relations clients', value: modele.relations_clients },
+              { icon: 'fa-coins', title: 'Sources de revenus', value: modele.sources_revenus },
+              { icon: 'fa-key', title: 'Ressources cles', value: modele.ressources_cles },
+              { icon: 'fa-cogs', title: 'Activites cles', value: modele.activites_cles },
+              { icon: 'fa-people-group', title: 'Partenaires cles', value: modele.partenaires_cles },
+              { icon: 'fa-money-bill-trend-up', title: 'Structure de couts', value: modele.structure_couts },
+            ].filter(c => c.value && c.value !== 'A completer').map(c => '<div class="bp-card-item"><div class="bp-card-item__title"><i class="fas ' + c.icon + '" style="color:var(--bp-violet-light);margin-right:8px;font-size:12px"></i>' + esc(c.title) + '</div><div class="bp-card-item__desc">' + nl2br(c.value) + '</div></div>').join('')}
+          </div>
+        </div>
+      </div>
+
+      <!-- 7. PLAN OPERATIONNEL -->
+      <div class="bp-section" id="bp-operations">
+        <div class="bp-section__head">
+          <div class="bp-section__num" style="background:#0d9488">7</div>
+          <div class="bp-section__title"><i class="fas fa-users-gear" style="color:#0d9488;margin-right:10px"></i>Plan Operationnel</div>
+        </div>
+        <div class="bp-section__body">
+          ${Array.isArray(operations.equipe_direction) && operations.equipe_direction.length > 0 ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-user-tie"></i> Equipe de direction</div><div class="bp-cards">' + operations.equipe_direction.map((m: any) => '<div class="bp-card-item"><div class="bp-card-item__title">' + esc(m.nom || '\u2014') + '</div><div class="bp-card-item__desc">' + esc(m.role || '') + (m.competences ? '<br>' + esc(m.competences) : '') + '</div></div>').join('') + '</div></div>' : ''}
+          ${operations.personnel ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-users"></i> Personnel</div>' + (typeof operations.personnel === 'object' ? renderKV(operations.personnel, { effectif: 'Effectif', qualifications: 'Qualifications', politique_rh: 'Politique RH' }) : renderPara(operations.personnel)) + '</div>' : ''}
+          ${renderPara(operations.organigramme_description)}
+          ${operations.conseil_administration && operations.conseil_administration !== 'A completer' ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-gavel"></i> Conseil d\'administration</div>' + renderPara(operations.conseil_administration) + '</div>' : ''}
+        </div>
+      </div>
+
+      <!-- 8. IMPACT SOCIAL -->
+      <div class="bp-section" id="bp-impact">
+        <div class="bp-section__head">
+          <div class="bp-section__num" style="background:#e11d48">8</div>
+          <div class="bp-section__title"><i class="fas fa-hand-holding-heart" style="color:#e11d48;margin-right:10px"></i>Impact Social & Environnemental</div>
+        </div>
+        <div class="bp-section__body">
+          ${impact.impact_social ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-heart"></i> Impact social</div>' + renderPara(impact.impact_social) + '</div>' : ''}
+          ${impact.impact_environnemental ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-leaf"></i> Impact environnemental</div>' + renderPara(impact.impact_environnemental) + '</div>' : ''}
+          ${impact.impact_economique ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-chart-line"></i> Impact economique</div>' + renderPara(impact.impact_economique) + '</div>' : ''}
+          ${impact.beneficiaires ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-people-arrows"></i> Beneficiaires</div>' + renderPara(impact.beneficiaires) + '</div>' : ''}
+          ${Array.isArray(impact.odd_cibles) && impact.odd_cibles.length > 0 ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-globe"></i> ODD cibles</div><div class="bp-badges">' + impact.odd_cibles.map((o: string) => '<span class="bp-odd"><i class="fas fa-bullseye"></i> ' + esc(o) + '</span>').join('') + '</div></div>' : ''}
+          ${impact.indicateurs?.length ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-chart-column"></i> Indicateurs d\'impact</div>' + renderList(impact.indicateurs) + '</div>' : ''}
+        </div>
+      </div>
+
+      <!-- 9. PLAN FINANCIER -->
+      <div class="bp-section" id="bp-financier">
+        <div class="bp-section__head">
+          <div class="bp-section__num">9</div>
+          <div class="bp-section__title"><i class="fas fa-chart-bar" style="color:var(--bp-violet);margin-right:10px"></i>Plan Financier</div>
+        </div>
+        <div class="bp-section__body">
+          ${financier.plan_investissement ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-money-check-dollar"></i> Plan d\'investissement</div>' + renderPara(financier.plan_investissement) + '</div>' : ''}
+          ${financier.justification_financement && financier.justification_financement !== 'A completer' ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-file-invoice-dollar"></i> Justification du financement</div>' + renderPara(financier.justification_financement) + '</div>' : ''}
+          ${finTableHtml ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-table"></i> Plan financier 3 ans</div>' + finTableHtml + '</div>' : ''}
+          ${hasChartData ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-chart-area"></i> Projections financieres</div><div class="bp-chart-wrap"><canvas id="bpFinChart"></canvas></div></div>' : ''}
+          ${financier.kpis && Object.keys(financier.kpis).length > 0 ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-gauge-high"></i> KPIs</div>' + renderKV(financier.kpis) + '</div>' : ''}
+        </div>
+      </div>
+
+      <!-- 10. GOUVERNANCE -->
+      <div class="bp-section" id="bp-gouvernance">
+        <div class="bp-section__head">
+          <div class="bp-section__num" style="background:#1e3a5f">10</div>
+          <div class="bp-section__title"><i class="fas fa-landmark" style="color:#1e3a5f;margin-right:10px"></i>Gouvernance & Projet</div>
+        </div>
+        <div class="bp-section__body">
+          ${gouvernance.projet_description ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-rocket"></i> Description du projet</div>' + renderPara(gouvernance.projet_description) + '</div>' : ''}
+          ${gouvernance.situation_actuelle && gouvernance.situation_actuelle !== 'A completer' ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-map-pin"></i> Situation actuelle</div>' + renderPara(gouvernance.situation_actuelle) + '</div>' : ''}
+          ${gouvernance.duree_mise_en_oeuvre && gouvernance.duree_mise_en_oeuvre !== 'A completer' ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-calendar-days"></i> Duree de mise en oeuvre</div>' + renderPara(gouvernance.duree_mise_en_oeuvre) + '</div>' : ''}
+          ${gouvernance.objectif_projet && gouvernance.objectif_projet !== 'A completer' ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-bullseye"></i> Objectif</div>' + renderPara(gouvernance.objectif_projet) + '</div>' : ''}
+          ${attentes.montant_demande || attentes.contribution_entrepreneur ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-handshake"></i> Attentes vis-a-vis d\'OVO</div>' + renderKV(attentes, { montant_demande: 'Montant demande', contribution_entrepreneur: 'Contribution entrepreneur', autres_investisseurs: 'Autres investisseurs', expertise_necessaire: 'Expertise necessaire', coaching_souhaite: 'Coaching souhaite' }) + '</div>' : ''}
+        </div>
+      </div>
+
+      <!-- 11. RISQUES & MITIGATION -->
+      <div class="bp-section" id="bp-risques">
+        <div class="bp-section__head">
+          <div class="bp-section__num" style="background:#dc2626">11</div>
+          <div class="bp-section__title"><i class="fas fa-shield-halved" style="color:#dc2626;margin-right:10px"></i>Risques & Mitigation</div>
+        </div>
+        <div class="bp-section__body">
+          ${riskTableHtml || '<p class="bp-empty">Aucun risque identifie</p>'}
+        </div>
+      </div>
+
+      <!-- 12. ANNEXES -->
+      <div class="bp-section" id="bp-annexes">
+        <div class="bp-section__head">
+          <div class="bp-section__num" style="background:#64748b">12</div>
+          <div class="bp-section__title"><i class="fas fa-paperclip" style="color:#64748b;margin-right:10px"></i>Annexes</div>
+        </div>
+        <div class="bp-section__body">
+          ${annexes.documents_joints?.length ? renderList(annexes.documents_joints) : '<p class="bp-empty">Aucune annexe disponible</p>'}
+        </div>
+      </div>
+
+      <!-- Regenerate -->
+      ${embedded ? '' : '<div style="text-align:center;margin-top:32px;padding:24px"><button class="gen-btn gen-btn--primary" onclick="generateBusinessPlan()"><i class="fas fa-rotate"></i> Regenerer le Business Plan</button><div id="generateStatus" style="margin-top:16px;display:none"></div></div>'}
+
     ` : `
-    <!-- Pre-generation view -->
-    <div class="bp-card">
-      <div class="bp-card__title"><i class="fas fa-info-circle" style="color:#6366f1"></i> \u00C0 propos</div>
-      <p style="font-size:14px;color:#94a3b8;line-height:1.7">
-        Le <strong style="color:#e2e8f0">Business Plan</strong> synth\u00E9tise l\u2019ensemble de vos livrables
-        (BMC, SIC, Framework financier, Plan OVO, Diagnostic) en un dossier structur\u00E9 pr\u00EAt \u00E0 pr\u00E9senter aux investisseurs.
-      </p>
-    </div>
+      <!-- PRE-GENERATION VIEW -->
+      <div class="bp-pregen">
+        <div class="bp-section">
+          <div class="bp-section__body" style="text-align:center;padding:48px 28px">
+            <div style="width:80px;height:80px;border-radius:20px;background:var(--bp-violet-bg);display:flex;align-items:center;justify-content:center;margin:0 auto 20px">
+              <i class="fas fa-file-alt" style="font-size:36px;color:var(--bp-violet);opacity:0.7"></i>
+            </div>
+            <h2 style="font-size:22px;font-weight:800;color:var(--bp-text);margin-bottom:10px">Generer votre Business Plan</h2>
+            <p style="font-size:14px;color:var(--bp-text-muted);max-width:480px;margin:0 auto 32px;line-height:1.7">
+              Le Business Plan synthetise l'ensemble de vos livrables (BMC, SIC, Framework financier, Plan OVO, Diagnostic) en un dossier structure pret a presenter aux investisseurs.
+            </p>
 
-    <!-- Sources -->
-    <div class="bp-card">
-      <div class="bp-card__title"><i class="fas fa-database" style="color:#7c3aed"></i> Sources de donn\u00E9es (${availableCount}/5)</div>
-      ${[
-        { has: hasBmc, icon: 'fa-diagram-project', label: 'BMC (Business Model Canvas)', req: true },
-        { has: hasSic, icon: 'fa-hand-holding-heart', label: 'SIC (Social Impact Canvas)', req: false },
-        { has: hasFramework, icon: 'fa-chart-bar', label: 'Framework Analyse PME', req: true },
-        { has: hasDiag, icon: 'fa-stethoscope', label: 'Diagnostic Expert', req: false },
-        { has: hasOvo, icon: 'fa-file-excel', label: 'Plan Financier OVO', req: false },
-      ].map(s => `
-        <div class="source-row" style="background:${s.has ? '#064e3b44' : '#7c2d1222'};border-color:${s.has ? '#065f46' : '#7c2d12'}">
-          <div style="width:32px;height:32px;border-radius:8px;background:${s.has ? '#065f46' : '#7c2d12'};display:flex;align-items:center;justify-content:center;color:${s.has ? '#6ee7b7' : '#fca5a5'};font-size:13px;flex-shrink:0">
-            <i class="fas ${s.has ? 'fa-check' : 'fa-times'}"></i>
+            <div style="text-align:left;max-width:480px;margin:0 auto 32px">
+              <div style="font-size:13px;font-weight:700;color:var(--bp-text);margin-bottom:14px"><i class="fas fa-database" style="color:var(--bp-violet-light);margin-right:8px"></i>Sources de donnees (${availableCount}/5)</div>
+              ${[
+                { has: hasBmc, icon: 'fa-diagram-project', label: 'BMC (Business Model Canvas)', req: true },
+                { has: hasSic, icon: 'fa-hand-holding-heart', label: 'SIC (Social Impact Canvas)', req: false },
+                { has: hasFramework, icon: 'fa-chart-bar', label: 'Framework Analyse PME', req: true },
+                { has: hasDiag, icon: 'fa-stethoscope', label: 'Diagnostic Expert', req: false },
+                { has: hasOvo, icon: 'fa-file-excel', label: 'Plan Financier OVO', req: false },
+              ].map(s => '<div class="bp-source-row" style="background:' + (s.has ? 'rgba(5,150,105,0.06)' : 'rgba(220,38,38,0.04)') + ';border-color:' + (s.has ? 'rgba(5,150,105,0.2)' : 'rgba(220,38,38,0.15)') + '"><div class="bp-source-icon" style="background:' + (s.has ? 'rgba(5,150,105,0.15)' : 'rgba(220,38,38,0.1)') + ';color:' + (s.has ? '#6ee7b7' : '#fca5a5') + '"><i class="fas ' + (s.has ? 'fa-check' : 'fa-times') + '"></i></div><div style="flex:1"><div style="font-size:13px;font-weight:600;color:' + (s.has ? '#6ee7b7' : '#fca5a5') + '">' + s.label + '</div><div style="font-size:11px;color:var(--bp-text-dim)">' + (s.has ? 'Disponible' : 'Non disponible') + ' \u2022 ' + (s.req ? 'Recommande' : 'Optionnel') + '</div></div></div>').join('')}
+            </div>
+
+            <button id="btnGenerate" class="gen-btn gen-btn--primary" ${!canGenerate ? 'disabled' : ''} onclick="generateBusinessPlan()">
+              <i class="fas fa-wand-magic-sparkles"></i> Generer le Business Plan
+            </button>
+            ${!canGenerate ? '<p style="font-size:12px;color:#f87171;margin-top:14px">Au moins le Business Model Canvas ou le Framework d\'analyse financiere est requis.</p>' : ''}
+            <div id="generateStatus" style="margin-top:16px;display:none"></div>
           </div>
-          <div style="flex:1">
-            <div style="font-size:13px;font-weight:600;color:${s.has ? '#6ee7b7' : '#fca5a5'}">${s.label}</div>
-            <div style="font-size:11px;color:#64748b">${s.has ? 'Disponible' : 'Non disponible'}${s.req ? ' \u2022 Recommand\u00E9' : ' \u2022 Optionnel'}</div>
-          </div>
-        </div>`).join('')}
-    </div>
-
-    <!-- Generate button -->
-    <div style="text-align:center;padding:20px">
-      <button id="btnGenerate" class="gen-btn gen-btn--primary" ${!canGenerate ? 'disabled' : ''} onclick="generateBusinessPlan()">
-        <i class="fas fa-file-alt"></i> G\u00E9n\u00E9rer le Business Plan
-      </button>
-      ${!canGenerate ? '<p style="font-size:12px;color:#f87171;margin-top:12px">Au moins le Business Model Canvas ou le Framework d\u2019analyse financi\u00E8re est requis.</p>' : ''}
-      <div id="generateStatus" style="margin-top:16px;display:none"></div>
-    </div>
-
-    <div class="preview-area">
-      <i class="fas fa-file-alt"></i>
-      <p>G\u00E9n\u00E9rez le Business Plan pour voir le document complet</p>
-    </div>
+        </div>
+      </div>
     `}
 
     <!-- Footer -->
-    <div style="text-align:center;padding:20px 0;margin-top:20px;border-top:1px solid #1e293b">
-      <div style="font-size:12px;color:#64748b">G\u00E9n\u00E9r\u00E9 par ESANO \u2022 Business Plan${bpData?.meta?.date_generation ? ' \u2022 ' + new Date(bpData.meta.date_generation).toLocaleDateString('fr-FR', {day:'numeric',month:'long',year:'numeric'}) : ''}</div>
+    <div style="text-align:center;padding:28px 0;margin-top:24px;border-top:1px solid var(--bp-border)">
+      <div style="font-size:12px;color:var(--bp-text-dim)">Genere par ESONO${genDate ? ' \u2022 ' + genDate : ''} \u2022 Business Plan v${bpVersion || 0}</div>
     </div>
-  </div>
+    </div><!-- /.bp-content -->
+  </main>
+</div>
 
-  <script>
-    function getCookie(n){return(document.cookie.match('(^|;)\\\\s*'+n+'=([^;]*)')||[])[2]||''}
-    async function generateBusinessPlan() {
-      const btn = document.getElementById('btnGenerate');
-      const status = document.getElementById('generateStatus');
-      if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> G\u00E9n\u00E9ration en cours...'; }
-      if (status) { status.style.display = 'block'; status.innerHTML = '<div style="color:#94a3b8"><i class="fas fa-spinner fa-spin"></i> Compilation de vos livrables...</div>'; }
-      try {
-        const token = getCookie('auth_token') || localStorage.getItem('auth_token');
-        const res = await fetch('/api/business-plan/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-          credentials: 'include',
-          body: JSON.stringify({})
-        });
-        const data = await res.json();
-        if (data.success) {
-          if (status) status.innerHTML = '<div style="color:#6ee7b7">\u2705 ' + (data.message || 'Business Plan g\u00E9n\u00E9r\u00E9') + '</div>';
-          setTimeout(() => location.reload(), 1200);
-        } else {
-          if (status) status.innerHTML = '<div style="color:#f87171">\u274C ' + (data.error || 'Erreur') + '</div>';
-          if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-file-alt"></i> G\u00E9n\u00E9rer le Business Plan'; }
-        }
-      } catch(e) {
-        if (status) status.innerHTML = '<div style="color:#f87171">\u274C Erreur r\u00E9seau</div>';
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-file-alt"></i> G\u00E9n\u00E9rer le Business Plan'; }
+<!-- Share modal -->
+<div class="bp-share-modal" id="bpShareModal">
+  <div class="bp-share-modal__box" style="position:relative">
+    <button class="bp-share-modal__close" onclick="closeShareModal()"><i class="fas fa-times"></i></button>
+    <div class="bp-share-modal__title"><i class="fas fa-share-nodes" style="color:var(--bp-violet)"></i> Partager le Business Plan</div>
+    <p style="font-size:13px;color:var(--bp-text-muted);margin-bottom:16px">Copiez le lien ci-dessous pour partager ce Business Plan :</p>
+    <input class="bp-share-input" id="bpShareUrl" readonly value="" onclick="this.select()">
+    <div style="display:flex;gap:8px">
+      <button class="bp-dl-btn bp-dl-btn--primary" style="flex:1;justify-content:center" onclick="copyShareLink()"><i class="fas fa-copy"></i> Copier le lien</button>
+      <button class="bp-dl-btn bp-dl-btn--ghost" style="flex:1;justify-content:center" onclick="closeShareModal()">Fermer</button>
+    </div>
+    <div id="bpShareMsg" style="text-align:center;margin-top:10px;font-size:12px;color:#6ee7b7;display:none"><i class="fas fa-check"></i> Lien copie !</div>
+  </div>
+</div>
+
+<!-- Back to top -->
+<button class="bp-totop" id="bpToTop" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Retour en haut">
+  <i class="fas fa-arrow-up"></i>
+</button>
+
+<script>
+  function getCookie(n){return(document.cookie.match('(^|;)\\\\s*'+n+'=([^;]*)')||[])[2]||''}
+
+  // Sidebar toggle
+  function toggleSidebar(){
+    var sb=document.getElementById('bpSidebar');
+    var ov=document.getElementById('bpOverlay');
+    if(sb){sb.classList.toggle('bp-sidebar--open')}
+    if(ov){ov.classList.toggle('bp-overlay--visible')}
+  }
+  function closeSidebar(){
+    var sb=document.getElementById('bpSidebar');
+    var ov=document.getElementById('bpOverlay');
+    if(sb){sb.classList.remove('bp-sidebar--open')}
+    if(ov){ov.classList.remove('bp-overlay--visible')}
+  }
+
+  // Scroll to section
+  function scrollToSection(id){
+    var el=document.getElementById('bp-'+id);
+    if(el)el.scrollIntoView({behavior:'smooth',block:'start'});
+  }
+
+  // Active nav tracking
+  var sections=document.querySelectorAll('.bp-section[id]');
+  var navLinks=document.querySelectorAll('.bp-nav-item[data-section]');
+  var toTopBtn=document.getElementById('bpToTop');
+  function updateActiveNav(){
+    var current='';
+    sections.forEach(function(s){
+      var rect=s.getBoundingClientRect();
+      if(rect.top<=130)current=s.id.replace('bp-','');
+    });
+    navLinks.forEach(function(link){
+      link.classList.toggle('bp-nav-item--active',link.dataset.section===current);
+    });
+    if(toTopBtn)toTopBtn.classList.toggle('bp-totop--visible',window.scrollY>400);
+  }
+  window.addEventListener('scroll',updateActiveNav,{passive:true});
+  updateActiveNav();
+
+  // Share modal
+  function openShareModal(){
+    var m=document.getElementById('bpShareModal');
+    var u=document.getElementById('bpShareUrl');
+    if(m)m.classList.add('bp-share-modal--open');
+    if(u)u.value=window.location.href;
+  }
+  function closeShareModal(){
+    var m=document.getElementById('bpShareModal');
+    if(m)m.classList.remove('bp-share-modal--open');
+  }
+  function copyShareLink(){
+    var u=document.getElementById('bpShareUrl');
+    var msg=document.getElementById('bpShareMsg');
+    if(u){u.select();document.execCommand('copy');
+    if(navigator.clipboard)navigator.clipboard.writeText(u.value);}
+    if(msg){msg.style.display='block';setTimeout(function(){msg.style.display='none'},2000)}
+  }
+
+  // Generate Business Plan
+  async function generateBusinessPlan(){
+    var btn=document.getElementById('btnGenerate')||document.querySelector('.gen-btn');
+    var status=document.getElementById('generateStatus');
+    if(btn){btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Generation en cours... (peut prendre ~1min)';}
+    if(status){status.style.display='block';status.innerHTML='<div style="color:var(--bp-text-muted)"><i class="fas fa-spinner fa-spin"></i> Compilation de vos livrables et generation IA...</div>';}
+    try{
+      var token=getCookie('auth_token')||localStorage.getItem('auth_token');
+      var res=await fetch('/api/business-plan/generate',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+        credentials:'include',
+        body:JSON.stringify({})
+      });
+      var data=await res.json();
+      if(data.success){
+        if(status)status.innerHTML='<div style="color:#6ee7b7"><i class="fas fa-check-circle"></i> '+(data.message||'Business Plan genere')+(data.ai_generated?' (IA)':'')+'</div>';
+        setTimeout(function(){location.reload()},1200);
+      }else{
+        if(status)status.innerHTML='<div style="color:#f87171"><i class="fas fa-exclamation-circle"></i> '+(data.error||'Erreur')+'</div>';
+        if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-wand-magic-sparkles"></i> Generer le Business Plan';}
       }
+    }catch(e){
+      if(status)status.innerHTML='<div style="color:#f87171"><i class="fas fa-exclamation-circle"></i> Erreur reseau</div>';
+      if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-wand-magic-sparkles"></i> Generer le Business Plan';}
     }
-  </script>
+  }
+
+  // Financial chart
+  ${hasChartData ? `
+  (function(){
+    var ctx=document.getElementById('bpFinChart');
+    if(!ctx||typeof Chart==='undefined')return;
+    new Chart(ctx,{
+      type:'bar',
+      data:{
+        labels:['Annee 1','Annee 2','Annee 3'],
+        datasets:[
+          {label:"Chiffre d'affaires",data:[${caVals.join(',')}],backgroundColor:'rgba(124,58,237,0.7)',borderColor:'#7c3aed',borderWidth:2,borderRadius:6,barPercentage:0.7},
+          {label:'Resultat net',data:[${rnVals.join(',')}],backgroundColor:'rgba(5,150,105,0.6)',borderColor:'#059669',borderWidth:2,borderRadius:6,barPercentage:0.7},
+          {label:'Cash-flow',data:[${cfVals.join(',')}],backgroundColor:'rgba(37,99,235,0.5)',borderColor:'#2563eb',borderWidth:2,borderRadius:6,barPercentage:0.7}
+        ]
+      },
+      options:{
+        responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{labels:{color:'#94a3b8',font:{family:'Inter',size:12,weight:'600'},padding:16,usePointStyle:true,pointStyle:'rectRounded'}},tooltip:{backgroundColor:'#1e293b',titleColor:'#e2e8f0',bodyColor:'#94a3b8',borderColor:'#334155',borderWidth:1,cornerRadius:10,padding:12,callbacks:{label:function(ctx){return ctx.dataset.label+': '+new Intl.NumberFormat('fr-FR').format(ctx.raw)+' FCFA'}}}},
+        scales:{x:{ticks:{color:'#64748b',font:{family:'Inter',size:12}},grid:{display:false}},y:{ticks:{color:'#64748b',font:{family:'Inter',size:11},callback:function(v){if(v>=1e6)return(v/1e6).toFixed(0)+'M';if(v>=1e3)return(v/1e3).toFixed(0)+'k';return v}},grid:{color:'rgba(51,65,85,0.3)'},border:{dash:[4,4]}}}
+      }
+    });
+  })();
+  ` : ''}
+<\/script>
 </body>
 </html>`
 }
