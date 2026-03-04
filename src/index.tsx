@@ -7489,6 +7489,103 @@ app.post('/api/plan-ovo/fill', async (c) => {
       return c.json({ error: 'Données extraction corrompues' }, 500)
     }
 
+    // ═══ Validate extraction format ═══
+    // generate-all stores {score, projections, key_metrics} but the filler needs
+    // {hypotheses, produits, personnel, compte_resultat, investissements}
+    if (!extractionData.hypotheses || !extractionData.produits) {
+      console.warn(`[Plan OVO Fill] extraction_json missing required fields (hypotheses/produits). Source: ${plan.source || 'unknown'}. Running OVO extraction first...`)
+
+      // Attempt on-the-fly extraction using existing deliverables
+      try {
+        const apiKey = c.env.ANTHROPIC_API_KEY || ''
+        if (!apiKey) {
+          return c.json({ 
+            error: 'Extraction OVO incomplète', 
+            message: "Les données d'extraction ne sont pas au format OVO requis. Lancez POST /api/plan-ovo/generate pour générer l'extraction complète.",
+            needsExtraction: true
+          }, 422)
+        }
+
+        // Load deliverables for extraction
+        const [framework, bmc, pmeDataRow] = await Promise.all([
+          db.prepare(`SELECT content, score FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
+          db.prepare(`SELECT content, score FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_analysis' ORDER BY created_at DESC LIMIT 1`).bind(payload.userId).first(),
+          db.prepare(`SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_pme_data' ORDER BY version DESC LIMIT 1`).bind(payload.userId).first()
+        ])
+
+        if (!framework) {
+          return c.json({
+            error: 'Extraction OVO incomplète et Framework non disponible',
+            message: "Lancez d'abord la génération complète ou POST /api/plan-ovo/generate.",
+            needsExtraction: true
+          }, 422)
+        }
+
+        // Import extractOVOData dynamically
+        // extractOVOData is already imported at top of file
+        
+        let pmeData: PmeStructuredData | null = null
+        if (pmeDataRow?.content) {
+          try { pmeData = JSON.parse(pmeDataRow.content as string) } catch {}
+        }
+
+        // Wrap deliverables as DeliverableData objects (extractOVOData expects {id, type, content, score, available})
+        const fwDeliverable = {
+          id: (framework as any).id || 'fw',
+          type: 'framework',
+          content: framework.content as string,
+          score: (framework.score as number) || null,
+          available: true
+        }
+        let bmcDeliverable: any = undefined
+        if (bmc?.content) {
+          bmcDeliverable = {
+            id: (bmc as any).id || 'bmc',
+            type: 'bmc_analysis',
+            content: bmc.content as string,
+            score: (bmc.score as number) || null,
+            available: true
+          }
+        }
+
+        // Detect country from plan_ovo_analyses or pmeData
+        const ovoCountry = (plan.pays as string) || pmeData?.country || "Côte d'Ivoire"
+        const countryKey = detectCountry([ovoCountry])
+        const fiscal = getFiscalParams(countryKey)
+        const kbCtx = buildKBContext(fiscal)
+
+        console.log(`[Plan OVO Fill] Running on-the-fly OVO extraction for country=${ovoCountry}...`)
+        
+        try {
+          const ovoResult = await extractOVOData({
+            apiKey,
+            framework: fwDeliverable,
+            bmc: bmcDeliverable,
+            pmeData,
+            fiscal,
+            kbContext: kbCtx.kbContext
+          })
+
+          // Store the proper extraction
+          extractionData = ovoResult
+          await db.prepare(
+            'UPDATE plan_ovo_analyses SET extraction_json = ?, updated_at = datetime(\'now\') WHERE id = ?'
+          ).bind(JSON.stringify(ovoResult), planId).run()
+          console.log(`[Plan OVO Fill] ✅ On-the-fly extraction completed. Products: ${ovoResult.produits?.length || 0}`)
+        } catch (innerErr: any) {
+          console.error(`[Plan OVO Fill] extractOVOData inner error:`, innerErr.message, innerErr.stack?.substring(0, 500))
+          throw innerErr
+        }
+      } catch (extractErr: any) {
+        console.error(`[Plan OVO Fill] On-the-fly extraction failed:`, extractErr.message, extractErr.stack?.substring(0, 500))
+        return c.json({ 
+          error: 'Extraction OVO incomplète', 
+          message: `Extraction automatique échouée: ${extractErr.message}. Lancez POST /api/plan-ovo/generate manuellement.`,
+          needsExtraction: true
+        }, 422)
+      }
+    }
+
     console.log(`[Plan OVO Fill] Starting fill for plan ${planId} (v${plan.version})`)
     console.log(`[Plan OVO Fill] Products: ${extractionData.produits?.length || 0}, Staff: ${extractionData.personnel?.length || 0}, Investments: ${extractionData.investissements?.length || 0}`)
 
@@ -8601,23 +8698,138 @@ function renderBusinessPlanModulePage(opts: {
   const fmtCurrency = (n: any) => { const v = Number(String(n).replace(/\s/g,'')); if (isNaN(v)) return String(n ?? '\u2014'); if (Math.abs(v) >= 1e9) return (v/1e9).toFixed(1) + ' Mrd'; if (Math.abs(v) >= 1e6) return (v/1e6).toFixed(1) + 'M'; if (Math.abs(v) >= 1e3) return Math.round(v/1e3) + 'k'; return v.toLocaleString('fr-FR') }
   const fmtCurrencyFull = (n: any) => { const v = Number(String(n).replace(/\s/g,'')); if (isNaN(v)) return String(n ?? '\u2014'); return v.toLocaleString('fr-FR') + ' FCFA' }
 
+  // ── Normalize bpData: convert generate-all flat sections to rich structure ──
+  // generate-all produces: { score, sections: [{ title, content }] }
+  // module expects: { resume_executif: { synthese }, presentation_entreprise: { description_generale }, ... }
+  let normalizedBp: any = bpData || {}
+  if (bpData?.sections && Array.isArray(bpData.sections) && !bpData.resume_executif && !bpData.executive_summary) {
+    // Map section titles to structured keys
+    const sectionTitleMap: Record<string, string> = {
+      'resume executif': 'resume_executif',
+      'résumé exécutif': 'resume_executif',
+      'executive summary': 'resume_executif',
+      'presentation': 'presentation_entreprise',
+      'présentation de l\'entreprise': 'presentation_entreprise',
+      'présentation de l\'entreprise & équipe': 'presentation_entreprise',
+      'company presentation': 'presentation_entreprise',
+      'analyse de marche': 'analyse_marche',
+      'analyse de marché': 'analyse_marche',
+      'market analysis': 'analyse_marche',
+      'bmc affine': 'bmc_affine',
+      'bmc affiné': 'bmc_affine',
+      'strategie commerciale': 'strategie_marketing',
+      'stratégie commerciale': 'strategie_marketing',
+      'strategie marketing': 'strategie_marketing',
+      'stratégie marketing': 'strategie_marketing',
+      'marketing strategy': 'strategie_marketing',
+      'modele economique': 'modele_economique',
+      'modèle économique': 'modele_economique',
+      'economic model': 'modele_economique',
+      'plan operationnel': 'plan_operationnel',
+      'plan opérationnel': 'plan_operationnel',
+      'operational plan': 'plan_operationnel',
+      'impact social': 'impact_social',
+      'social impact': 'impact_social',
+      'projections financieres': 'plan_financier',
+      'projections financières': 'plan_financier',
+      'plan financier': 'plan_financier',
+      'financial plan': 'plan_financier',
+      'gouvernance': 'gouvernance',
+      'governance': 'gouvernance',
+      'gouvernance & projet': 'gouvernance',
+      'gestion des risques': 'risques_mitigation',
+      'risques': 'risques_mitigation',
+      'risk mitigation': 'risques_mitigation',
+      'risques & mitigation': 'risques_mitigation',
+      'besoins de financement': 'besoins_financement',
+      'funding needs': 'besoins_financement',
+      'offre produit': 'offre_produit_service',
+      'offre produit/service': 'offre_produit_service',
+      'product service': 'offre_produit_service',
+      'annexes': 'annexes',
+    }
+    const rich: any = { score: bpData.score, metadata: { ai_generated: true, date_generation: new Date().toISOString() } }
+    for (const sec of bpData.sections) {
+      const titleNorm = (sec.title || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+      let key = ''
+      for (const [pattern, mapped] of Object.entries(sectionTitleMap)) {
+        const pNorm = pattern.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        if (titleNorm.includes(pNorm) || pNorm.includes(titleNorm)) { key = mapped; break }
+      }
+      if (!key) {
+        // Best-effort fuzzy match on first word
+        for (const [pattern, mapped] of Object.entries(sectionTitleMap)) {
+          if (titleNorm.split(' ')[0] === pattern.split(' ')[0]) { key = mapped; break }
+        }
+      }
+      if (key) {
+        const content = sec.content || ''
+        switch (key) {
+          case 'resume_executif':
+            rich.resume_executif = { synthese: content, points_cles: [] }
+            break
+          case 'presentation_entreprise':
+            rich.presentation_entreprise = { description_generale: content }
+            break
+          case 'analyse_marche':
+            rich.analyse_marche = { description: content }
+            break
+          case 'bmc_affine':
+            rich.bmc_affine = { description: content }
+            break
+          case 'strategie_marketing':
+            rich.strategie_marketing = { description: content }
+            break
+          case 'modele_economique':
+            rich.modele_economique = { description: content }
+            break
+          case 'plan_operationnel':
+            rich.plan_operationnel = { description: content }
+            break
+          case 'impact_social':
+            rich.impact_social = { description: content }
+            break
+          case 'plan_financier':
+            rich.plan_financier = { description: content }
+            break
+          case 'gouvernance':
+            rich.gouvernance = { description: content }
+            break
+          case 'risques_mitigation':
+            rich.risques_mitigation = { description: content }
+            break
+          case 'besoins_financement':
+            rich.besoins_financement = { description: content }
+            break
+          case 'offre_produit_service':
+            rich.offre_produit_service = { description: content }
+            break
+          case 'annexes':
+            rich.annexes = { description: content }
+            break
+        }
+      }
+    }
+    normalizedBp = rich
+  }
+
   // Data shortcuts
-  const meta = bpData?.metadata || {}
-  const resume = bpData?.resume_executif || bpData?.executive_summary || {}
-  const presentation = bpData?.presentation_entreprise || bpData?.company_presentation || {}
-  const swot = bpData?.analyse_swot || bpData?.swot_analysis || {}
-  const marche = bpData?.analyse_marche || bpData?.market_analysis || {}
-  const offre = bpData?.offre_produit_service || bpData?.product_service || {}
-  const marketing = bpData?.strategie_marketing || bpData?.marketing_strategy || {}
-  const modele = bpData?.model_economique || bpData?.modele_economique || bpData?.economic_model || {}
-  const operations = bpData?.plan_operationnel || bpData?.operational_plan || {}
-  const impact = bpData?.impact_social || bpData?.social_impact || {}
-  const financier = bpData?.plan_financier || bpData?.financial_plan || {}
-  const gouvernance = bpData?.gouvernance || bpData?.governance || {}
-  const risques = bpData?.risques_mitigation || bpData?.risk_mitigation || bpData?.risques || []
-  const attentes = bpData?.attentes_ovo || {}
-  const annexes = bpData?.annexes || {}
-  const scores = bpData?.scores || {}
+  const meta = normalizedBp?.metadata || {}
+  const resume = normalizedBp?.resume_executif || normalizedBp?.executive_summary || {}
+  const presentation = normalizedBp?.presentation_entreprise || normalizedBp?.company_presentation || {}
+  const swot = normalizedBp?.analyse_swot || normalizedBp?.swot_analysis || {}
+  const marche = normalizedBp?.analyse_marche || normalizedBp?.market_analysis || {}
+  const offre = normalizedBp?.offre_produit_service || normalizedBp?.product_service || {}
+  const marketing = normalizedBp?.strategie_marketing || normalizedBp?.marketing_strategy || {}
+  const modele = normalizedBp?.model_economique || normalizedBp?.modele_economique || normalizedBp?.economic_model || {}
+  const operations = normalizedBp?.plan_operationnel || normalizedBp?.operational_plan || {}
+  const impact = normalizedBp?.impact_social || normalizedBp?.social_impact || {}
+  const financier = normalizedBp?.plan_financier || normalizedBp?.financial_plan || {}
+  const gouvernance = normalizedBp?.gouvernance || normalizedBp?.governance || {}
+  const risques = normalizedBp?.risques_mitigation || normalizedBp?.risk_mitigation || normalizedBp?.risques || []
+  const attentes = normalizedBp?.attentes_ovo || {}
+  const annexes = normalizedBp?.annexes || {}
+  const scores = normalizedBp?.scores || {}
 
   const companyName = meta.entreprise || userName
   const sectorName = meta.secteur || 'Non spécifie'
@@ -8758,20 +8970,21 @@ function renderBusinessPlanModulePage(opts: {
     scores.plan_ovo != null ? 'Plan OVO: ' + scores.plan_ovo + '/100' : null,
   ].filter(Boolean)
 
-  // Completeness score
+  // Completeness score (handle both rich and simplified formats)
+  const hasContent = (obj: any) => obj && typeof obj === 'object' && Object.values(obj).some((v: any) => v && v !== '' && v !== 'A completer')
   const completenessItems = [
-    { label: 'Resume Executif', done: !!(resume.synthese || resume.points_cles?.length) },
-    { label: 'Presentation', done: !!(presentation.description_generale || Object.keys(infoTable).length > 0) },
-    { label: 'Analyse Marche', done: !!(marche.taille_marche || marche.tendances?.length) },
+    { label: 'Resume Executif', done: !!(resume.synthese || resume.description || resume.points_cles?.length) },
+    { label: 'Presentation', done: !!(presentation.description_generale || presentation.description || Object.keys(infoTable).length > 0) },
+    { label: 'Analyse Marche', done: !!(marche.taille_marche || marche.description || marche.tendances?.length) },
     { label: 'SWOT', done: !!(swot.forces?.length || swot.faiblesses?.length) },
     { label: 'Offre Produit', done: !!(offre.description || offre.proposition_valeur) },
-    { label: 'Marketing', done: !!(marketing.produit || marketing.prix) },
-    { label: 'Modele Economique', done: !!(modele.segments_clients || modele.sources_revenus) },
-    { label: 'Plan Operationnel', done: !!(operations.equipe_direction?.length || operations.personnel) },
-    { label: 'Impact Social', done: !!(impact.impact_social || impact.odd_cibles?.length) },
-    { label: 'Plan Financier', done: !!(finTableHtml || financier.plan_investissement) },
-    { label: 'Gouvernance', done: !!(gouvernance.projet_description || gouvernance.situation_actuelle) },
-    { label: 'Risques', done: !!(Array.isArray(risques) && risques.length > 0) },
+    { label: 'Marketing', done: !!(marketing.produit || marketing.prix || marketing.description) },
+    { label: 'Modele Economique', done: !!(modele.segments_clients || modele.sources_revenus || modele.description) },
+    { label: 'Plan Operationnel', done: !!(operations.equipe_direction?.length || operations.personnel || operations.description) },
+    { label: 'Impact Social', done: !!(impact.impact_social || impact.odd_cibles?.length || impact.description) },
+    { label: 'Plan Financier', done: !!(finTableHtml || financier.plan_investissement || financier.description) },
+    { label: 'Gouvernance', done: !!(gouvernance.projet_description || gouvernance.situation_actuelle || gouvernance.description) },
+    { label: 'Risques', done: !!(Array.isArray(risques) && risques.length > 0 || (typeof risques === 'object' && risques.description)) },
   ]
   const completenessScore = Math.round((completenessItems.filter(c => c.done).length / completenessItems.length) * 100)
 
@@ -9121,7 +9334,7 @@ function renderBusinessPlanModulePage(opts: {
           <div class="bp-section__title"><i class="fas fa-file-lines" style="color:#7c3aed;margin-right:8px"></i>Resume Executif</div>
         </div>
         <div class="bp-section__body">
-          ${renderPara(resume.synthese, 'Synthese non disponible')}
+          ${renderPara(resume.synthese || resume.description, 'Synthese non disponible')}
           ${resume.points_cles?.length ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-star"></i> Points cles</div>' + renderList(resume.points_cles) + '</div>' : ''}
           ${(resume.montant_recherche && resume.montant_recherche !== 'A completer') || (resume.usage_fonds && resume.usage_fonds !== 'A completer') ? '<div class="bp-stats">' +
             (resume.montant_recherche && resume.montant_recherche !== 'A completer' ? '<div class="bp-stat"><div class="bp-stat__value">' + esc(resume.montant_recherche) + '</div><div class="bp-stat__label">Financement recherche</div></div>' : '') +
@@ -9138,7 +9351,7 @@ function renderBusinessPlanModulePage(opts: {
         </div>
         <div class="bp-section__body">
           ${infoTableHtml ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-id-card"></i> Informations</div>' + infoTableHtml + '</div>' : ''}
-          ${renderPara(presentation.description_generale)}
+          ${renderPara(presentation.description_generale || presentation.description)}
           ${presentation.revue_historique ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-clock-rotate-left"></i> Historique</div>' + renderPara(presentation.revue_historique.raison_creation) + (presentation.revue_historique.realisations_cles?.length ? renderList(presentation.revue_historique.realisations_cles) : '') + '</div>' : ''}
           ${presentation.vision_mission_valeurs ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-eye"></i> Vision, Mission & Valeurs</div><div class="bp-vmv">' +
             (presentation.vision_mission_valeurs.vision ? '<div class="bp-vmv__card"><div class="bp-vmv__label">Vision</div><div class="bp-vmv__text">' + nl2br(presentation.vision_mission_valeurs.vision) + '</div></div>' : '') +
@@ -9159,6 +9372,7 @@ function renderBusinessPlanModulePage(opts: {
           <div class="bp-section__title"><i class="fas fa-chart-pie" style="color:#7c3aed;margin-right:8px"></i>Analyse de Marche</div>
         </div>
         <div class="bp-section__body">
+          ${marche.description && !marche.taille_marche ? renderPara(marche.description) : ''}
           ${renderPara(marche.taille_marche)}
           ${renderPara(marche.potentiel_croissance)}
           ${marche.tendances?.length ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-arrow-trend-up"></i> Tendances</div>' + renderList(marche.tendances) + '</div>' : ''}
@@ -9192,6 +9406,7 @@ function renderBusinessPlanModulePage(opts: {
           <div class="bp-section__title"><i class="fas fa-bullhorn" style="color:#7c3aed;margin-right:8px"></i>Strategie Marketing (5P)</div>
         </div>
         <div class="bp-section__body">
+          ${marketing.description && !marketing.produit ? renderPara(marketing.description) : ''}
           ${marketing.produit ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-cube"></i> Produit</div>' + renderPara(marketing.produit) + '</div>' : ''}
           ${marketing.point_de_vente ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-store"></i> Point de vente</div>' + renderPara(marketing.point_de_vente) + '</div>' : ''}
           ${marketing.prix ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-tag"></i> Prix</div>' + (typeof marketing.prix === 'object' ? renderKV(marketing.prix, { prix_vente: 'Prix de vente', prix_revient: 'Prix de revient', marge: 'Marge', strategie: 'Strategie' }) : renderPara(marketing.prix)) + '</div>' : ''}
@@ -9207,6 +9422,7 @@ function renderBusinessPlanModulePage(opts: {
           <div class="bp-section__title"><i class="fas fa-diagram-project" style="color:#7c3aed;margin-right:8px"></i>Modele Economique</div>
         </div>
         <div class="bp-section__body">
+          ${modele.description && !modele.segments_clients ? renderPara(modele.description) : ''}
           <div class="bp-cards">
             ${[
               { icon: 'fa-users', title: 'Segments clients', value: modele.segments_clients },
@@ -9231,6 +9447,7 @@ function renderBusinessPlanModulePage(opts: {
           <div class="bp-section__title"><i class="fas fa-users-gear" style="color:#7c3aed;margin-right:8px"></i>Plan Operationnel</div>
         </div>
         <div class="bp-section__body">
+          ${operations.description && !operations.equipe_direction?.length && !operations.personnel ? renderPara(operations.description) : ''}
           ${Array.isArray(operations.equipe_direction) && operations.equipe_direction.length > 0 ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-user-tie"></i> Equipe de direction</div><div class="bp-cards">' +
             operations.equipe_direction.map((m: any) => '<div class="bp-card-item"><div class="bp-card-item__title">' + esc(m.nom || '\u2014') + '</div><div class="bp-card-item__desc">' + esc(m.role || '') + (m.competences ? '<br>' + esc(m.competences) : '') + '</div></div>').join('') +
             '</div></div>' : ''}
@@ -9247,6 +9464,7 @@ function renderBusinessPlanModulePage(opts: {
           <div class="bp-section__title"><i class="fas fa-hand-holding-heart" style="color:#7c3aed;margin-right:8px"></i>Impact Social & Environnemental</div>
         </div>
         <div class="bp-section__body">
+          ${impact.description && !impact.impact_social ? renderPara(impact.description) : ''}
           ${impact.impact_social ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-heart"></i> Impact social</div>' + renderPara(impact.impact_social) + '</div>' : ''}
           ${impact.impact_environnemental ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-leaf"></i> Impact environnemental</div>' + renderPara(impact.impact_environnemental) + '</div>' : ''}
           ${impact.impact_economique ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-chart-line"></i> Impact economique</div>' + renderPara(impact.impact_economique) + '</div>' : ''}
@@ -9264,6 +9482,7 @@ function renderBusinessPlanModulePage(opts: {
           <div class="bp-section__title"><i class="fas fa-chart-bar" style="color:#7c3aed;margin-right:8px"></i>Plan Financier</div>
         </div>
         <div class="bp-section__body">
+          ${financier.description && !financier.plan_investissement && !finTableHtml ? renderPara(financier.description) : ''}
           ${financier.plan_investissement ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-money-check-dollar"></i> Plan d\'investissement</div>' + renderPara(financier.plan_investissement) + '</div>' : ''}
           ${financier.justification_financement && financier.justification_financement !== 'A completer' ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-file-invoice-dollar"></i> Justification du financement</div>' + renderPara(financier.justification_financement) + '</div>' : ''}
           ${hasFinChart ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-chart-line"></i> Evolution financiere 3 ans</div><div class="bp-chart-container"><canvas id="bpFinChart"></canvas></div></div>' : ''}
@@ -9279,6 +9498,7 @@ function renderBusinessPlanModulePage(opts: {
           <div class="bp-section__title"><i class="fas fa-landmark" style="color:#7c3aed;margin-right:8px"></i>Gouvernance & Projet</div>
         </div>
         <div class="bp-section__body">
+          ${gouvernance.description && !gouvernance.projet_description ? renderPara(gouvernance.description) : ''}
           ${gouvernance.projet_description ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-rocket"></i> Description du projet</div>' + renderPara(gouvernance.projet_description) + '</div>' : ''}
           ${gouvernance.situation_actuelle && gouvernance.situation_actuelle !== 'A completer' ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-map-pin"></i> Situation actuelle</div>' + renderPara(gouvernance.situation_actuelle) + '</div>' : ''}
           ${gouvernance.duree_mise_en_oeuvre && gouvernance.duree_mise_en_oeuvre !== 'A completer' ? '<div class="bp-sub"><div class="bp-sub__title"><i class="fas fa-calendar-days"></i> Duree de mise en oeuvre</div>' + renderPara(gouvernance.duree_mise_en_oeuvre) + '</div>' : ''}
@@ -9295,7 +9515,8 @@ function renderBusinessPlanModulePage(opts: {
           <div class="bp-section__title"><i class="fas fa-shield-halved" style="color:#7c3aed;margin-right:8px"></i>Risques & Mitigation</div>
         </div>
         <div class="bp-section__body">
-          ${riskTableHtml || '<p class="bp-empty">Aucun risque identifie</p>'}
+          ${typeof risques === 'object' && !Array.isArray(risques) && risques.description ? renderPara(risques.description) : ''}
+          ${riskTableHtml || (typeof risques === 'object' && !Array.isArray(risques) && risques.description ? '' : '<p class="bp-empty">Aucun risque identifie</p>')}
         </div>
       </div>
 
@@ -10520,6 +10741,54 @@ app.get('/api/business-plan/download/:id', async (c) => {
       bpData = JSON.parse(row.business_plan_json as string)
     } catch {
       return c.json({ error: 'Erreur: données JSON du Business Plan invalides' }, 500)
+    }
+
+    // ═══ Normalize generate-all flat format to rich format for DOCX filler ═══
+    // generate-all produces: { score, sections: [{ title, content }] }
+    // DOCX filler expects: { resume_executif: { synthese }, presentation_entreprise: { description_generale }, ... }
+    if (bpData?.sections && Array.isArray(bpData.sections) && !bpData.resume_executif && !bpData.executive_summary) {
+      const sectionTitleMap: Record<string, string> = {
+        'resume executif': 'resume_executif', 'résumé exécutif': 'resume_executif',
+        'presentation': 'presentation_entreprise', 'présentation': 'presentation_entreprise',
+        'analyse de marche': 'analyse_marche', 'analyse de marché': 'analyse_marche',
+        'bmc affine': 'bmc_affine', 'bmc affiné': 'bmc_affine',
+        'strategie commerciale': 'strategie_marketing', 'stratégie commerciale': 'strategie_marketing',
+        'strategie marketing': 'strategie_marketing', 'stratégie marketing': 'strategie_marketing',
+        'modele economique': 'modele_economique', 'modèle économique': 'modele_economique',
+        'plan operationnel': 'plan_operationnel', 'plan opérationnel': 'plan_operationnel',
+        'impact social': 'impact_social',
+        'projections financieres': 'plan_financier', 'projections financières': 'plan_financier', 'plan financier': 'plan_financier',
+        'gouvernance': 'gouvernance', 'gouvernance & projet': 'gouvernance',
+        'gestion des risques': 'risques_mitigation', 'risques': 'risques_mitigation',
+        'besoins de financement': 'besoins_financement',
+        'offre produit': 'offre_produit_service', 'offre produit/service': 'offre_produit_service',
+      }
+      const rich: any = { score: bpData.score, metadata: { ai_generated: true, date_generation: new Date().toISOString() } }
+      for (const sec of bpData.sections) {
+        const titleNorm = (sec.title || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+        let key = ''
+        for (const [pattern, mapped] of Object.entries(sectionTitleMap)) {
+          const pNorm = pattern.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          if (titleNorm.includes(pNorm) || pNorm.includes(titleNorm)) { key = mapped; break }
+        }
+        if (key) {
+          const content = sec.content || ''
+          if (key === 'resume_executif') rich.resume_executif = { synthese: content }
+          else if (key === 'presentation_entreprise') rich.presentation_entreprise = { description_generale: content }
+          else if (key === 'analyse_marche') rich.analyse_marche = { description: content }
+          else if (key === 'strategie_marketing') rich.strategie_marketing = { description: content }
+          else if (key === 'modele_economique') rich.modele_economique = { description: content }
+          else if (key === 'plan_operationnel') rich.plan_operationnel = { description: content }
+          else if (key === 'impact_social') rich.impact_social = { description: content }
+          else if (key === 'plan_financier') rich.plan_financier = { description: content }
+          else if (key === 'gouvernance') rich.gouvernance = { description: content }
+          else if (key === 'risques_mitigation') rich.risques_mitigation = { description: content }
+          else if (key === 'besoins_financement') rich.besoins_financement = { description: content }
+          else rich[key] = { description: content }
+        }
+      }
+      bpData = rich
+      console.log('[BP Download] Normalized generate-all flat sections to rich format')
     }
 
     // Get company name for filename

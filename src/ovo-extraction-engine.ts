@@ -412,8 +412,9 @@ export async function extractOVOData(input: OVOExtractionInput): Promise<OVOExtr
   console.log(`[OVO Extraction] Calling Claude with ${userPrompt.length} chars user prompt`)
   console.log(`[OVO Extraction] Sources: pmeData=${!!pmeData}, framework=${framework.available}, bmc=${!!bmc?.available}, sic=${!!sic?.available}, diagnostic=${!!diagnostic?.available}`)
   if (pmeData) {
-    console.log(`[OVO Extraction] PME declared CA: N-2=${pmeData.historique.caTotal[0]}, N-1=${pmeData.historique.caTotal[1]}, N=${pmeData.historique.caTotal[2]}`)
-    if (pmeData.hypotheses.caObjectifs) {
+    const caTotal = Array.isArray(pmeData.historique?.caTotal) ? pmeData.historique.caTotal : [0, 0, 0]
+    console.log(`[OVO Extraction] PME declared CA: N-2=${caTotal[0]}, N-1=${caTotal[1]}, N=${caTotal[2]}`)
+    if (Array.isArray(pmeData.hypotheses?.caObjectifs)) {
       console.log(`[OVO Extraction] PME CA targets: ${pmeData.hypotheses.caObjectifs.join(', ')}`)
     }
   }
@@ -456,15 +457,16 @@ function buildUserPrompt(
 
   // ═══ SECTION 1: DONNÉES STRUCTURÉES PME — PRIORITÉ ABSOLUE ═══
   if (pmeData) {
-    const h = pmeData.historique
-    const hyp = pmeData.hypotheses
+    const h = pmeData.historique || { caTotal: [0,0,0], caByActivity: [], achatsMP: [0,0,0], sousTraitance: [0,0,0], coutsProduction: [0,0,0], salaires: [0,0,0], loyers: [0,0,0], assurances: [0,0,0], fraisGeneraux: [0,0,0], marketing: [0,0,0], fraisBancaires: [0,0,0], resultatNet: [0,0,0], tresoDebut: [0,0,0], tresoFin: [0,0,0], dso: [30,30,30], dpo: [45,45,45], stockJours: [60,60,60], detteCT: [0,0,0], detteLT: [0,0,0], serviceDette: [0,0,0], amortissements: [0,0,0] }
+    const hyp = pmeData.hypotheses || {} as any
+    if (!Array.isArray(h.caTotal)) h.caTotal = [0,0,0]
     const yearLabels = ['N-2', 'N-1', 'N (année en cours)']
     
     prompt += `=== DONNEES STRUCTUREES PME (Module 3) — PRIORITE ABSOLUE ===
 Entreprise: ${pmeData.companyName}
 Secteur: ${pmeData.sector}
 Pays: ${pmeData.country}
-Activites: ${pmeData.activities.map(a => `${a.name}${a.isStrategic ? ' (strategique)' : ''}`).join(', ')}
+Activites: ${Array.isArray(pmeData.activities) ? pmeData.activities.map(a => `${a.name}${a.isStrategic ? ' (strategique)' : ''}`).join(', ') : 'N/A'}
 
 --- CHIFFRE D'AFFAIRES REEL (INTOUCHABLE si > 0) ---
 `
@@ -489,7 +491,7 @@ Activites: ${pmeData.activities.map(a => `${a.name}${a.isStrategic ? ' (strategi
         prompt += `Y${i + 1}: ${hyp.caObjectifs[i]?.toLocaleString('fr-FR') || '0'} CFA [OBJECTIF ENTREPRENEUR]\n`
       }
     } else {
-      prompt += `Pas d'objectifs absolus. Taux de croissance declares: ${hyp.croissanceCA.map(v => v + '%').join(', ')}\n`
+      prompt += `Pas d'objectifs absolus. Taux de croissance declares: ${Array.isArray(hyp.croissanceCA) ? hyp.croissanceCA.map(v => v + '%').join(', ') : 'N/A'}\n`
     }
 
     prompt += `\n--- CHARGES REELLES DECLAREES (annee N — INTOUCHABLE si > 0) ---\n`
@@ -518,17 +520,17 @@ Activites: ${pmeData.activities.map(a => `${a.name}${a.isStrategic ? ' (strategi
     prompt += `  DSO: ${h.dso[2]} jours | DPO: ${h.dpo[2]} jours | Stock: ${h.stockJours[2]} jours\n`
 
     prompt += `\n--- HYPOTHESES ENTREPRENEUR ---\n`
-    prompt += `  Evolution prix: ${hyp.evolutionPrix.map(v => v + '%').join(', ')}\n`
-    prompt += `  Evolution couts directs: ${hyp.evolutionCoutsDirects.map(v => v + '%').join(', ')}\n`
-    prompt += `  Inflation charges fixes: ${hyp.inflationChargesFixes.map(v => v + '%').join(', ')}\n`
-    prompt += `  Evolution masse salariale: ${hyp.evolutionMasseSalariale.map(v => v + '%').join(', ')}\n`
-    prompt += `  CAPEX: ${hyp.capex.map(v => v.toLocaleString('fr-FR')).join(', ')} CFA\n`
+    prompt += `  Evolution prix: ${Array.isArray(hyp.evolutionPrix) ? hyp.evolutionPrix.map(v => v + '%').join(', ') : 'N/A'}\n`
+    prompt += `  Evolution couts directs: ${Array.isArray(hyp.evolutionCoutsDirects) ? hyp.evolutionCoutsDirects.map(v => v + '%').join(', ') : 'N/A'}\n`
+    prompt += `  Inflation charges fixes: ${Array.isArray(hyp.inflationChargesFixes) ? hyp.inflationChargesFixes.map(v => v + '%').join(', ') : 'N/A'}\n`
+    prompt += `  Evolution masse salariale: ${Array.isArray(hyp.evolutionMasseSalariale) ? hyp.evolutionMasseSalariale.map(v => v + '%').join(', ') : 'N/A'}\n`
+    prompt += `  CAPEX: ${Array.isArray(hyp.capex) ? hyp.capex.map(v => v.toLocaleString('fr-FR')).join(', ') : 'N/A'} CFA\n`
     prompt += `  Duree amortissement: ${hyp.amortissement} ans\n`
 
     if (hyp.investissements?.length) {
       prompt += `\n--- INVESTISSEMENTS DETAILLES ---\n`
       for (const inv of hyp.investissements) {
-        prompt += `  ${inv.description}: ${inv.montants.map(v => v.toLocaleString('fr-FR')).join(', ')} CFA\n`
+        prompt += `  ${inv.description}: ${Array.isArray(inv.montants) ? inv.montants.map(v => v.toLocaleString('fr-FR')).join(', ') : 'N/A'} CFA\n`
       }
     }
 
@@ -856,7 +858,7 @@ function enforceDeclaratedData(result: OVOExtractionResult, pmeData: PmeStructur
     result.metadata.cascade_applied.push(`CA N enforced: ${h.caTotal[2].toLocaleString('fr-FR')} CFA (declared)`)
   }
   if (hasObjectifs) {
-    result.metadata.cascade_applied.push(`CA Y1-Y5 from entrepreneur targets: ${hyp.caObjectifs!.map(v => Math.round(v/1e6) + 'M').join(', ')}`)
+    result.metadata.cascade_applied.push(`CA Y1-Y5 from entrepreneur targets: ${Array.isArray(hyp.caObjectifs) ? hyp.caObjectifs.map(v => Math.round(v/1e6) + 'M').join(', ') : 'N/A'}`)
   }
 
   console.log(`[OVO Enforcement] Complete. Sources: ${JSON.stringify(ds)}. Confidence: ${result.metadata.confidence_score}`)

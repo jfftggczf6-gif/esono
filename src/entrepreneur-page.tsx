@@ -2219,11 +2219,139 @@ entrepreneurRoutes.get('/preview/:userId/:type', async (c) => {
 
     const meta = DELIV_PAGE_META[dtype] || { title: dtype, icon: 'fa-file', colorHex: '#1e3a5f' }
 
-    // For bmc_html type, return raw HTML
-    if (dtype === 'bmc_html' || dtype === 'framework_html') {
+    // For _html types, return raw HTML directly
+    if (dtype === 'bmc_html' || dtype === 'framework_html' || dtype === 'sic_html' || dtype === 'diagnostic_html') {
       return c.html(safeScriptBlocks(deliverable.content))
     }
 
+    // For analysis types (bmc_analysis, sic_analysis, etc.), try to serve the HTML version first
+    const htmlTypeMap: Record<string, string> = {
+      'bmc_analysis': 'bmc_html',
+      'sic_analysis': 'sic_html',
+      'diagnostic': 'diagnostic_html',
+      'framework': 'framework_html',
+    }
+    const htmlType = htmlTypeMap[dtype]
+    if (htmlType) {
+      const htmlRow = await c.env.DB.prepare(
+        "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = ? ORDER BY version DESC LIMIT 1"
+      ).bind(userId, htmlType).first() as any
+      console.log(`[Preview] htmlType=${htmlType} userId=${userId} htmlRow=${!!htmlRow} contentLen=${htmlRow?.content?.length || 0}`)
+      if (htmlRow?.content && htmlRow.content.length > 100) {
+        return c.html(safeScriptBlocks(htmlRow.content))
+      }
+    }
+
+    // Business Plan: render rich HTML from sections array
+    if (dtype === 'business_plan' && content?.sections && Array.isArray(content.sections)) {
+      const bpScore = content.score || score || 0
+      const sections = content.sections as { title: string, content: string }[]
+      const companyName = user.name || 'Entreprise'
+      // Fetch project name if available
+      let projectName = companyName
+      try {
+        const proj = await c.env.DB.prepare("SELECT name FROM projects WHERE user_id = ? LIMIT 1").bind(userId).first() as any
+        if (proj?.name) projectName = proj.name
+      } catch {}
+
+      const sectionIcons: Record<string, string> = {
+        'Résumé Exécutif': 'fa-bookmark', 'Resume Executif': 'fa-bookmark',
+        'Présentation': 'fa-building', 'Presentation': 'fa-building',
+        'Analyse': 'fa-chart-line', 'Marché': 'fa-store', 'Marche': 'fa-store',
+        'BMC': 'fa-th-large', 'Stratégie': 'fa-bullseye', 'Strategie': 'fa-bullseye',
+        'Opérationnel': 'fa-cogs', 'Operationnel': 'fa-cogs',
+        'Financ': 'fa-coins', 'Risque': 'fa-shield-alt',
+        'Gouvernance': 'fa-users-cog', 'Impact': 'fa-leaf',
+        'Financement': 'fa-hand-holding-usd', 'Annexe': 'fa-paperclip',
+      }
+      const getIcon = (title: string) => {
+        for (const [key, icon] of Object.entries(sectionIcons)) {
+          if (title.includes(key)) return icon
+        }
+        return 'fa-file-alt'
+      }
+      const sectionColors = ['#1e3a5f', '#0e7c5f', '#d97706', '#7c3aed', '#dc2626', '#0284c7', '#059669', '#9333ea', '#e11d48', '#0891b2']
+
+      let sectionsHtml = ''
+      let navHtml = ''
+      sections.forEach((sec, idx) => {
+        const sectionId = `bp-section-${idx}`
+        const icon = getIcon(sec.title)
+        const color = sectionColors[idx % sectionColors.length]
+        navHtml += `<a href="#${sectionId}" class="bp-nav-item" style="border-left:3px solid ${color};padding:6px 12px;display:block;font-size:13px;color:#374151;text-decoration:none;margin-bottom:4px;border-radius:0 6px 6px 0;transition:all .2s" onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background='transparent'">${idx + 1}. ${sec.title}</a>`
+
+        // Convert markdown-like content to HTML
+        let htmlContent = (sec.content || '')
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+          .replace(/\*(.*?)\*/g, '<em>$1</em>')
+          .replace(/^### (.*$)/gm, '<h4 class="text-md font-semibold text-gray-700 mt-4 mb-2">$1</h4>')
+          .replace(/^## (.*$)/gm, '<h3 class="text-lg font-semibold text-gray-800 mt-5 mb-2">$1</h3>')
+          .replace(/^- (.*$)/gm, '<li class="ml-4 mb-1">$1</li>')
+          .replace(/(<li.*<\/li>\n?)+/g, '<ul class="list-disc pl-4 mb-3">$&</ul>')
+          .replace(/\n{2,}/g, '</p><p class="mb-3 text-gray-700 leading-relaxed">')
+          .replace(/\n/g, '<br>')
+        htmlContent = `<p class="mb-3 text-gray-700 leading-relaxed">${htmlContent}</p>`
+
+        sectionsHtml += `
+          <div id="${sectionId}" class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6 scroll-mt-20">
+            <div class="flex items-center gap-3 mb-4 pb-3 border-b border-gray-100">
+              <div class="w-10 h-10 rounded-lg flex items-center justify-center text-white text-sm" style="background:${color}"><i class="fas ${icon}"></i></div>
+              <h2 class="text-xl font-bold text-gray-800">${sec.title}</h2>
+            </div>
+            <div class="bp-content">${htmlContent}</div>
+          </div>`
+      })
+
+      const bpHtml = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+        <title>Business Plan — ${projectName}</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+        <style>
+          body{font-family:'Inter',sans-serif;background:#f0f2f5;color:#374151}
+          .bp-header{background:linear-gradient(135deg,#1e3a5f 0%,#2563eb 100%);color:white;padding:32px;border-radius:16px;margin-bottom:24px}
+          .score-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 16px;border-radius:20px;font-weight:700;font-size:14px}
+          .bp-content p{margin-bottom:12px;line-height:1.7}
+          .bp-content strong{color:#1e3a5f}
+          .bp-content ul{margin:8px 0 16px 0}
+          .bp-content li{padding:2px 0}
+          @media print{.bp-nav{display:none !important}.bp-header{break-after:avoid}}
+        </style>
+      </head><body class="p-4 md:p-8">
+        <div class="max-w-6xl mx-auto">
+          <div class="bp-header">
+            <div class="flex items-center justify-between flex-wrap gap-4">
+              <div>
+                <h1 class="text-3xl font-bold mb-1"><i class="fas fa-file-contract mr-2"></i>Business Plan</h1>
+                <p class="text-blue-100 text-lg">${projectName}</p>
+              </div>
+              <div>
+                <div class="score-badge" style="background:rgba(255,255,255,0.2)">
+                  <i class="fas fa-star text-yellow-300"></i>
+                  Score : ${bpScore}/100
+                </div>
+                <div class="text-blue-200 text-xs mt-2">${sections.length} sections • Généré par ESONO AI</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <div class="lg:col-span-1">
+              <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sticky top-4 bp-nav">
+                <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3"><i class="fas fa-list mr-1"></i>Sommaire</h3>
+                ${navHtml}
+              </div>
+            </div>
+            <div class="lg:col-span-3">${sectionsHtml}</div>
+          </div>
+        </div>
+      </body></html>`
+
+      return c.html(safeScriptBlocks(bpHtml))
+    }
+
+    // Fallback: render JSON content nicely for remaining types
     return c.html(`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
       <title>${meta.title} — ${user.name}</title>
       <script src="https://cdn.tailwindcss.com"></script>

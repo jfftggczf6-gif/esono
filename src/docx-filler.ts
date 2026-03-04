@@ -84,7 +84,7 @@ function fmtNum(n: any): string {
 function buildIntroduction(bp: any): string {
   const resume = bp.resume_executif || {}
   let xml = ''
-  if (resume.synthese) xml += makeContent(resume.synthese)
+  if (resume.synthese || resume.description) xml += makeContent(resume.synthese || resume.description)
   if (resume.points_cles?.length) {
     xml += makePara('Points clés :', true)
     xml += makeBulletList(resume.points_cles)
@@ -101,7 +101,7 @@ function buildIntroduction(bp: any): string {
 function buildResumeGestion(bp: any): string {
   const resume = bp.resume_executif || {}
   let xml = ''
-  if (resume.synthese) xml += makeContent(resume.synthese)
+  if (resume.synthese || resume.description) xml += makeContent(resume.synthese || resume.description)
   if (resume.points_cles?.length) {
     xml += makePara('Points clés :', true)
     xml += makeBulletList(resume.points_cles)
@@ -152,9 +152,9 @@ function buildVisionMission(bp: any): string {
 function buildEntreprise(bp: any): string {
   const pres = bp.presentation_entreprise || {}
   let xml = ''
-  if (pres.description_generale) {
+  if (pres.description_generale || pres.description) {
     xml += makePara('A : Description générale :', true)
-    xml += makeContent(pres.description_generale)
+    xml += makeContent(pres.description_generale || pres.description)
   }
   if (pres.objectifs_smart) {
     xml += makePara('B : L\'avenir :', true)
@@ -235,6 +235,12 @@ function buildModeleEntreprise(bp: any): string {
   const offre = bp.offre_produit_service || bp.product_service || {}
   let xml = ''
 
+  // Fallback: if only .description exists (from generate-all simplified format)
+  if (modele.description && !modele.segments_clients && !offre.description) {
+    xml += makeContent(modele.description)
+    return xml
+  }
+
   xml += makePara('A : Produit/service et proposition de valeur unique :', true)
   if (offre.description) xml += makeContent(offre.description)
   if (offre.proposition_valeur) xml += makeContent(offre.proposition_valeur)
@@ -262,6 +268,12 @@ function buildMarche(bp: any): string {
   const marche = bp.analyse_marche || bp.market_analysis || {}
   let xml = ''
 
+  // Fallback: if only .description exists (from generate-all simplified format)
+  if (marche.description && !marche.taille_marche && !marche.tendances?.length) {
+    xml += makeContent(marche.description)
+    return xml
+  }
+
   xml += makePara('A : Marché et potentiel de marché :', true)
   if (marche.taille_marche) xml += makeContent(marche.taille_marche)
   if (marche.potentiel_croissance) xml += makeContent(marche.potentiel_croissance)
@@ -285,6 +297,11 @@ function buildMarche(bp: any): string {
 function buildMarketing(bp: any): string {
   const mkt = bp.strategie_marketing || bp.marketing_strategy || {}
   let xml = ''
+  // Fallback: if only .description exists
+  if (mkt.description && !mkt.produit && !mkt.prix) {
+    xml += makeContent(mkt.description)
+    return xml
+  }
   if (mkt.produit) { xml += makePara('A : Produit (ou service) :', true); xml += makeContent(mkt.produit) }
   if (mkt.point_de_vente) { xml += makePara('B : Point(s) de vente :', true); xml += makeContent(mkt.point_de_vente) }
   if (mkt.prix) {
@@ -306,6 +323,11 @@ function buildMarketing(bp: any): string {
 function buildEquipe(bp: any): string {
   const ops = bp.plan_operationnel || bp.operational_plan || {}
   let xml = ''
+  // Fallback: if only .description exists
+  if (ops.description && !ops.equipe_direction?.length && !ops.personnel) {
+    xml += makeContent(ops.description)
+    return xml
+  }
 
   if (ops.equipe_direction?.length) {
     xml += makePara('A : L\'équipe de direction :', true)
@@ -341,6 +363,11 @@ function buildEquipe(bp: any): string {
 function buildDescriptionProjet(bp: any): string {
   const gouv = bp.gouvernance || bp.governance || {}
   let xml = ''
+  // Fallback: if only .description exists
+  if (gouv.description && !gouv.projet_description && !gouv.situation_actuelle) {
+    xml += makeContent(gouv.description)
+    return xml
+  }
   if (gouv.projet_description) xml += makeContent(gouv.projet_description)
   if (gouv.situation_actuelle && gouv.situation_actuelle !== 'À compléter') {
     xml += makePara('Situation actuelle :', true)
@@ -359,6 +386,11 @@ function buildDescriptionProjet(bp: any): string {
 function buildImpact(bp: any): string {
   const impact = bp.impact_social || bp.social_impact || {}
   let xml = ''
+  // Fallback: if only .description exists
+  if (impact.description && !impact.impact_social && !impact.odd_cibles?.length) {
+    xml += makeContent(impact.description)
+    return xml
+  }
   if (impact.impact_social) { xml += makePara('Impact social :', true); xml += makeContent(impact.impact_social) }
   if (impact.impact_environnemental) { xml += makePara('Impact environnemental :', true); xml += makeContent(impact.impact_environnemental) }
   if (impact.impact_economique) { xml += makePara('Impact économique :', true); xml += makeContent(impact.impact_economique) }
@@ -377,6 +409,11 @@ function buildImpact(bp: any): string {
 function buildFinancier(bp: any): string {
   const fin = bp.plan_financier || bp.financial_plan || {}
   let xml = ''
+  // Fallback: if only .description exists
+  if (fin.description && !fin.plan_investissement && !fin.tableau_financier_3ans) {
+    xml += makeContent(fin.description)
+    return xml
+  }
 
   if (fin.plan_investissement) {
     xml += makePara('A : Plan d\'investissement :', true)
