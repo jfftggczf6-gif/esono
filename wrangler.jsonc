@@ -9,8 +9,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "webapp-production",
-      "database_id": "local-dev-database"
+      "database_name": "esono-coach-production",
+      "database_id": "9157b564-e1a4-46e3-8d5a-87458f05dd2f"
     }
   ]
 }
