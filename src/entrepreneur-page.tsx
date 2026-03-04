@@ -32,8 +32,19 @@ export const entrepreneurRoutes = new Hono<{ Bindings: Bindings }>()
 
 // Safe JSON.stringify for embedding in <script> tags
 // Escapes </ to prevent premature closing of script/body/html tags
-function safeJSON(data: any): string {
+export function safeJSON(data: any): string {
   return JSON.stringify(data).replace(/</g, '\\u003c')
+}
+
+// Escape ALL </ inside <script> blocks in final HTML output
+// This prevents the HTML parser from prematurely closing the document
+// when JS string literals contain </div>, </body>, </html> etc.
+export function safeScriptBlocks(html: string): string {
+  return html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (match, attrs, content) => {
+    // Replace </ with <\/ inside the script content (standard JS escape)
+    const safeContent = content.replace(/<\//g, '<\\/')
+    return `<script${attrs}>${safeContent}</script>`
+  })
 }
 
 function getScoreColor(score: number): string {
@@ -2120,7 +2131,7 @@ entrepreneurRoutes.get('/preview/:userId/:type', async (c) => {
 
     // For bmc_html type, return raw HTML
     if (dtype === 'bmc_html' || dtype === 'framework_html') {
-      return c.html(deliverable.content)
+      return c.html(safeScriptBlocks(deliverable.content))
     }
 
     return c.html(`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -2225,13 +2236,13 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
       
       if (bmcHtml?.content) {
         console.log('[BMC Deliverable Page] Serving pre-stored HTML (' + bmcHtml.content.length + ' chars)')
-        return c.html(bmcHtml.content)
+        return c.html(safeScriptBlocks(bmcHtml.content))
       }
 
       // 2. Fallback: use old template with stored JSON data
       if (isAvailable) {
         const bmcData = adaptBMCData(content, (user?.name as string) || 'Entrepreneur', (user?.name as string) || 'Entrepreneur')
-        return c.html(renderBMCPage(bmcData, (user?.name as string) || 'Entrepreneur'))
+        return c.html(safeScriptBlocks(renderBMCPage(bmcData, (user?.name as string) || 'Entrepreneur')))
       }
     }
 
@@ -2244,7 +2255,7 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
       
       if (sicHtml?.content && sicHtml.content.length > 500) {
         console.log('[SIC Deliverable Page] Serving pre-stored HTML (' + sicHtml.content.length + ' chars)')
-        return c.html(sicHtml.content)
+        return c.html(safeScriptBlocks(sicHtml.content))
       }
 
       // 2. Generate from sic_analyses (new SIC Analyst flow)
@@ -2287,7 +2298,7 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
             ).bind(delivId, payload.userId, html).run()
           } catch { /* ignore cache error */ }
 
-          return c.html(html)
+          return c.html(safeScriptBlocks(html))
         } catch (e) {
           console.error('[SIC Deliverable Page] Error generating from sic_analyses:', e)
         }
@@ -2303,7 +2314,7 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
       
       if (fwHtml?.content) {
         console.log('[Framework Deliverable Page] Serving pre-stored HTML (' + fwHtml.content.length + ' chars)')
-        return c.html(fwHtml.content)
+        return c.html(safeScriptBlocks(fwHtml.content))
       }
       // Fallback: continue to generic rendering below
     }
@@ -2316,7 +2327,7 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
       
       if (diagHtml?.content) {
         console.log('[Diagnostic Expert Page] Serving pre-stored HTML (' + diagHtml.content.length + ' chars)')
-        return c.html(diagHtml.content)
+        return c.html(safeScriptBlocks(diagHtml.content))
       }
       // Fallback: continue to generic rendering below
     }
@@ -2329,7 +2340,7 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
       
       if (inputsHtml?.content) {
         console.log('[Inputs Deliverable Page] Serving pre-stored HTML (' + inputsHtml.content.length + ' chars)')
-        return c.html(inputsHtml.content)
+        return c.html(safeScriptBlocks(inputsHtml.content))
       }
       // Fallback: continue to generic rendering below
     }
@@ -3642,7 +3653,7 @@ entrepreneurRoutes.get('/deliverable/:type', async (c) => {
 </body>
 </html>`
 
-    return c.html(html)
+    return c.html(safeScriptBlocks(html))
   } catch (error) {
     console.error('Deliverable page error:', error)
     return c.redirect('/entrepreneur')
@@ -5475,7 +5486,7 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
 </body>
 </html>`
 
-    return c.html(html)
+    return c.html(safeScriptBlocks(html))
   } catch (error) {
     console.error('Entrepreneur page error:', error)
     return c.redirect('/login')

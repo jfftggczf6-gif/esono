@@ -7,7 +7,7 @@ import { parseDocx } from './docx-parser'
 import { getUserWithProgress } from './dashboard'
 import { getCookieOptions } from './cookies'
 import { moduleRoutes, renderEsanoLayout } from './module-routes'
-import { entrepreneurRoutes } from './entrepreneur-page'
+import { entrepreneurRoutes, safeScriptBlocks } from './entrepreneur-page'
 import { kbRoutes } from './agents/kb-routes'
 import { coachRoutes } from './coach-routes'
 import {
@@ -895,6 +895,22 @@ const isFinancialAnalysisFresh = (timestamp?: string | null) => {
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
+
+// Middleware: sanitize all HTML responses to escape </ inside <script> blocks
+// This prevents the HTML parser from prematurely closing script tags
+// when JS string literals contain closing HTML tags like </div>, </body>, etc.
+app.use('*', async (c, next) => {
+  await next()
+  const contentType = c.res.headers.get('content-type') || ''
+  if (contentType.includes('text/html') && c.res.body) {
+    const html = await c.res.text()
+    const safeHtml = safeScriptBlocks(html)
+    c.res = new Response(safeHtml, {
+      status: c.res.status,
+      headers: c.res.headers
+    })
+  }
+})
 
 // Middleware
 app.use(renderer)
@@ -3186,11 +3202,11 @@ app.get('/module/diagnostic', async (c) => {
 
     const embedded = c.req.query('embedded') === '1'
 
-    return c.html(renderDiagnosticModulePage({
+    return c.html(safeScriptBlocks(renderDiagnosticModulePage({
       hasBmc, hasSic, hasFramework, hasFrameworkPme, hasPlanOvo,
       hasDiagnostic, diagStatus, diagScore, diagVersion, diagId, isPartial, user: userRow,
       analysis: analysisData, createdAt: diagCreatedAt, embedded
-    }))
+    })))
   } catch (error: any) {
     console.error('[Diagnostic Module Page] Error:', error)
     return c.text('Erreur: ' + error.message, 500)
@@ -3257,11 +3273,11 @@ app.get('/module/plan-ovo', async (c) => {
     // Get user info
     const user = await db.prepare('SELECT name, email FROM users WHERE id = ?').bind(payload.userId).first()
 
-    return c.html(renderPlanOvoModulePage({
+    return c.html(safeScriptBlocks(renderPlanOvoModulePage({
       hasFramework, hasBmc, hasSic, hasDiagnostic,
       hasPlan, planStatus, planScore, planVersion, hasHtmlPreview,
       framework, bmc, sic, diagnostic, user
-    }))
+    })))
   } catch (error: any) {
     console.error('[Plan OVO Module] Error:', error)
     return c.text('Erreur: ' + error.message, 500)
@@ -3303,7 +3319,7 @@ app.get('/module/business-plan', async (c) => {
       try { bpData = JSON.parse(bpRow.business_plan_json as string) } catch {}
     }
 
-    return c.html(renderBusinessPlanModulePage({ hasBmc, hasSic, hasFramework, hasDiag, hasOvo, canGenerate, hasBp, bpVersion, bpId, bpStatus, userName, availableCount, embedded, bpData }))
+    return c.html(safeScriptBlocks(renderBusinessPlanModulePage({ hasBmc, hasSic, hasFramework, hasDiag, hasOvo, canGenerate, hasBp, bpVersion, bpId, bpStatus, userName, availableCount, embedded, bpData })))
   } catch (error: any) {
     console.error('[Business Plan Module] Error:', error)
     return c.text('Erreur: ' + error.message, 500)
@@ -5575,7 +5591,7 @@ app.get('/api/sic/deliverable', async (c) => {
         `).bind(delivId, payload.userId, html).run()
       } catch { /* ignore cache errors */ }
 
-      return c.html(html)
+      return c.html(safeScriptBlocks(html))
     }
 
     // ── FALLBACK: Old flow (progress table with questions) ──
@@ -5655,12 +5671,12 @@ app.get('/api/sic/deliverable', async (c) => {
       }
 
       const fullHtml = generateFullSicDeliverable(deliverableData)
-      return c.html(fullHtml)
+      return c.html(safeScriptBlocks(fullHtml))
     }
 
     if (format === 'html') {
       const html = generateSicDiagnosticHtml(analysis, projectName, userName)
-      return c.html(html)
+      return c.html(safeScriptBlocks(html))
     }
 
     // JSON format (for Excel generation client-side or future API)
@@ -5790,7 +5806,7 @@ app.get('/api/bmc/deliverable', async (c) => {
           const cachedData = JSON.parse(cached.content_json as string)
           if (cachedData?.html && typeof cachedData.html === 'string') {
             console.log(`[BMC] Serving cached ${cachedType} deliverable`)
-            return c.html(cachedData.html)
+            return c.html(safeScriptBlocks(cachedData.html))
           }
         } catch {}
       }
@@ -5858,7 +5874,7 @@ app.get('/api/bmc/deliverable', async (c) => {
         console.warn('[BMC] Cache write failed (non-blocking):', cacheErr.message)
       }
 
-      return c.html(fullHtml)
+      return c.html(safeScriptBlocks(fullHtml))
     }
 
     if (format === 'diagnostic' || format === 'html') {
@@ -5878,7 +5894,7 @@ app.get('/api/bmc/deliverable', async (c) => {
         console.warn('[BMC] Cache write failed (non-blocking):', cacheErr.message)
       }
 
-      return c.html(diagHtml)
+      return c.html(safeScriptBlocks(diagHtml))
     }
 
     // JSON format
@@ -6085,7 +6101,7 @@ app.get('/api/pme/framework', async (c) => {
           const htmlRow = await c.env.DB.prepare(
             "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_html' ORDER BY version DESC LIMIT 1"
           ).bind(payload.userId).first<any>()
-          if (htmlRow?.content) return c.html(htmlRow.content)
+          if (htmlRow?.content) return c.html(safeScriptBlocks(htmlRow.content))
         }
         return c.json({ error: 'Aucune donnée financière. Uploadez votre fichier INPUTS_ENTREPRENEURS ou remplissez le Module 3.' }, 400)
       }
@@ -6126,7 +6142,7 @@ app.get('/api/pme/framework', async (c) => {
       }
       if (format === 'html') {
         const html = generatePmePreviewHtml(analysis, pmeInput)
-        return c.html(html)
+        return c.html(safeScriptBlocks(html))
       }
       return c.json({ success: true, analysis, input: pmeInput })
     }
@@ -6205,7 +6221,7 @@ app.get('/api/pme/framework', async (c) => {
 
     if (format === 'html') {
       const html = generatePmePreviewHtml(analysis, pmeInput)
-      return c.html(html)
+      return c.html(safeScriptBlocks(html))
     }
 
     // JSON format
@@ -6540,7 +6556,7 @@ app.get('/api/inputs/diagnostic', async (c) => {
     if (user && (user as any).name) entrepreneurName = (user as any).name
 
     const html = generateInputsDiagnosticHtml(analysis, companyName, entrepreneurName)
-    return c.html(html)
+    return c.html(safeScriptBlocks(html))
   } catch (error) {
     console.error('Inputs diagnostic error:', error)
     return c.json({ error: 'Erreur serveur' }, 500)
@@ -7604,7 +7620,7 @@ app.get('/api/sic/download/:id', async (c) => {
 
     // STUB: Return the HTML content if available, otherwise a placeholder
     if (sicAnalysis.html_content) {
-      return c.html(sicAnalysis.html_content as string)
+      return c.html(safeScriptBlocks(sicAnalysis.html_content as string))
     }
 
     return c.json({
