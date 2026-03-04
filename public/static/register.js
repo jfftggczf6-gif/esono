@@ -1,4 +1,4 @@
-// Register form handler - robust version
+// Register form handler - with role support
 (function() {
   'use strict';
   
@@ -15,13 +15,10 @@
       return;
     }
     
-    console.log('[Register] Form found, attaching event listener');
-    
     form.addEventListener('submit', function(e) {
       e.preventDefault();
       e.stopPropagation();
       
-      // Hide error, show loading
       if (errorMessage) errorMessage.style.display = 'none';
       if (submitText) submitText.style.display = 'none';
       if (submitLoading) submitLoading.style.display = 'inline-flex';
@@ -33,7 +30,8 @@
         password: formData.get('password'),
         country: formData.get('country'),
         status: formData.get('status'),
-        user_type: formData.get('user_type')
+        user_type: formData.get('user_type'),
+        role: formData.get('role') || 'entrepreneur'
       };
       
       fetch('/api/register', {
@@ -50,6 +48,7 @@
       .then(function(resp) {
         if (resp.ok && resp.result.success) {
           var token = resp.result.token || '';
+          var role = (resp.result.user && resp.result.user.role) || data.role;
           
           // Store token
           if (token) {
@@ -60,8 +59,15 @@
             } catch(e) {}
           }
           
-          // Redirect to entrepreneur page with token fallback
-          window.location.href = '/entrepreneur?token=' + encodeURIComponent(token);
+          // Store role
+          try { localStorage.setItem('esono_role', role); } catch(e) {}
+          
+          // Redirect based on role
+          if (role === 'coach') {
+            window.location.href = '/coach/dashboard';
+          } else {
+            window.location.href = '/entrepreneur?token=' + encodeURIComponent(token);
+          }
         } else {
           if (errorMessage) {
             errorMessage.textContent = resp.result.error || 'Une erreur est survenue';
@@ -81,8 +87,6 @@
         console.error('[Register] Error:', error);
       });
     });
-    
-    console.log('[Register] Event listener attached successfully');
   }
   
   if (document.readyState === 'loading') {

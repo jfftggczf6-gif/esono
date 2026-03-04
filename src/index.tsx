@@ -920,7 +920,7 @@ app.get('/', (c) => {
         <header class="esono-public__header">
           <div class="esono-public__brand">
             <span class="esono-public__logo">ESONO</span>
-            <span class="esono-public__subtitle">Parcours entrepreneur</span>
+            <span class="esono-public__subtitle">Investment Readiness</span>
           </div>
           <a href="/login" class="esono-btn esono-btn--ghost">
             <i class="fas fa-arrow-right-to-bracket"></i>
@@ -928,98 +928,111 @@ app.get('/', (c) => {
           </a>
         </header>
 
-        <section class="esono-card esono-public__hero">
-          <div class="esono-card__body esono-public__hero-body">
-            <div class="esono-public__hero-text">
-              <h1 class="esono-public__hero-title">
-                Préparez votre dossier d'investissement en 8 étapes
-              </h1>
-              <p class="esono-public__hero-description">
-                Une plateforme hybride (IA + coaching humain) qui accompagne les PME africaines de la structuration du business model jusqu'au dossier investisseur complet.
-              </p>
-              <div class="esono-public__hero-actions">
-                <span class="esono-badge esono-badge--accent">
-                  <i class="fas fa-graduation-cap"></i>
-                  Micro-learning
-                </span>
-                <span class="esono-badge esono-badge--info">
-                  <i class="fas fa-robot"></i>
-                  IA assistée
-                </span>
-                <span class="esono-badge esono-badge--success">
-                  <i class="fas fa-user-tie"></i>
-                  Coach humain
-                </span>
-              </div>
-              <div class="esono-cta-grid">
-                <a href="/register?type=entrepreneur" class="esono-btn esono-btn--primary">
-                  <i class="fas fa-rocket"></i>
-                  Commencer mon parcours
-                </a>
-                <a href="/register?type=pre_entrepreneur" class="esono-btn esono-btn--secondary">
-                  <i class="fas fa-seedling"></i>
-                  Découvrir la plateforme
-                </a>
-              </div>
-            </div>
-            <div class="esono-public__hero-metrics">
-              <div class="esono-public__hero-metric">
-                <p class="esono-public__hero-metric-value">8 modules</p>
-                <p class="esono-public__hero-metric-label">Parcours séquentiel complet</p>
-              </div>
-              <div class="esono-public__hero-metric">
-                <p class="esono-public__hero-metric-value">3 hybrides</p>
-                <p class="esono-public__hero-metric-label">Apprentissage + IA + Coach</p>
-              </div>
-              <div class="esono-public__hero-metric">
-                <p class="esono-public__hero-metric-value">+10 livrables</p>
-                <p class="esono-public__hero-metric-label">Excel, HTML, Word, XLSM</p>
-              </div>
+        {/* ═══ HERO ═══ */}
+        <section class="esono-card" style="border: none; background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%); color: white; padding: 0; overflow: hidden;">
+          <div style="padding: 48px 40px; position: relative;">
+            <div style="position: absolute; top: -60px; right: -60px; width: 300px; height: 300px; border-radius: 50%; background: rgba(124,58,237,0.08);"></div>
+            <p style="font-size: 12px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: rgba(255,255,255,0.5); margin-bottom: 12px;">
+              Plateforme IA + Coaching humain
+            </p>
+            <h1 style="font-size: 28px; font-weight: 800; line-height: 1.25; max-width: 600px; margin-bottom: 16px;">
+              Accompagnez les PME africaines vers l'Investment Readiness
+            </h1>
+            <p style="font-size: 15px; color: rgba(255,255,255,0.7); max-width: 520px; line-height: 1.7; margin-bottom: 24px;">
+              Structuration du business model, modélisation financière, génération automatique de livrables investisseurs — en 8 modules guidés.
+            </p>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <span style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 14px; border-radius: 20px; font-size: 12px; font-weight: 600; background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8);">
+                <i class="fas fa-graduation-cap"></i> Micro-learning
+              </span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 14px; border-radius: 20px; font-size: 12px; font-weight: 600; background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8);">
+                <i class="fas fa-robot"></i> IA assistée
+              </span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 14px; border-radius: 20px; font-size: 12px; font-weight: 600; background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8);">
+                <i class="fas fa-user-tie"></i> Coaching humain
+              </span>
             </div>
           </div>
         </section>
 
-        <section class="esono-public__choices">
-          <div class="esono-card esono-public__choice">
-            <div class="esono-public__choice-icon" style="background: rgba(74, 111, 165, 0.12); color: var(--esono-secondary);">
-              <i class="fas fa-graduation-cap"></i>
-            </div>
-            <h2 class="esono-public__choice-title">Modules 1-3 : Approche hybride</h2>
-            <p class="esono-public__choice-text">
-              Remplissez votre dossier en apprenant. Chaque section combine capsules éducatives, saisie assistée par l'IA et coaching humain.
-            </p>
-            <ul class="esono-public__choice-list">
-              <li><strong>BMC</strong> — Business Model Canvas (9 blocs)</li>
-              <li><strong>SIC</strong> — Social Impact Canvas (ODD, indicateurs)</li>
-              <li><strong>Inputs</strong> — Données financières (historiques, RH, CAPEX)</li>
-            </ul>
-            <span class="esono-public__choice-cta">
-              <i class="fas fa-brain"></i>
-              Apprendre + Remplir + Coaching
-            </span>
-          </div>
+        {/* ═══ CHOIX DE PROFIL ═══ */}
+        <section style="margin-top: 32px;">
+          <h2 style="font-size: 18px; font-weight: 700; color: #1e293b; text-align: center; margin-bottom: 8px;">
+            Choisissez votre espace
+          </h2>
+          <p style="font-size: 13px; color: #64748b; text-align: center; margin-bottom: 24px;">
+            Deux profils, une même plateforme.
+          </p>
 
-          <div class="esono-card esono-public__choice">
-            <div class="esono-public__choice-icon" style="background: rgba(5, 150, 105, 0.12); color: var(--esono-success);">
-              <i class="fas fa-robot"></i>
-            </div>
-            <h2 class="esono-public__choice-title">Modules 4-8 : Génération IA</h2>
-            <p class="esono-public__choice-text">
-              L'IA génère automatiquement vos livrables investisseurs à partir des données saisies dans les modules 1-3.
-            </p>
-            <ul class="esono-public__choice-list">
-              <li><strong>Framework</strong> — Modélisation financière 5 ans</li>
-              <li><strong>Diagnostic</strong> — Score crédibilité + plan d'action</li>
-              <li><strong>OVO + BP + ODD</strong> — Livrables complets</li>
-            </ul>
-            <span class="esono-public__choice-cta">
-              <i class="fas fa-wand-magic-sparkles"></i>
-              Génération automatique
-            </span>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            {/* CARTE ENTREPRENEUR */}
+            <a href="/register?role=entrepreneur" class="esono-card" style="text-decoration: none; border: 2px solid transparent; transition: all 0.2s; cursor: pointer; padding: 0;">
+              <div class="esono-card__body" style="padding: 28px 24px;">
+                <div style="width: 48px; height: 48px; border-radius: 12px; background: rgba(30,58,95,0.08); color: #1e3a5f; display: flex; align-items: center; justify-content: center; font-size: 22px; margin-bottom: 16px;">
+                  🚀
+                </div>
+                <h3 style="font-size: 17px; font-weight: 700; color: #1e293b; margin-bottom: 8px;">
+                  Espace Entrepreneur
+                </h3>
+                <p style="font-size: 13px; color: #64748b; line-height: 1.6; margin-bottom: 16px;">
+                  Uploadez vos documents, complétez les 8 modules et générez votre dossier investisseur complet.
+                </p>
+                <ul style="list-style: none; padding: 0; margin: 0 0 16px; display: flex; flex-direction: column; gap: 6px;">
+                  <li style="font-size: 12px; color: #475569; display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-check" style="color: #059669; font-size: 10px;"></i>
+                    Business Model Canvas, SIC, Inputs financiers
+                  </li>
+                  <li style="font-size: 12px; color: #475569; display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-check" style="color: #059669; font-size: 10px;"></i>
+                    Génération IA : Framework, Diagnostic, OVO, BP
+                  </li>
+                  <li style="font-size: 12px; color: #475569; display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-check" style="color: #059669; font-size: 10px;"></i>
+                    +10 livrables (Excel, HTML, Word, PDF)
+                  </li>
+                </ul>
+                <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #1e3a5f;">
+                  Créer mon compte entrepreneur <i class="fas fa-arrow-right"></i>
+                </span>
+              </div>
+            </a>
+
+            {/* CARTE COACH */}
+            <a href="/register?role=coach" class="esono-card" style="text-decoration: none; border: 2px solid transparent; transition: all 0.2s; cursor: pointer; padding: 0;">
+              <div class="esono-card__body" style="padding: 28px 24px;">
+                <div style="width: 48px; height: 48px; border-radius: 12px; background: rgba(124,58,237,0.08); color: #7c3aed; display: flex; align-items: center; justify-content: center; font-size: 22px; margin-bottom: 16px;">
+                  👨‍🏫
+                </div>
+                <h3 style="font-size: 17px; font-weight: 700; color: #1e293b; margin-bottom: 8px;">
+                  Espace Coach
+                </h3>
+                <p style="font-size: 13px; color: #64748b; line-height: 1.6; margin-bottom: 16px;">
+                  Gérez vos entrepreneurs, suivez leur progression, analysez leurs dossiers et générez les livrables.
+                </p>
+                <ul style="list-style: none; padding: 0; margin: 0 0 16px; display: flex; flex-direction: column; gap: 6px;">
+                  <li style="font-size: 12px; color: #475569; display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-check" style="color: #7c3aed; font-size: 10px;"></i>
+                    Dashboard de suivi multi-entrepreneurs
+                  </li>
+                  <li style="font-size: 12px; color: #475569; display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-check" style="color: #7c3aed; font-size: 10px;"></i>
+                    Accès aux dossiers et livrables de chaque PME
+                  </li>
+                  <li style="font-size: 12px; color: #475569; display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-check" style="color: #7c3aed; font-size: 10px;"></i>
+                    Templates vierges à distribuer
+                  </li>
+                </ul>
+                <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #7c3aed;">
+                  Créer mon compte coach <i class="fas fa-arrow-right"></i>
+                </span>
+              </div>
+            </a>
           </div>
         </section>
 
-        <section class="esono-public__stats">
+        {/* ═══ STATS STRIP ═══ */}
+        <section class="esono-public__stats" style="margin-top: 32px;">
           <div class="esono-public__stats-body">
             <div class="esono-public__stats-grid">
               <div>
@@ -1041,6 +1054,19 @@ app.get('/', (c) => {
         <footer class="esono-public__footer">
           Déjà inscrit ? <a href="/login">Se connecter</a>
         </footer>
+
+        <style>{`
+          .esono-public__shell .esono-card:hover {
+            border-color: #cbd5e1 !important;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+            transform: translateY(-2px);
+          }
+          @media (max-width: 640px) {
+            .esono-public__shell section > div[style*="grid-template-columns: 1fr 1fr"] {
+              grid-template-columns: 1fr !important;
+            }
+          }
+        `}</style>
       </div>
     </div>
   )
@@ -1048,70 +1074,65 @@ app.get('/', (c) => {
 
 // Register Page - A2
 app.get('/register', (c) => {
-  const userType = c.req.query('type') || 'entrepreneur'
-  const isPreEntrepreneur = userType === 'pre_entrepreneur'
+  const role = c.req.query('role') || 'entrepreneur'
+  const isCoach = role === 'coach'
   
   return c.render(
     <div class="esono-auth">
-      <div class="esono-auth__shell">
+      <div class="esono-auth__shell" style="max-width: 520px;">
         <header class="esono-auth__header">
           <a href="/" class="esono-auth__brand">ES</a>
           <h1 class="esono-auth__title">
-            {isPreEntrepreneur ? 'Commencer votre apprentissage' : 'Structurer votre entreprise'}
+            {isCoach ? 'Créer votre compte Coach' : 'Créer votre compte Entrepreneur'}
           </h1>
           <p class="esono-auth__subtitle">
-            {isPreEntrepreneur
-              ? 'Créez votre compte pour accéder aux formations et modules guidés.'
-              : 'Créez votre compte pour consolider votre projet et générer vos livrables.'}
+            {isCoach
+              ? 'Accédez au dashboard de suivi et accompagnez vos entrepreneurs.'
+              : 'Structurez votre projet et générez vos livrables investisseurs.'}
           </p>
         </header>
+
+        {/* Tabs de rôle */}
+        <div style="display: flex; gap: 0; margin-bottom: 20px; border-radius: 10px; overflow: hidden; border: 1px solid #e2e8f0;">
+          <a href="/register?role=entrepreneur"
+             style={`flex: 1; padding: 10px; text-align: center; font-size: 13px; font-weight: 600; text-decoration: none; transition: all 0.15s; ${!isCoach ? 'background: #1e3a5f; color: white;' : 'background: #f8fafc; color: #64748b;'}`}>
+            <i class="fas fa-rocket" style="margin-right: 6px;"></i>
+            Entrepreneur
+          </a>
+          <a href="/register?role=coach"
+             style={`flex: 1; padding: 10px; text-align: center; font-size: 13px; font-weight: 600; text-decoration: none; transition: all 0.15s; ${isCoach ? 'background: #7c3aed; color: white;' : 'background: #f8fafc; color: #64748b;'}`}>
+            <i class="fas fa-user-tie" style="margin-right: 6px;"></i>
+            Coach
+          </a>
+        </div>
 
         <div class="esono-card esono-auth__card">
           <div class="esono-card__body">
             <form id="registerForm" class="esono-form">
-              <input type="hidden" name="user_type" value={userType} />
+              <input type="hidden" name="user_type" value="entrepreneur" />
+              <input type="hidden" name="role" value={role} />
 
               <div class="esono-form__group">
                 <label for="name" class="esono-form__label">
                   Nom complet <span class="esono-text-danger">*</span>
                 </label>
-                <input
-                  type="text"
-                  id="name"
-                  name="name"
-                  required
-                  class="esono-input"
-                  placeholder="John Doe"
-                />
+                <input type="text" id="name" name="name" required class="esono-input"
+                  placeholder={isCoach ? 'Dr. Kouamé Yao' : 'Awa Traoré'} />
               </div>
 
               <div class="esono-form__group">
                 <label for="email" class="esono-form__label">
                   Email <span class="esono-text-danger">*</span>
                 </label>
-                <input
-                  type="email"
-                  id="email"
-                  name="email"
-                  required
-                  class="esono-input"
-                  placeholder="john@example.com"
-                />
+                <input type="email" id="email" name="email" required class="esono-input"
+                  placeholder={isCoach ? 'coach@organisation.com' : 'awa@startup.com'} />
               </div>
 
               <div class="esono-form__group">
                 <label for="password" class="esono-form__label">
                   Mot de passe <span class="esono-text-danger">*</span>
                 </label>
-                <input
-                  type="password"
-                  id="password"
-                  name="password"
-                  required
-                  minlength="6"
-                  class="esono-input"
-                  placeholder="••••••••"
-                />
+                <input type="password" id="password" name="password" required minlength="6" class="esono-input" placeholder="••••••••" />
                 <p class="esono-form__note">Minimum 6 caractères</p>
               </div>
 
@@ -1119,12 +1140,7 @@ app.get('/register', (c) => {
                 <label for="country" class="esono-form__label">
                   Pays <span class="esono-text-danger">*</span>
                 </label>
-                <select
-                  id="country"
-                  name="country"
-                  required
-                  class="esono-select"
-                >
+                <select id="country" name="country" required class="esono-select">
                   <option value="">Sélectionner un pays</option>
                   <option value="SN">Sénégal</option>
                   <option value="CI">Côte d'Ivoire</option>
@@ -1134,6 +1150,7 @@ app.get('/register', (c) => {
                   <option value="TG">Togo</option>
                   <option value="NE">Niger</option>
                   <option value="CM">Cameroun</option>
+                  <option value="CD">RD Congo</option>
                   <option value="MA">Maroc</option>
                   <option value="DZ">Algérie</option>
                   <option value="TN">Tunisie</option>
@@ -1144,30 +1161,26 @@ app.get('/register', (c) => {
                 </select>
               </div>
 
-              <div class="esono-form__group">
-                <label for="status" class="esono-form__label">
-                  Statut <span class="esono-text-danger">*</span>
-                </label>
-                <select
-                  id="status"
-                  name="status"
-                  required
-                  class="esono-select"
-                >
-                  <option value="">Sélectionner un statut</option>
-                  <option value="student">Étudiant</option>
-                  <option value="entrepreneur">Entrepreneur</option>
-                  <option value="alumni">Alumni</option>
-                </select>
-              </div>
+              {!isCoach && (
+                <div class="esono-form__group">
+                  <label for="status" class="esono-form__label">
+                    Statut <span class="esono-text-danger">*</span>
+                  </label>
+                  <select id="status" name="status" required class="esono-select">
+                    <option value="">Sélectionner un statut</option>
+                    <option value="student">Étudiant</option>
+                    <option value="entrepreneur">Entrepreneur</option>
+                    <option value="alumni">Alumni</option>
+                  </select>
+                </div>
+              )}
+
+              {isCoach && (
+                <input type="hidden" name="status" value="entrepreneur" />
+              )}
 
               <div class="esono-checkbox">
-                <input
-                  type="checkbox"
-                  id="terms"
-                  name="terms"
-                  required
-                />
+                <input type="checkbox" id="terms" name="terms" required />
                 <label for="terms">
                   J'accepte les conditions d'utilisation et la politique de confidentialité.
                 </label>
@@ -1175,8 +1188,11 @@ app.get('/register', (c) => {
 
               <div id="error-message" class="esono-alert esono-alert--danger" style="display:none" role="alert"></div>
 
-              <button type="submit" class="esono-btn esono-btn--primary esono-btn--block">
-                <span id="submit-text">Créer mon compte</span>
+              <button type="submit" class="esono-btn esono-btn--primary esono-btn--block"
+                style={isCoach ? 'background: #7c3aed; border-color: #7c3aed;' : ''}>
+                <span id="submit-text">
+                  {isCoach ? 'Créer mon compte Coach' : 'Créer mon compte Entrepreneur'}
+                </span>
                 <span id="submit-loading" style="display:none">
                   <i class="fas fa-spinner fa-spin"></i>
                   Création en cours...
@@ -1386,7 +1402,7 @@ app.get('/login', (c) => {
 // API: Register
 app.post('/api/register', async (c) => {
   try {
-    const { name, email, password, country, status, user_type } = await c.req.json()
+    const { name, email, password, country, status, user_type, role } = await c.req.json()
 
     // Validate inputs
     if (!name || !email || !password || !country || !status || !user_type) {
@@ -1409,11 +1425,12 @@ app.post('/api/register', async (c) => {
     // Hash password
     const passwordHash = await hashPassword(password)
 
-    // Insert user
+    // Insert user with role
+    const userRole = (role === 'coach' || role === 'entrepreneur') ? role : null
     const result = await c.env.DB.prepare(`
-      INSERT INTO users (email, password_hash, name, country, user_type, status)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).bind(email, passwordHash, name, country, user_type, status).run()
+      INSERT INTO users (email, password_hash, name, country, user_type, status, role)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(email, passwordHash, name, country, user_type, status, userRole).run()
 
     // Create default project
     const userId = result.meta.last_row_id
@@ -1433,7 +1450,8 @@ app.post('/api/register', async (c) => {
 
     return c.json({
       success: true,
-      user: { id: userId, name, email, userType: user_type }
+      token,
+      user: { id: userId, name, email, userType: user_type, role: userRole }
     })
   } catch (error) {
     console.error('Registration error:', error)
