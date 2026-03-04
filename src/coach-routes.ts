@@ -207,88 +207,63 @@ coach.delete('/api/coach/entrepreneurs/:id', async (c) => {
   return c.json({ success: true })
 })
 
-// POST /api/coach/entrepreneurs/:id/link — Link entrepreneur to a user account
-coach.post('/api/coach/entrepreneurs/:id/link', async (c) => {
+// POST /api/coach/entrepreneurs/:id/create-account — Coach creates user account for entrepreneur
+coach.post('/api/coach/entrepreneurs/:id/create-account', async (c) => {
   const user = c.get('coachUser') as any
   const db = c.env.DB
   const entrepreneurId = c.req.param('id')
-  const { email } = await c.req.json()
+  const { password } = await c.req.json()
 
-  if (!email) return c.json({ error: 'Email requis' }, 400)
+  if (!password || password.length < 6) return c.json({ error: 'Mot de passe requis (min. 6 caractères)' }, 400)
 
   // Verify coach owns this entrepreneur
   const ent = await db.prepare(
-    'SELECT id, linked_user_id FROM coach_entrepreneurs WHERE id = ? AND coach_user_id = ?'
+    'SELECT * FROM coach_entrepreneurs WHERE id = ? AND coach_user_id = ?'
   ).bind(entrepreneurId, user.id).first<any>()
   if (!ent) return c.json({ error: 'Entrepreneur non trouvé' }, 404)
+  if (!ent.email) return c.json({ error: "L'entrepreneur n'a pas d'email renseigné" }, 400)
+  if (ent.linked_user_id) return c.json({ error: 'Un compte existe déjà pour cet entrepreneur' }, 400)
 
-  // Find user by email
-  const targetUser = await db.prepare(
-    'SELECT id, name, email FROM users WHERE email = ?'
-  ).bind(email.trim().toLowerCase()).first<any>()
-  if (!targetUser) return c.json({ error: 'Aucun compte utilisateur trouvé avec cet email' }, 404)
+  // Check email not already taken
+  const existing = await db.prepare('SELECT id FROM users WHERE email = ?')
+    .bind(ent.email.trim().toLowerCase()).first<any>()
+  if (existing) {
+    // Account exists → just link it
+    await db.prepare("UPDATE coach_entrepreneurs SET linked_user_id = ?, updated_at = datetime('now') WHERE id = ?")
+      .bind(existing.id, entrepreneurId).run()
+    return c.json({ success: true, linked_user_id: existing.id, message: 'Compte existant lié automatiquement' })
+  }
 
-  // Link
+  // Hash password and create account
+  const encoder = new TextEncoder()
+  const data = encoder.encode(password)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  const passwordHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+
+  const result = await db.prepare(
+    "INSERT INTO users (email, password_hash, name, user_type, role, created_at, updated_at) VALUES (?, ?, ?, 'entrepreneur', 'entrepreneur', datetime('now'), datetime('now'))"
+  ).bind(ent.email.trim().toLowerCase(), passwordHash, ent.entrepreneur_name).run()
+
+  const newUserId = result.meta?.last_row_id
+  if (!newUserId) return c.json({ error: 'Erreur création compte' }, 500)
+
+  // Create default project for the new user
   await db.prepare(
-    "UPDATE coach_entrepreneurs SET linked_user_id = ?, updated_at = datetime('now') WHERE id = ? AND coach_user_id = ?"
-  ).bind(targetUser.id, entrepreneurId, user.id).run()
+    "INSERT INTO projects (user_id, name, description, status, created_at, updated_at) VALUES (?, ?, 'Projet créé par le coach', 'active', datetime('now'), datetime('now'))"
+  ).bind(newUserId, ent.enterprise_name || 'Mon Projet').run()
+
+  // Link immediately
+  await db.prepare("UPDATE coach_entrepreneurs SET linked_user_id = ?, updated_at = datetime('now') WHERE id = ?")
+    .bind(newUserId, entrepreneurId).run()
 
   return c.json({
     success: true,
-    linked_user: { id: targetUser.id, name: targetUser.name, email: targetUser.email },
-    message: `Compte lié à ${targetUser.name} (${targetUser.email})`
+    linked_user_id: newUserId,
+    message: `Compte créé pour ${ent.entrepreneur_name} (${ent.email})`
   })
 })
 
-// DELETE /api/coach/entrepreneurs/:id/link — Unlink entrepreneur from user account
-coach.delete('/api/coach/entrepreneurs/:id/link', async (c) => {
-  const user = c.get('coachUser') as any
-  const db = c.env.DB
-  const entrepreneurId = c.req.param('id')
-
-  const ent = await db.prepare(
-    'SELECT id FROM coach_entrepreneurs WHERE id = ? AND coach_user_id = ?'
-  ).bind(entrepreneurId, user.id).first()
-  if (!ent) return c.json({ error: 'Entrepreneur non trouvé' }, 404)
-
-  await db.prepare(
-    "UPDATE coach_entrepreneurs SET linked_user_id = NULL, updated_at = datetime('now') WHERE id = ? AND coach_user_id = ?"
-  ).bind(entrepreneurId, user.id).run()
-
-  return c.json({ success: true, message: 'Liaison supprimée' })
-})
-
-// GET /api/coach/entrepreneurs/:id/link — Get link status
-coach.get('/api/coach/entrepreneurs/:id/link', async (c) => {
-  const user = c.get('coachUser') as any
-  const db = c.env.DB
-  const entrepreneurId = c.req.param('id')
-
-  const ent = await db.prepare(
-    'SELECT ce.id, ce.linked_user_id, u.name as linked_name, u.email as linked_email FROM coach_entrepreneurs ce LEFT JOIN users u ON ce.linked_user_id = u.id WHERE ce.id = ? AND ce.coach_user_id = ?'
-  ).bind(entrepreneurId, user.id).first<any>()
-  if (!ent) return c.json({ error: 'Entrepreneur non trouvé' }, 404)
-
-  return c.json({
-    linked: !!ent.linked_user_id,
-    linked_user_id: ent.linked_user_id,
-    linked_name: ent.linked_name,
-    linked_email: ent.linked_email
-  })
-})
-
-// GET /api/coach/search-users — Search user accounts by email (for linking)
-coach.get('/api/coach/search-users', async (c) => {
-  const db = c.env.DB
-  const q = c.req.query('q') || ''
-  if (q.length < 3) return c.json({ users: [] })
-
-  const results = await db.prepare(
-    "SELECT id, name, email FROM users WHERE email LIKE ? OR name LIKE ? LIMIT 10"
-  ).bind(`%${q}%`, `%${q}%`).all()
-
-  return c.json({ users: results.results || [] })
-})
 function coachLayout(activePage: string, userName: string, content: string): string {
   const nav = [
     { code: 'dashboard', icon: 'fas fa-chart-line', label: 'Dashboard', href: '/coach/dashboard' },
@@ -1454,8 +1429,10 @@ coach.get('/coach/entrepreneur/:id', async (c) => {
         ${escapeHtml(entrepreneur.enterprise_name || entrepreneur.entrepreneur_name)}
         <span style="margin-left:8px">${getScoreBadge(entrepreneur.score_ir || 0)}</span>
         ${linkedUser 
-          ? `<span style="margin-left:12px;display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;color:#059669;background:#ecfdf5;border:1px solid #bbf7d0" title="Compte li\u00e9 : ${escapeHtml(linkedUser.email)}"><i class="fas fa-link"></i> Li\u00e9 \u00e0 ${escapeHtml(linkedUser.name)}</span>`
-          : `<button onclick="openLinkModal()" style="margin-left:12px;display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;color:#d97706;background:#fffbeb;border:1px solid #fde68a;cursor:pointer;font-family:inherit" title="Aucun compte utilisateur li\u00e9"><i class="fas fa-unlink"></i> Non li\u00e9</button>`
+          ? `<span style="margin-left:12px;display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;color:#059669;background:#ecfdf5;border:1px solid #bbf7d0" title="${escapeHtml(linkedUser.email)}"><i class="fas fa-check-circle"></i> Compte actif</span>`
+          : entrepreneur.email
+            ? `<button onclick="openCreateAccountModal()" style="margin-left:12px;display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;color:#d97706;background:#fffbeb;border:1px solid #fde68a;cursor:pointer;font-family:inherit" title="Pas encore de compte"><i class="fas fa-user-plus"></i> Cr\u00e9er le compte</button>`
+            : `<span style="margin-left:12px;display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;color:#94a3b8;background:#f8fafc;border:1px solid #e2e8f0" title="Ajoutez un email pour pouvoir cr\u00e9er un compte"><i class="fas fa-envelope"></i> Email manquant</span>`
         }
       </h1>
       <div class="coach-header__actions">
@@ -1784,119 +1761,75 @@ coach.get('/coach/entrepreneur/:id', async (c) => {
       }
       function downloadMirrorDeliv(format) { alert('T\\u00e9l\\u00e9chargement en ' + format); }
 
-      // ─── Linking entrepreneur to user account ───
-      function openLinkModal() {
-        var overlay = document.getElementById('modal-link');
+      // ─── Create account for entrepreneur ───
+      function openCreateAccountModal() {
+        var overlay = document.getElementById('modal-create-account');
         if (overlay) overlay.classList.add('active');
       }
-      function closeLinkModal() {
-        var overlay = document.getElementById('modal-link');
+      function closeCreateAccountModal() {
+        var overlay = document.getElementById('modal-create-account');
         if (overlay) overlay.classList.remove('active');
       }
-      var linkSearchTimeout = null;
-      function searchUsersForLink(q) {
-        clearTimeout(linkSearchTimeout);
-        var results = document.getElementById('link-search-results');
-        if (q.length < 3) { results.innerHTML = '<div style="padding:12px;color:#94a3b8;font-size:12px">Tapez au moins 3 caract\\u00e8res...</div>'; return; }
-        linkSearchTimeout = setTimeout(async function() {
-          try {
-            var res = await fetch('/api/coach/search-users?q=' + encodeURIComponent(q), { credentials:'include' });
-            var data = await res.json();
-            if (!data.users || data.users.length === 0) {
-              results.innerHTML = '<div style="padding:12px;color:#94a3b8;font-size:12px"><i class="fas fa-info-circle"><\\/i> Aucun compte trouv\\u00e9</div>';
-              return;
-            }
-            results.innerHTML = data.users.map(function(u) {
-              return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #f1f5f9;cursor:pointer;transition:all 0.1s" onmouseover="this.style.background=\\'#f8fafc\\'" onmouseout="this.style.background=\\'white\\'" onclick="linkByUserId(' + u.id + ')">'
-                + '<div><div style="font-size:13px;font-weight:600;color:#1e293b">' + u.name + '<\\/div><div style="font-size:11px;color:#94a3b8">' + u.email + '<\\/div><\\/div>'
-                + '<button style="padding:5px 12px;border-radius:6px;border:1px solid #ddd6fe;background:#faf5ff;color:#7c3aed;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit"><i class="fas fa-link"><\\/i> Lier<\\/button>'
-                + '<\\/div>';
-            }).join('');
-          } catch(e) { results.innerHTML = '<div style="padding:12px;color:#dc2626;font-size:12px">Erreur: ' + e.message + '<\\/div>'; }
-        }, 400);
-      }
-      async function linkByUserId(userId) {
-        if (!confirm('Lier cet entrepreneur au compte s\\u00e9lectionn\\u00e9 ?')) return;
+      async function createEntrepreneurAccount() {
+        var pwd = document.getElementById('create-account-pwd').value;
+        if (!pwd || pwd.length < 6) { alert('Le mot de passe doit faire au moins 6 caract\\u00e8res'); return; }
+        var btn = document.getElementById('btn-create-account');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"><\\/i> Cr\\u00e9ation...';
         try {
-          var emailInput = document.getElementById('link-email-input');
-          // Find the user email from the search results
-          var res = await fetch('/api/coach/search-users?q=' + userId, { credentials:'include' });
-          var data = await res.json();
-          var userEmail = data.users && data.users.find(function(u) { return u.id === userId; });
-          if (userEmail) {
-            await linkByEmailDirect(userEmail.email);
-          }
-        } catch(e) { alert('Erreur: ' + e.message); }
-      }
-      async function linkByEmail() {
-        var email = document.getElementById('link-email-input').value;
-        if (!email) { alert('Entrez un email'); return; }
-        await linkByEmailDirect(email);
-      }
-      async function linkByEmailDirect(email) {
-        try {
-          var res = await fetch('/api/coach/entrepreneurs/${id}/link', {
+          var res = await fetch('/api/coach/entrepreneurs/${id}/create-account', {
             method:'POST', credentials:'include',
             headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ email: email })
+            body: JSON.stringify({ password: pwd })
           });
           var data = await res.json();
-          if (data.success) { alert(data.message); window.location.reload(); }
-          else { alert(data.error || 'Erreur'); }
-        } catch(e) { alert('Erreur: ' + e.message); }
-      }
-      async function unlinkUser() {
-        if (!confirm('Supprimer la liaison avec le compte entrepreneur ?')) return;
-        try {
-          var res = await fetch('/api/coach/entrepreneurs/${id}/link', { method:'DELETE', credentials:'include' });
-          var data = await res.json();
-          if (data.success) { alert('Liaison supprim\\u00e9e'); window.location.reload(); }
-          else { alert(data.error || 'Erreur'); }
-        } catch(e) { alert('Erreur: ' + e.message); }
+          if (data.success) {
+            alert(data.message + '\\n\\nL\\'entrepreneur peut maintenant se connecter avec :\\n\\u2022 Email : ${escapeHtml(entrepreneur.email || '')}\\n\\u2022 Mot de passe : celui que vous venez de d\\u00e9finir');
+            window.location.reload();
+          } else { alert(data.error || 'Erreur'); btn.disabled = false; btn.innerHTML = '<i class="fas fa-user-plus"><\\/i> Cr\\u00e9er le compte'; }
+        } catch(e) { alert('Erreur: ' + e.message); btn.disabled = false; btn.innerHTML = '<i class="fas fa-user-plus"><\\/i> Cr\\u00e9er le compte'; }
       }
     </script>
 
-    <!-- MODAL: Link entrepreneur to user account -->
-    <div class="coach-modal-overlay" id="modal-link" onclick="if(event.target===this) closeLinkModal()">
+    ${!linkedUser && entrepreneur.email ? `
+    <!-- MODAL: Create account for entrepreneur -->
+    <div class="coach-modal-overlay" id="modal-create-account" onclick="if(event.target===this) closeCreateAccountModal()">
       <div class="coach-modal">
         <div class="coach-modal__header">
-          <div class="coach-modal__title"><i class="fas fa-link" style="color:#7c3aed"></i> Lier un compte utilisateur</div>
-          <button class="coach-modal__close" onclick="closeLinkModal()"><i class="fas fa-times"></i></button>
+          <div class="coach-modal__title"><i class="fas fa-user-plus" style="color:#7c3aed"></i> Cr\\u00e9er le compte entrepreneur</div>
+          <button class="coach-modal__close" onclick="closeCreateAccountModal()"><i class="fas fa-times"></i></button>
         </div>
         <div class="coach-modal__body">
-          <div style="padding:12px 16px;background:#eff6ff;border-radius:10px;border:1px solid #bfdbfe;margin-bottom:8px">
-            <div style="font-size:12px;font-weight:600;color:#1e40af;margin-bottom:4px"><i class="fas fa-info-circle"></i> Pourquoi lier un compte ?</div>
-            <div style="font-size:11px;color:#1e40af;line-height:1.5">
-              La liaison permet \\u00e0 l'entrepreneur de voir automatiquement les livrables partag\\u00e9s via la Vue Miroir dans son espace personnel.
+          <div style="padding:12px 16px;background:#f0fdf4;border-radius:10px;border:1px solid #bbf7d0;margin-bottom:4px">
+            <div style="font-size:12px;font-weight:600;color:#059669;margin-bottom:4px"><i class="fas fa-info-circle"></i> Que va-t-il se passer ?</div>
+            <div style="font-size:11px;color:#065f46;line-height:1.5">
+              Un compte sera cr\\u00e9\\u00e9 pour <strong>${escapeHtml(entrepreneur.entrepreneur_name)}</strong> avec l'email <strong>${escapeHtml(entrepreneur.email)}</strong>.<br>
+              L'entrepreneur pourra se connecter et verra automatiquement les livrables que vous partagez via la Vue Miroir.
             </div>
           </div>
-          ${linkedUser ? `
-            <div style="padding:16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;display:flex;align-items:center;justify-content:space-between">
-              <div>
-                <div style="font-size:13px;font-weight:700;color:#059669"><i class="fas fa-check-circle"></i> Compte li\\u00e9</div>
-                <div style="font-size:13px;font-weight:600;color:#1e293b;margin-top:4px">${escapeHtml(linkedUser.name)}</div>
-                <div style="font-size:11px;color:#64748b">${escapeHtml(linkedUser.email)}</div>
-              </div>
-              <button onclick="unlinkUser()" style="padding:8px 16px;border-radius:8px;border:1px solid #fecaca;background:#fef2f2;color:#dc2626;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit"><i class="fas fa-unlink"></i> D\\u00e9lier</button>
-            </div>
-          ` : `
-            <div class="coach-modal__field">
-              <label>Rechercher par email</label>
-              <div style="display:flex;gap:8px">
-                <input type="email" id="link-email-input" placeholder="email@entrepreneur.com" style="flex:1;padding:10px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-family:inherit;outline:none" oninput="searchUsersForLink(this.value)">
-                <button onclick="linkByEmail()" style="padding:8px 18px;border-radius:8px;border:none;background:#7c3aed;color:white;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap"><i class="fas fa-link"></i> Lier</button>
-              </div>
-            </div>
-            <div id="link-search-results" style="max-height:200px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px;background:white">
-              <div style="padding:12px;color:#94a3b8;font-size:12px;text-align:center">Recherchez un utilisateur par email ci-dessus</div>
-            </div>
-          `}
+          <div class="coach-modal__field">
+            <label>Email (non modifiable)</label>
+            <input type="email" value="${escapeHtml(entrepreneur.email)}" disabled style="background:#f8fafc;color:#64748b">
+          </div>
+          <div class="coach-modal__field">
+            <label>Nom</label>
+            <input type="text" value="${escapeHtml(entrepreneur.entrepreneur_name)}" disabled style="background:#f8fafc;color:#64748b">
+          </div>
+          <div class="coach-modal__field">
+            <label>Mot de passe temporaire *</label>
+            <input type="text" id="create-account-pwd" placeholder="Min. 6 caract\\u00e8res" style="font-size:15px;letter-spacing:1px">
+            <div style="font-size:10px;color:#94a3b8;margin-top:4px">Communiquez ce mot de passe \\u00e0 l'entrepreneur. Il pourra le changer plus tard.</div>
+          </div>
         </div>
         <div class="coach-modal__footer">
-          <button type="button" class="coach-modal__btn coach-modal__btn--cancel" onclick="closeLinkModal()">Fermer</button>
+          <button type="button" class="coach-modal__btn coach-modal__btn--cancel" onclick="closeCreateAccountModal()">Annuler</button>
+          <button type="button" class="coach-modal__btn coach-modal__btn--submit" id="btn-create-account" onclick="createEntrepreneurAccount()">
+            <i class="fas fa-user-plus"></i> Cr\\u00e9er le compte
+          </button>
         </div>
       </div>
     </div>
+    ` : ''}
   `
 
   return c.html(safeScriptBlocks(coachLayout('entrepreneurs', user.name, content)))

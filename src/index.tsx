@@ -1455,6 +1455,16 @@ app.post('/api/register', async (c) => {
       VALUES (?, ?, ?)
     `).bind(userId, `Projet de ${name}`, 'Mon projet entrepreneurial').run()
 
+    // Auto-link: if this email matches a coach_entrepreneurs entry, link automatically
+    try {
+      await c.env.DB.prepare(
+        "UPDATE coach_entrepreneurs SET linked_user_id = ?, updated_at = datetime('now') WHERE email = ? AND linked_user_id IS NULL"
+      ).bind(userId, email.trim().toLowerCase()).run()
+    } catch (e) {
+      // Non-blocking: if linking fails, account is still created
+      console.error('Auto-link on register failed:', e)
+    }
+
     // Generate JWT token
     const token = await generateToken({
       userId: Number(userId),
