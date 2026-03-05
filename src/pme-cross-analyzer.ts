@@ -175,7 +175,7 @@ Analyse la coherence BMC <-> Financiers et reponds en JSON strict.`
       systemPrompt: SYSTEM_PROMPT_CROISEMENT,
       userPrompt,
       maxTokens: 3000,
-      timeoutMs: 20_000,
+      timeoutMs: 60_000,
       maxRetries: 2,
       label: 'BMC-Finance Cross'
     })

@@ -353,7 +353,7 @@ CONTRAINTES :
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages'
 const CLAUDE_MODEL = 'claude-sonnet-4-20250514'
 const CLAUDE_MAX_TOKENS = 8192     // Livrable complet = ~4000-6000 tokens
-const CLAUDE_TIMEOUT_MS = 90_000   // 90s — livrable complet = beaucoup de tokens
+const CLAUDE_TIMEOUT_MS = 120_000   // 120s — livrable complet = beaucoup de tokens
 
 async function callClaudeForDeliverable(
   apiKey: string,

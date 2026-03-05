@@ -159,7 +159,7 @@ async function callClaude(
   userMessage: string,
   options: { temperature?: number; maxTokens?: number; timeoutMs?: number } = {}
 ): Promise<{ success: boolean; data?: any; text?: string; error?: string; tokensUsed?: number }> {
-  const { temperature = 0.3, maxTokens = 4096, timeoutMs = 45000 } = options
+  const { temperature = 0.3, maxTokens = 4096, timeoutMs = 120000 } = options
 
   try {
     const controller = new AbortController()
@@ -214,7 +214,7 @@ async function callClaude(
     }
   } catch (err: any) {
     if (err.name === 'AbortError') {
-      return { success: false, error: 'Timeout after ' + (options.timeoutMs || 45000) + 'ms' }
+      return { success: false, error: 'Timeout after ' + (options.timeoutMs || 120000) + 'ms' }
     }
     return { success: false, error: err.message || 'Unknown error' }
   }
@@ -274,7 +274,7 @@ export async function runAgent(
     const result = await callClaude(apiKey, systemPrompt, userMessage, {
       temperature: promptConfig.temperature,
       maxTokens: promptConfig.max_tokens,
-      timeoutMs: 60000,
+      timeoutMs: 120000,
     })
 
     if (result.success && result.data) {
@@ -330,26 +330,28 @@ export async function orchestrateGeneration(
   const hasSic = uploadedCategories.has('sic')
   const hasInputs = uploadedCategories.has('inputs')
 
-  // 2. Run specialized agents in parallel (only for available documents)
-  const agentPromises: Promise<AgentOutput>[] = []
+  // 2. Run specialized agents SEQUENTIALLY to avoid Claude rate limits and timeouts
+  // (parallel execution caused cascading 429/timeout errors on the Anthropic API)
+  type AgentThunk = () => Promise<AgentOutput>
+  const agentThunks: AgentThunk[] = []
   const agentMap: string[] = []
 
   if (hasBmc) {
-    agentPromises.push(runAgent(db, apiKey, {
+    agentThunks.push(() => runAgent(db, apiKey, {
       agentCode: 'bmc_analyst', documentTexts, userName, userCountry, kbContext, customInstructions,
     }))
     agentMap.push('bmc_analyst')
   }
 
   if (hasSic) {
-    agentPromises.push(runAgent(db, apiKey, {
+    agentThunks.push(() => runAgent(db, apiKey, {
       agentCode: 'sic_analyst', documentTexts, userName, userCountry, kbContext, customInstructions,
     }))
     agentMap.push('sic_analyst')
   }
 
   if (hasInputs) {
-    agentPromises.push(runAgent(db, apiKey, {
+    agentThunks.push(() => runAgent(db, apiKey, {
       agentCode: 'finance_analyst', documentTexts, userName, userCountry, kbContext, customInstructions,
     }))
     agentMap.push('finance_analyst')
@@ -357,14 +359,25 @@ export async function orchestrateGeneration(
 
   // Always run ODD analyst if any docs
   if (hasBmc || hasSic || hasInputs) {
-    agentPromises.push(runAgent(db, apiKey, {
+    agentThunks.push(() => runAgent(db, apiKey, {
       agentCode: 'odd_analyst', documentTexts, userName, userCountry, kbContext, customInstructions,
     }))
     agentMap.push('odd_analyst')
   }
 
-  // Execute all agents in parallel
-  const agentResults = await Promise.all(agentPromises)
+  // Execute agents one-by-one (sequential) to prevent Claude API overload
+  const agentResults: AgentOutput[] = []
+  for (let i = 0; i < agentThunks.length; i++) {
+    try {
+      console.log(`[Orchestrator] Running agent ${agentMap[i]} (${i + 1}/${agentThunks.length})...`)
+      const result = await agentThunks[i]()
+      agentResults.push(result)
+      console.log(`[Orchestrator] Agent ${agentMap[i]} completed (${result.source})`)
+    } catch (err: any) {
+      console.error(`[Orchestrator] Agent ${agentMap[i]} crashed:`, err.message)
+      agentResults.push({ success: false, data: null, source: 'fallback', agentCode: agentMap[i] as AgentCode, error: err.message })
+    }
+  }
 
   // Collect results
   const analysisResults: Record<string, any> = {}

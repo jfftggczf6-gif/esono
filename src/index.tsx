@@ -5294,6 +5294,15 @@ app.post('/api/regenerate-deliverables', async (c) => {
         if (sicAnalysis.properties && !sicAnalysis.pillars) {
           console.log('[Regenerate] SIC: unwrapping JSON schema wrapper (properties → root)')
           sicAnalysis = sicAnalysis.properties
+          
+          // Save the unwrapped JSON back to DB for future reads
+          await db.prepare('DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = ?')
+            .bind(userId, 'sic_analysis').run()
+          await db.prepare(`
+            INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, created_at)
+            VALUES (?, ?, 'sic_analysis', ?, ?, datetime('now'))
+          `).bind(crypto.randomUUID(), userId, JSON.stringify(sicAnalysis), sicAnalysis.score || 0).run()
+          console.log('[Regenerate] SIC JSON unwrapped and saved to DB')
         }
         
         if (sicAnalysis.pillars && Array.isArray(sicAnalysis.pillars)) {

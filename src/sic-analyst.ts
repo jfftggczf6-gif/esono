@@ -356,7 +356,7 @@ export async function analyzeSicWithClaude(
     systemPrompt: fullSystemPrompt,
     userPrompt,
     maxTokens: 4000,
-    timeoutMs: 90_000,
+    timeoutMs: 120_000,
     maxRetries: 2,
     label: 'SIC Analyst'
   })

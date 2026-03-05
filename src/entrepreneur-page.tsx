@@ -1606,6 +1606,208 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
     await Promise.allSettled(htmlGenerationPromises)
     console.log('[Generate-All] All HTML deliverable generations completed.')
 
+    // ═══ POST-PROCESSING: AUTO-FIX DELIVERABLES ═══
+    // Fix known issues automatically so the user never sees broken output
+    try {
+      const apiKeyForFix = c.env.ANTHROPIC_API_KEY || ''
+      
+      // FIX 1: Regenerate BMC HTML from bmc_analysis JSON if BMC HTML has empty blocks
+      const bmcHtmlCheck = await c.env.DB.prepare(
+        "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_html' ORDER BY created_at DESC LIMIT 1"
+      ).bind(payload.userId).first() as any
+      const bmcAnalysisCheck = await c.env.DB.prepare(
+        "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_analysis' ORDER BY created_at DESC LIMIT 1"
+      ).bind(payload.userId).first() as any
+      
+      if (bmcHtmlCheck?.content && bmcAnalysisCheck?.content) {
+        const bmcHtml = bmcHtmlCheck.content
+        const undocCount = (bmcHtml.match(/non documenté/gi) || []).length
+        const nonRensCount = (bmcHtml.match(/non renseigné/gi) || []).length
+        
+        if (undocCount > 0 || nonRensCount > 3) {
+          console.log(`[Generate-All] AUTO-FIX: BMC HTML has ${undocCount} undocumented + ${nonRensCount} unfilled → regenerating from bmc_analysis JSON`)
+          try {
+            const bmcAnalysis = JSON.parse(bmcAnalysisCheck.content)
+            if (bmcAnalysis.blocks && Array.isArray(bmcAnalysis.blocks)) {
+              // Get company data
+              const pmeFixRow = await c.env.DB.prepare(
+                "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_pme_data' ORDER BY created_at DESC LIMIT 1"
+              ).bind(payload.userId).first() as any
+              let fixCompanyData = { companyName: userName, entrepreneurName: userName, sector: '', location: '', country: userCountry || '' }
+              if (pmeFixRow?.content) {
+                try {
+                  const pme = JSON.parse(pmeFixRow.content)
+                  fixCompanyData.companyName = pme.companyName || pme.company_name || userName
+                  fixCompanyData.sector = pme.sector || pme.secteur || ''
+                  fixCompanyData.location = pme.location || pme.ville || ''
+                  fixCompanyData.country = pme.country || pme.pays || userCountry || ''
+                } catch {}
+              }
+              
+              const { regenerateBmcHtmlFromDbAnalysis } = await import('./bmc-deliverable-engine')
+              const newBmcHtml = regenerateBmcHtmlFromDbAnalysis(bmcAnalysis, fixCompanyData)
+              
+              await c.env.DB.prepare("DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_html'").bind(payload.userId).run()
+              await c.env.DB.prepare(
+                "INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, status, created_at) VALUES (?, ?, 'bmc_html', ?, ?, ?, 'generated', datetime('now'))"
+              ).bind(crypto.randomUUID(), payload.userId, newBmcHtml, bmcAnalysis.score || 72, newVersion).run()
+              console.log(`[Generate-All] AUTO-FIX: BMC HTML regenerated from JSON: ${newBmcHtml.length} chars (was ${bmcHtml.length})`)
+            }
+          } catch (fixErr: any) {
+            console.warn('[Generate-All] AUTO-FIX BMC failed (non-fatal):', fixErr.message)
+          }
+        }
+      }
+      
+      // FIX 2: SIC — Always unwrap JSON schema wrapper + regenerate HTML if needed
+      const sicAnalysisCheck = await c.env.DB.prepare(
+        "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_analysis' ORDER BY created_at DESC LIMIT 1"
+      ).bind(payload.userId).first() as any
+      
+      if (sicAnalysisCheck?.content) {
+        try {
+          let sicAnalysis = JSON.parse(sicAnalysisCheck.content)
+          let wasWrapped = false
+          
+          // Unwrap JSON schema wrapper: {type:"object", properties:{score,pillars,...}}
+          if (sicAnalysis.properties && !sicAnalysis.pillars) {
+            console.log('[Generate-All] AUTO-FIX: SIC JSON was wrapped → unwrapping')
+            sicAnalysis = sicAnalysis.properties
+            wasWrapped = true
+            
+            // Save the unwrapped JSON back to DB so future reads are clean
+            await c.env.DB.prepare("DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_analysis'").bind(payload.userId).run()
+            await c.env.DB.prepare(
+              "INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, status, created_at) VALUES (?, ?, 'sic_analysis', ?, ?, ?, 'generated', datetime('now'))"
+            ).bind(crypto.randomUUID(), payload.userId, JSON.stringify(sicAnalysis), sicAnalysis.score || 0, newVersion).run()
+            console.log(`[Generate-All] AUTO-FIX: SIC JSON unwrapped and saved to DB`)
+          }
+          
+          // Check SIC HTML quality
+          const sicHtmlCheck = await c.env.DB.prepare(
+            "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_html' ORDER BY created_at DESC LIMIT 1"
+          ).bind(payload.userId).first() as any
+          
+          const sicHtml = sicHtmlCheck?.content || ''
+          const undefinedCount = (sicHtml.match(/undefined/gi) || []).length
+          const needsRegeneration = wasWrapped || undefinedCount > 0 || sicHtml.length < 1000
+          
+          if (needsRegeneration && sicAnalysis.pillars && Array.isArray(sicAnalysis.pillars)) {
+            console.log(`[Generate-All] AUTO-FIX: SIC HTML needs regeneration (wrapped=${wasWrapped}, undefined=${undefinedCount}, htmlLen=${sicHtml.length})`)
+            
+            const pmeFixRow2 = await c.env.DB.prepare(
+              "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_pme_data' ORDER BY created_at DESC LIMIT 1"
+            ).bind(payload.userId).first() as any
+            let fixCompanyData2 = { companyName: userName, entrepreneurName: userName, sector: '', location: '', country: userCountry || '' }
+            if (pmeFixRow2?.content) {
+              try {
+                const pme = JSON.parse(pmeFixRow2.content)
+                fixCompanyData2.companyName = pme.companyName || pme.company_name || userName
+                fixCompanyData2.sector = pme.sector || pme.secteur || ''
+                fixCompanyData2.location = pme.location || pme.ville || ''
+                fixCompanyData2.country = pme.country || pme.pays || userCountry || ''
+              } catch {}
+            }
+            
+            const { regenerateSicHtmlFromDbAnalysis } = await import('./sic-deliverable-engine')
+            const newSicHtml = regenerateSicHtmlFromDbAnalysis(sicAnalysis, fixCompanyData2)
+            
+            await c.env.DB.prepare("DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_html'").bind(payload.userId).run()
+            await c.env.DB.prepare(
+              "INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, status, created_at) VALUES (?, ?, 'sic_html', ?, ?, ?, 'generated', datetime('now'))"
+            ).bind(crypto.randomUUID(), payload.userId, newSicHtml, sicAnalysis.score || 0, newVersion).run()
+            console.log(`[Generate-All] AUTO-FIX: SIC HTML regenerated: ${newSicHtml.length} chars (was ${sicHtml.length}), 0 undefined`)
+          }
+        } catch (fixErr: any) {
+          console.warn('[Generate-All] AUTO-FIX SIC failed (non-fatal):', fixErr.message)
+        }
+      }
+      
+      // FIX 3: Business Plan — if fallback (<5000 bytes), regenerate with Claude AI
+      const bpCheck = await c.env.DB.prepare(
+        "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'business_plan' ORDER BY created_at DESC LIMIT 1"
+      ).bind(payload.userId).first() as any
+      
+      if (bpCheck?.content && bpCheck.content.length < 5000 && apiKeyForFix.length > 10) {
+        console.log(`[Generate-All] AUTO-FIX: BP is fallback (${bpCheck.content.length} bytes) → regenerating with Claude AI`)
+        try {
+          // Gather context from all deliverables
+          const allDeliv = await c.env.DB.prepare(
+            "SELECT type, content FROM entrepreneur_deliverables WHERE user_id = ? AND type IN ('bmc_analysis','sic_analysis','framework_pme_data','framework','diagnostic','odd')"
+          ).bind(payload.userId).all()
+          
+          let bpContext = `ENTREPRISE: ${userName}\nPAYS: ${userCountry || 'Afrique de l\'Ouest'}\n\n`
+          for (const row of (allDeliv.results || [])) {
+            const r = row as any
+            try {
+              let parsed = JSON.parse(r.content)
+              if (parsed.properties && !parsed.pillars && !parsed.blocks) parsed = parsed.properties
+              bpContext += `\n=== ${r.type.toUpperCase()} ===\n${JSON.stringify(parsed, null, 0).slice(0, 3000)}\n`
+            } catch { bpContext += `\n=== ${r.type.toUpperCase()} ===\n${String(r.content).slice(0, 3000)}\n` }
+          }
+          // Add DOCX text
+          const uploadText = await c.env.DB.prepare(
+            "SELECT extracted_text FROM uploads WHERE user_id = ? ORDER BY uploaded_at DESC LIMIT 1"
+          ).bind(payload.userId).first() as any
+          if (uploadText?.extracted_text) {
+            let txt = uploadText.extracted_text
+            if (txt.indexOf('---DOCUMENT_TEXT---') > 0) txt = txt.substring(txt.indexOf('---DOCUMENT_TEXT---') + 18)
+            else if (txt.indexOf('---EXTRACTED_TEXT---') > 0) txt = txt.substring(txt.indexOf('---EXTRACTED_TEXT---') + 19)
+            bpContext += `\n=== QUESTIONNAIRE ===\n${txt.slice(0, 5000)}\n`
+          }
+          
+          const bpPrompt = `Tu es un expert en rédaction de Business Plans pour PME africaines.
+Génère un Business Plan COMPLET en JSON avec exactement cette structure:
+{"score":<0-100>,"metadata":{"ai_generated":true,"company":"${userName}","kb_used":true},"sections":[{"title":"Résumé Exécutif","content":"<500+ mots>"},{"title":"Présentation de l'Entreprise","content":"..."},{"title":"Modèle Économique (Business Model)","content":"..."},{"title":"Analyse de Marché & Concurrence","content":"..."},{"title":"Stratégie Marketing (5P)","content":"..."},{"title":"Impact Social & Environnemental","content":"..."},{"title":"Analyse Financière & Plan d'Investissement","content":"..."},{"title":"Analyse SWOT & Risques","content":"..."},{"title":"Équipe & Organisation","content":"..."},{"title":"Besoins de Financement","content":"..."},{"title":"Plan d'Action & Prochaines Étapes","content":"..."}]}
+Chaque section: 300-600 mots, données RÉELLES. Devise: XOF (FCFA). JSON uniquement.
+
+DONNÉES:
+${bpContext}`
+
+          const bpController = new AbortController()
+          const bpTimeout = setTimeout(() => bpController.abort(), 120000) // 120s timeout for BP generation
+          
+          const bpResp = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-api-key': apiKeyForFix, 'anthropic-version': '2023-06-01' },
+            body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 8000, temperature: 0.4, messages: [{ role: 'user', content: bpPrompt }] }),
+            signal: bpController.signal
+          })
+          clearTimeout(bpTimeout)
+          
+          if (bpResp.ok) {
+            const bpData = await bpResp.json() as any
+            const bpText = bpData.content?.[0]?.text || ''
+            const jsonMatch = bpText.match(/\{[\s\S]*\}/)
+            if (jsonMatch) {
+              const bpJson = JSON.parse(jsonMatch[0])
+              const bpContent = JSON.stringify(bpJson)
+              
+              await c.env.DB.prepare("DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'business_plan'").bind(payload.userId).run()
+              await c.env.DB.prepare(
+                "INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, status, created_at) VALUES (?, ?, 'business_plan', ?, ?, ?, 'generated', datetime('now'))"
+              ).bind(crypto.randomUUID(), payload.userId, bpContent, bpJson.score || 72, newVersion).run()
+              
+              // Also update business_plan_analyses
+              await c.env.DB.prepare("DELETE FROM business_plan_analyses WHERE user_id = ?").bind(payload.userId).run()
+              await c.env.DB.prepare(
+                "INSERT INTO business_plan_analyses (id, user_id, pme_id, version, status, business_plan_json, created_at, updated_at) VALUES (?, ?, ?, ?, 'completed', ?, datetime('now'), datetime('now'))"
+              ).bind(crypto.randomUUID(), payload.userId, `pme_${payload.userId}`, newVersion, bpContent).run()
+              
+              result.deliverables.business_plan = bpJson
+              console.log(`[Generate-All] AUTO-FIX: BP regenerated with Claude AI: ${bpContent.length} bytes, ${(bpJson.sections||[]).length} sections`)
+            }
+          }
+        } catch (bpFixErr: any) {
+          console.warn('[Generate-All] AUTO-FIX BP failed (non-fatal):', bpFixErr.message)
+        }
+      }
+      
+      console.log('[Generate-All] Post-processing auto-fixes completed.')
+    } catch (postProcErr: any) {
+      console.warn('[Generate-All] Post-processing error (non-fatal):', postProcErr.message)
+    }
+
     // ═══ SYNC MODULE TABLES ═══
     // Populate business_plan_analyses and plan_ovo_analyses so that module pages
     // (/module/business-plan, /module/plan-ovo) can find the generated data.
@@ -4421,9 +4623,11 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
   <!-- ═══ LOADING ═══ -->
   <section class="ev2-loading" id="loading-section">
     <div class="ev2-loading__spinner"></div>
+    <p style="font-size:14px;color:#374151;margin-bottom:12px;font-weight:600;">Génération en cours — cela peut prendre 2 à 5 minutes</p>
+    <p style="font-size:12px;color:#6b7280;margin-bottom:16px;">L'IA analyse vos documents et génère 7 livrables. Ne fermez pas cette page.</p>
     <div class="ev2-loading__step" id="step-extract"><i class="fas fa-file-lines"></i> Extraction des documents...</div>
-    <div class="ev2-loading__step" id="step-analyze"><i class="fas fa-brain"></i> Analyse par l'IA...</div>
-    <div class="ev2-loading__step" id="step-gen"><i class="fas fa-file-export"></i> Génération des livrables...</div>
+    <div class="ev2-loading__step" id="step-analyze"><i class="fas fa-brain"></i> Analyse par l'IA (4 agents séquentiels)...</div>
+    <div class="ev2-loading__step" id="step-gen"><i class="fas fa-file-export"></i> Génération des livrables HTML...</div>
     <div class="ev2-loading__step" id="step-done"><i class="fas fa-check-circle"></i> Terminé !</div>
   </section>
 
@@ -4637,16 +4841,20 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         });
       }
       setStep(0);
-      const t1 = setTimeout(() => setStep(1), 2000);
-      const t2 = setTimeout(() => setStep(2), 12000);
+      const t1 = setTimeout(() => setStep(1), 3000);
+      const t2 = setTimeout(() => setStep(2), 30000);
       
       try {
-        const res = await fetch('/api/ai/generate-all', { method: 'POST', credentials: 'include' });
+        const genController = new AbortController();
+        const genTimeout = setTimeout(() => genController.abort(), 600000); // 10 min max
+        
+        const res = await fetch('/api/ai/generate-all', { method: 'POST', credentials: 'include', signal: genController.signal });
+        clearTimeout(genTimeout);
         const data = await res.json();
         clearTimeout(t1); clearTimeout(t2);
         if (data.success) { setStep(3); setTimeout(() => location.reload(), 1200); }
-        else { alert(data.error || 'Erreur'); if (main) main.style.display = ''; if (load) load.classList.remove('ev2-loading--active'); if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> Générer les livrables'; } }
-      } catch (e) { clearTimeout(t1); clearTimeout(t2); alert('Erreur: ' + e.message); if (main) main.style.display = ''; if (load) load.classList.remove('ev2-loading--active'); if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> Générer les livrables'; } }
+        else { alert(data.error || 'Erreur lors de la génération'); if (main) main.style.display = ''; if (load) load.classList.remove('ev2-loading--active'); if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> Générer les livrables'; } }
+      } catch (e) { clearTimeout(t1); clearTimeout(t2); const msg = e.name === 'AbortError' ? 'La génération a pris trop de temps (>10 min). Vos données sont sauvegardées. Rechargez la page et réessayez.' : ('Erreur: ' + e.message); alert(msg); if (main) main.style.display = ''; if (load) load.classList.remove('ev2-loading--active'); if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> Générer les livrables'; } }
     }
 
     // ── Select deliverable (bottom icons) ──

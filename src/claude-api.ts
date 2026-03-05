@@ -40,7 +40,7 @@ export async function callClaudeJSON<T = any>(opts: ClaudeCallOptions): Promise<
     systemPrompt,
     userPrompt,
     maxTokens = 8192,
-    timeoutMs = 90_000,
+    timeoutMs = 120_000,
     maxRetries = 2,
     label = 'Deliverable'
   } = opts

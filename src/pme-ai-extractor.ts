@@ -302,7 +302,7 @@ ATTENTION: Identifie les headers de chaque tableau et extrait les valeurs numeri
     systemPrompt: SYSTEM_PROMPT_EXTRACTEUR,
     userPrompt,
     maxTokens: 3000,
-    timeoutMs: 25_000,
+    timeoutMs: 60_000,
     maxRetries: 2,
     label: 'PME Extraction'
   })
@@ -374,7 +374,7 @@ Estime les valeurs manquantes en te basant sur le secteur, la taille et les donn
     systemPrompt: SYSTEM_PROMPT_ESTIMATEUR,
     userPrompt,
     maxTokens: 2000,
-    timeoutMs: 15_000,
+    timeoutMs: 45_000,
     maxRetries: 2,
     label: 'PME Estimation'
   })

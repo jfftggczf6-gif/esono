@@ -969,7 +969,7 @@ export async function analyzeInputsWithAI(
       systemPrompt,
       userPrompt,
       maxTokens: 4096,
-      timeoutMs: 60_000,
+      timeoutMs: 120_000,
       maxRetries: 2,
       label: 'Inputs Diagnostic'
     })

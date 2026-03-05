@@ -473,7 +473,7 @@ async function analyzeSicWithAI(
       systemPrompt: buildSicSystemPrompt(kbContext),
       userPrompt: buildSicUserPrompt(answers, companyName, sector),
       maxTokens: 6144,
-      timeoutMs: 90_000,
+      timeoutMs: 120_000,
       maxRetries: 2,
       label: 'SIC Deliverable'
     })
@@ -2104,10 +2104,15 @@ export function regenerateSicHtmlFromDbAnalysis(
     country: string
   }
 ): string {
-  const pillars = dbAnalysis.pillars || []
-  const oddAlignment = dbAnalysis.odd_alignment || []
-  const impactMatrix = dbAnalysis.impact_matrix || {}
-  const scoreGlobal = dbAnalysis.score || 0
+  // Defensive: unwrap JSON schema wrapper if present
+  const analysis = (dbAnalysis as any).properties && !(dbAnalysis as any).pillars
+    ? (dbAnalysis as any).properties
+    : dbAnalysis
+  
+  const pillars = analysis.pillars || []
+  const oddAlignment = analysis.odd_alignment || []
+  const impactMatrix = analysis.impact_matrix || {}
+  const scoreGlobal = analysis.score || 0
   
   const scoreColor = scoreGlobal >= 71 ? COLORS.primaryLight : scoreGlobal >= 51 ? COLORS.accent : scoreGlobal >= 31 ? COLORS.orange : COLORS.red
   const dateStr = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })

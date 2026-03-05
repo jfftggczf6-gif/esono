@@ -149,7 +149,7 @@ Réponds UNIQUEMENT en JSON valide.`
       systemPrompt: SIC_EXTRACTION_SYSTEM_PROMPT + '\n\n' + SIC_EXTRACTION_SCHEMA,
       userPrompt,
       maxTokens: 6000,
-      timeoutMs: 60_000,
+      timeoutMs: 120_000,
       maxRetries: 2,
       label: 'SIC Extraction'
     })

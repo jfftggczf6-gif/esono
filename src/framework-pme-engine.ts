@@ -1774,7 +1774,7 @@ export async function analyzePmeWithAI(
       systemPrompt,
       userPrompt,
       maxTokens: 8192,  // Increased from 6144 for per-sheet comments
-      timeoutMs: 90_000, // Increased from 75s
+      timeoutMs: 120_000, // 120s for full framework analysis
       maxRetries: 2,
       label: 'Framework PME'
     })
