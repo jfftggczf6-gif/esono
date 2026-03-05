@@ -7757,7 +7757,7 @@ app.post('/api/plan-ovo/fill', async (c) => {
     // Step 1: Load extraction data from DB
     // ═══════════════════════════════════════════════════
     const plan = await db.prepare(`
-      SELECT id, pme_id, version, extraction_json, status, pays
+      Select id, pme_id, version, extraction_json, analysis_json, status, pays
       FROM plan_ovo_analyses
       WHERE id = ? AND user_id = ?
     `).bind(planId, payload.userId).first()
@@ -7766,7 +7766,7 @@ app.post('/api/plan-ovo/fill', async (c) => {
       return c.json({ error: 'Plan OVO non trouvé' }, 404)
     }
 
-    if (!plan.extraction_json) {
+    if (!plan.extraction_json && !plan.analysis_json) {
       return c.json({ error: 'Extraction non disponible — lancez d\'abord /api/plan-ovo/generate' }, 422)
     }
 
@@ -7776,7 +7776,8 @@ app.post('/api/plan-ovo/fill', async (c) => {
 
     let extractionData: OVOExtractionResult
     try {
-      extractionData = JSON.parse(plan.extraction_json as string)
+      const rawJson = (plan.extraction_json || plan.analysis_json) as string
+      extractionData = JSON.parse(rawJson)
     } catch {
       return c.json({ error: 'Données extraction corrompues' }, 500)
     }

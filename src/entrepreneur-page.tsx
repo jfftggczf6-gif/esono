@@ -6140,6 +6140,8 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
           }
           
           html += '</div>';
+          html += '</div>';
+          return html;
         } else {
         // Original fallback: display projections from the plan_ovo deliverable content
         const proj = c.projections?.scenario_base;
