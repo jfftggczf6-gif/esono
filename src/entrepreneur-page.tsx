@@ -1196,10 +1196,9 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
 
 
 // ─── API: POST /api/ai/pipeline/step — Internal chained pipeline steps ─────
-// V5: SYNCHRONOUS handler — Cloudflare Workers have 30min wall-clock time.
-// CPU limit is 30s but fetch() I/O (Claude calls) does NOT count as CPU time.
-// Each step does 1 Claude call (I/O) + DB ops, well under CPU limit.
-// The chainNextStep self-fetch triggers the NEXT step as a new Worker invocation.
+// V6: HYBRID — Return HTTP 200 IMMEDIATELY + do all work in waitUntil()
+// With usage_model: "unbound" (30min wall-clock) AND waitUntil for safety.
+// Each step does 1 Claude call (I/O) + DB ops, then chains to next step.
 entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
   const jobId = c.req.query('jobId')
   const step = c.req.query('step')
@@ -1212,11 +1211,13 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
   const db = c.env.DB
   const apiKey = c.env.ANTHROPIC_API_KEY || ''
 
+  // ── Return HTTP 200 IMMEDIATELY, execute step work in waitUntil ──
+  const doStepWork = async () => {
   try {
     const ctx = await loadPipelineContext(db, jobId)
     if (!ctx) {
       await failJob(db, jobId, 'Pipeline context lost')
-      return c.json({ error: 'No context' }, 400)
+      return
     }
 
     const { userId, userName, userCountry, generableTypes, skippedTypes,
@@ -1263,7 +1264,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
         try {
           const documentTexts = await getDocumentTexts()
           const result = await runAgent(db, apiKey, {
-            agentCode: 'bmc_analyst', documentTexts, userName, userCountry, kbContext: ctx.kbContextRaw,
+            agentCode: 'bmc_analyst', documentTexts: await getDocumentTexts(), userName, userCountry, kbContext: ctx.kbContextRaw,
           })
           if (result.success && result.data) {
             ctx.agentResults['bmc_analyst'] = result.data
@@ -1283,7 +1284,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
 
       await savePipelineContext(db, jobId, ctx)
       chainNextStep(c, jobId, 'agent_sic')
-      return c.json({ ok: true, step })
+      return
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -1297,7 +1298,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
         try {
           const documentTexts = await getDocumentTexts()
           const result = await runAgent(db, apiKey, {
-            agentCode: 'sic_analyst', documentTexts, userName, userCountry, kbContext: ctx.kbContextRaw,
+            agentCode: 'sic_analyst', documentTexts: await getDocumentTexts(), userName, userCountry, kbContext: ctx.kbContextRaw,
           })
           if (result.success && result.data) {
             ctx.agentResults['sic_analyst'] = result.data
@@ -1317,7 +1318,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
 
       await savePipelineContext(db, jobId, ctx)
       chainNextStep(c, jobId, 'agent_finance')
-      return c.json({ ok: true, step })
+      return
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -1331,7 +1332,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
         try {
           const documentTexts = await getDocumentTexts()
           const result = await runAgent(db, apiKey, {
-            agentCode: 'finance_analyst', documentTexts, userName, userCountry, kbContext: ctx.kbContextRaw,
+            agentCode: 'finance_analyst', documentTexts: await getDocumentTexts(), userName, userCountry, kbContext: ctx.kbContextRaw,
           })
           if (result.success && result.data) {
             ctx.agentResults['finance_analyst'] = result.data
@@ -1351,7 +1352,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
 
       await savePipelineContext(db, jobId, ctx)
       chainNextStep(c, jobId, 'agent_odd')
-      return c.json({ ok: true, step })
+      return
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -1365,7 +1366,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
         try {
           const documentTexts = await getDocumentTexts()
           const result = await runAgent(db, apiKey, {
-            agentCode: 'odd_analyst', documentTexts, userName, userCountry, kbContext: ctx.kbContextRaw,
+            agentCode: 'odd_analyst', documentTexts: await getDocumentTexts(), userName, userCountry, kbContext: ctx.kbContextRaw,
           })
           if (result.success && result.data) {
             ctx.agentResults['odd_analyst'] = result.data
@@ -1455,7 +1456,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
 
       console.log(`[Pipeline:agent_odd] All agents done (source=${source}), chaining to 'store'`)
       chainNextStep(c, jobId, 'store')
-      return c.json({ ok: true, step })
+      return
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -1531,7 +1532,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
 
       console.log(`[Pipeline:store] Done (${generatedCount} deliverables), chaining to 'bmc_html'`)
       chainNextStep(c, jobId, 'bmc_html')
-      return c.json({ ok: true, step })
+      return
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -1565,8 +1566,8 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
           }
           if (bmcAnswers.size === 0) {
             const documentTexts = await getDocumentTexts()
-            if (documentTexts.bmc) {
-              bmcAnswers = parseBmcDocumentToAnswers(documentTexts.bmc)
+            if ((await getDocumentTexts()).bmc) {
+              bmcAnswers = parseBmcDocumentToAnswers((await getDocumentTexts()).bmc)
             }
             console.log(`[Pipeline:bmc_html] BMC parsed from document: ${bmcAnswers.size} sections`)
           }
@@ -1613,7 +1614,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
 
       await savePipelineContext(db, jobId, ctx)
       chainNextStep(c, jobId, 'sic_html')
-      return c.json({ ok: true, step })
+      return
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -1647,8 +1648,8 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
           }
           if (sicAnswers.size === 0) {
             const documentTexts = await getDocumentTexts()
-            if (documentTexts.sic) {
-              sicAnswers.set(1, documentTexts.sic)
+            if ((await getDocumentTexts()).sic) {
+              sicAnswers.set(1, (await getDocumentTexts()).sic)
             }
           }
 
@@ -1700,7 +1701,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
 
       await savePipelineContext(db, jobId, ctx)
       chainNextStep(c, jobId, 'inputs_html')
-      return c.json({ ok: true, step })
+      return
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -1738,9 +1739,9 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
           }
           if (Object.keys(allInputData).length === 0) {
             const documentTexts = await getDocumentTexts()
-            if (documentTexts.inputs) {
+            if ((await getDocumentTexts()).inputs) {
               try {
-                const parsed = JSON.parse(documentTexts.inputs)
+                const parsed = JSON.parse((await getDocumentTexts()).inputs)
                 if (parsed && typeof parsed === 'object') allInputData = parsed
               } catch { /* not JSON */ }
             }
@@ -1769,7 +1770,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
 
       await savePipelineContext(db, jobId, ctx)
       chainNextStep(c, jobId, 'framework_html')
-      return c.json({ ok: true, step })
+      return
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -1789,7 +1790,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
           let usedAIExtraction = false
           let aiEstimations: any[] = []
           const rawUploads = await getRawUploads()
-          const xlsxB64ForParser = rawUploads?.inputs || undefined
+          const xlsxB64ForParser = (await getRawUploads())?.inputs || undefined
           const fwApiKey = apiKey || ''
 
           // PRIORITY 0: Structured parser
@@ -1805,10 +1806,10 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
           // PRIORITY 1: AI extraction (skip to avoid double Claude call — use text fallback)
           if (!usedStructuredParser && hasInputs) {
             const documentTexts = await getDocumentTexts()
-            if (documentTexts.inputs) {
+            if ((await getDocumentTexts()).inputs) {
               try {
                 const enriched = await buildPmeInputWithAI(
-                  documentTexts.inputs, fwApiKey, companyName,
+                  (await getDocumentTexts()).inputs, fwApiKey, companyName,
                   userCountry || "Côte d'Ivoire", buildPmeInputDataFromText
                 )
                 if (enriched?.data) {
@@ -1820,7 +1821,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
                 console.error(`[Pipeline:framework_html] AI extraction failed: ${aiErr.message}`)
               }
               if (!usedAIExtraction) {
-                pmeData = buildPmeInputDataFromText(documentTexts.inputs, companyName, userCountry || "Côte d'Ivoire")
+                pmeData = buildPmeInputDataFromText((await getDocumentTexts()).inputs, companyName, userCountry || "Côte d'Ivoire")
               }
             }
           }
@@ -1898,7 +1899,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
 
       await savePipelineContext(db, jobId, ctx)
       chainNextStep(c, jobId, 'diagnostic_html')
-      return c.json({ ok: true, step })
+      return
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -1986,7 +1987,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
 
       await savePipelineContext(db, jobId, ctx)
       chainNextStep(c, jobId, 'postprocess')
-      return c.json({ ok: true, step })
+      return
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -2259,7 +2260,7 @@ Utilise UNIQUEMENT des données réelles de l'entreprise.`
 
       await completeJob(db, jobId, jobResult)
       console.log(`[Pipeline:postprocess] ✅ Job ${jobId} completed — ${generatedCount} deliverables`)
-      return c.json({ ok: true, step: 'postprocess', completed: true })
+      return
     }
 
     // Unknown step
@@ -2269,8 +2270,18 @@ Utilise UNIQUEMENT des données réelles de l'entreprise.`
   } catch (err: any) {
     console.error(`[Pipeline] Fatal error in step ${step}:`, err.message)
     try { await failJob(db, jobId!, err.message) } catch {}
-    return c.json({ error: err.message }, 500)
   }
+  } // end doStepWork
+
+  // Execute in background via waitUntil — HTTP 200 returns immediately
+  try {
+    c.executionCtx.waitUntil(doStepWork())
+  } catch {
+    // Dev mode fallback — no executionCtx available
+    doStepWork().catch(e => console.error('[Pipeline] Detached error:', e.message))
+  }
+
+  return c.json({ ok: true, step })
 })
 
 // ─── API: GET /api/ai/generate-status — Poll job progress ─────────
