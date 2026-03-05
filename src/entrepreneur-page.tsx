@@ -910,14 +910,43 @@ async function failJob(db: D1Database, jobId: string, error: string) {
 }
 
 // Save/load pipeline context between steps
+// CRITICAL: Split heavy documents (rawUploads, documentTexts, markdownUploads) into pipeline_docs
+// to keep result_json small (<10KB) and avoid CPU timeout on JSON.parse (10ms limit on free plan)
+const HEAVY_KEYS = ['rawUploads', 'documentTexts', 'markdownUploads']
+
 async function savePipelineContext(db: D1Database, jobId: string, context: any) {
-  const json = JSON.stringify(context)
-  await db.prepare("UPDATE generation_jobs SET result_json = ? WHERE id = ?").bind(json, jobId).run()
+  // Separate heavy docs from lightweight metadata
+  const heavy: any = {}
+  const light = { ...context }
+  for (const key of HEAVY_KEYS) {
+    if (light[key]) {
+      heavy[key] = light[key]
+      delete light[key]
+      light[`_has_${key}`] = true // marker so loadPipelineContext knows to load them
+    }
+  }
+  const lightJson = JSON.stringify(light)
+  if (Object.keys(heavy).length > 0) {
+    const heavyJson = JSON.stringify(heavy)
+    await db.prepare("UPDATE generation_jobs SET result_json = ?, pipeline_docs = ? WHERE id = ?").bind(lightJson, heavyJson, jobId).run()
+  } else {
+    await db.prepare("UPDATE generation_jobs SET result_json = ? WHERE id = ?").bind(lightJson, jobId).run()
+  }
 }
+
 async function loadPipelineContext(db: D1Database, jobId: string): Promise<any> {
   const row = await db.prepare("SELECT result_json FROM generation_jobs WHERE id = ?").bind(jobId).first() as any
   if (!row?.result_json) return null
-  return JSON.parse(row.result_json)
+  const ctx = JSON.parse(row.result_json)
+  ctx._jobId = jobId // store for lazy loading
+  return ctx
+}
+
+// Lazy-load heavy docs only when needed (avoids 200KB JSON.parse on every step)
+async function loadPipelineDocs(db: D1Database, jobId: string): Promise<any> {
+  const row = await db.prepare("SELECT pipeline_docs FROM generation_jobs WHERE id = ?").bind(jobId).first() as any
+  if (!row?.pipeline_docs) return {}
+  return JSON.parse(row.pipeline_docs)
 }
 
 // Chain to next step via self-fetch + waitUntil
