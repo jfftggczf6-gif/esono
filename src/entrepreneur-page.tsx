@@ -887,7 +887,7 @@ entrepreneurRoutes.get('/api/chat/messages', async (c) => {
   }
 })
 
-// ─── API: POST /api/ai/generate-all ─────────────────────────────
+// ─── API: POST /api/ai/generate-all (fire-and-forget + job polling) ─────
 entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
   try {
     const token = getAuthToken(c)
@@ -895,7 +895,7 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
     const payload = await verifyToken(token)
     if (!payload) return c.json({ error: 'Token invalide' }, 401)
 
-    // Rate limit: 5 generations per day
+    // Rate limit: 10 generations per day
     const todayStart = new Date()
     todayStart.setHours(0, 0, 0, 0)
     const genCount = await c.env.DB.prepare(
@@ -915,6 +915,52 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
     if (uploadData.filter(u => ['bmc', 'sic', 'inputs'].includes(u.category)).length === 0) {
       return c.json({ error: 'Aucun document uploadé. Veuillez uploader au moins un fichier.' }, 400)
     }
+
+    // Check if already processing (prevent double-clicks)
+    const existingJob = await c.env.DB.prepare(
+      "SELECT id FROM generation_jobs WHERE user_id = ? AND status = 'processing' AND created_at > datetime('now', '-15 minutes')"
+    ).bind(payload.userId).first()
+    if (existingJob) {
+      return c.json({ success: true, jobId: existingJob.id, status: 'already_processing' }, 202)
+    }
+
+    // Create job tracking record
+    const jobId = crypto.randomUUID()
+    await c.env.DB.prepare(
+      "INSERT INTO generation_jobs (id, user_id, status, progress, created_at) VALUES (?, ?, 'processing', 'Démarrage de la génération...', datetime('now'))"
+    ).bind(jobId, payload.userId).run()
+
+    // Capture DB and API key references for use inside waitUntil
+    const db = c.env.DB
+    const apiKey = c.env.ANTHROPIC_API_KEY
+    const userId = payload.userId
+
+    // Helper: update job progress in DB
+    const updateJobProgress = async (progress: string) => {
+      try { await db.prepare("UPDATE generation_jobs SET progress = ? WHERE id = ?").bind(progress, jobId).run() } catch {}
+    }
+    // Helper: mark job completed
+    const completeJob = async (resultJson: any) => {
+      try {
+        await db.prepare(
+          "UPDATE generation_jobs SET status = 'completed', result_json = ?, completed_at = datetime('now') WHERE id = ?"
+        ).bind(JSON.stringify(resultJson), jobId).run()
+      } catch {}
+    }
+    // Helper: mark job failed
+    const failJob = async (error: string) => {
+      try {
+        await db.prepare(
+          "UPDATE generation_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?"
+        ).bind(error, jobId).run()
+      } catch {}
+    }
+
+    // ──── Launch heavy pipeline in background via waitUntil ────
+    const pipelinePromise = (async () => {
+      try {
+        console.log(`[Generate-All] 🚀 Job ${jobId} started for user ${userId}`)
+        await updateJobProgress('Analyse des documents...')
 
     // Determine which categories are uploaded
     const uploadedCats = new Set(uploadData.map(u => u.category))
@@ -1010,6 +1056,7 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
     }
 
     // ═══ MULTI-AGENT ORCHESTRATION ═══
+    await updateJobProgress('Agents IA en cours d\'analyse...')
     const apiKey = c.env.ANTHROPIC_API_KEY
     let result: any = null
     let source = 'fallback'
@@ -1602,9 +1649,11 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
     }
 
     // Execute HTML generation thunks SEQUENTIALLY to avoid workerd overload
+    await updateJobProgress('Génération des livrables HTML...')
     console.log(`[Generate-All] Running ${htmlGenerationThunks.length} HTML deliverable generation(s) sequentially...`)
     for (const thunk of htmlGenerationThunks) {
       try {
+        await updateJobProgress(`Génération: ${thunk.name}...`)
         console.log(`[Generate-All] → Generating ${thunk.name}...`)
         await thunk.fn()
         console.log(`[Generate-All] ✅ ${thunk.name} done`)
@@ -1616,6 +1665,7 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
     console.log('[Generate-All] All HTML deliverable generations completed.')
 
     // ═══ POST-PROCESSING: AUTO-FIX DELIVERABLES ═══
+    await updateJobProgress('Post-traitement et corrections...')
     // Fix known issues automatically so the user never sees broken output
     try {
       const apiKeyForFix = c.env.ANTHROPIC_API_KEY || ''
@@ -1876,7 +1926,8 @@ ${bpContext}`
       }
     }
 
-    return c.json({
+    // ──── Pipeline completed — update job status ────
+    const jobResult = {
       success: true,
       iteration: { id: iterationId, version: newVersion, score_global: result.score_global },
       source,
@@ -1887,10 +1938,77 @@ ${bpContext}`
       generated: generableTypes,
       skipped: skippedTypes,
       uploadedInputs: { bmc: hasBmc, sic: hasSic, inputs: hasInputs }
-    })
+    }
+    await completeJob(jobResult)
+    console.log(`[Generate-All] ✅ Job ${jobId} completed — ${generatedCount} deliverables generated`)
+
+      } catch (pipelineError: any) {
+        console.error(`[Generate-All] ❌ Job ${jobId} failed:`, pipelineError.message)
+        await failJob(pipelineError.message || 'Erreur interne')
+      }
+    })()
+
+    // Use waitUntil if available (Cloudflare Workers), otherwise the promise runs detached
+    try {
+      c.executionCtx.waitUntil(pipelinePromise)
+    } catch {
+      // In dev mode, executionCtx might not be available — pipeline runs as detached promise
+      console.log(`[Generate-All] waitUntil not available, pipeline running as detached promise`)
+    }
+
+    // ──── Return immediately with job ID (HTTP 202 Accepted) ────
+    return c.json({ success: true, jobId, status: 'processing' }, 202)
+
   } catch (error: any) {
     console.error('Generate-all error:', error)
     return c.json({ error: 'Erreur lors de la génération: ' + error.message }, 500)
+  }
+})
+
+// ─── API: GET /api/ai/generate-status — Poll job progress ─────────
+entrepreneurRoutes.get('/api/ai/generate-status', async (c) => {
+  try {
+    const token = getAuthToken(c)
+    if (!token) return c.json({ error: 'Non authentifié' }, 401)
+    const payload = await verifyToken(token)
+    if (!payload) return c.json({ error: 'Token invalide' }, 401)
+
+    const jobId = c.req.query('jobId')
+    
+    if (jobId) {
+      // Specific job
+      const job = await c.env.DB.prepare(
+        'SELECT id, status, progress, result_json, error, created_at, completed_at FROM generation_jobs WHERE id = ? AND user_id = ?'
+      ).bind(jobId, payload.userId).first()
+      if (!job) return c.json({ error: 'Job non trouvé' }, 404)
+      return c.json({
+        jobId: job.id,
+        status: job.status,
+        progress: job.progress,
+        result: job.result_json ? JSON.parse(job.result_json as string) : null,
+        error: job.error,
+        createdAt: job.created_at,
+        completedAt: job.completed_at
+      })
+    } else {
+      // Latest job for user
+      const job = await c.env.DB.prepare(
+        'SELECT id, status, progress, result_json, error, created_at, completed_at FROM generation_jobs WHERE user_id = ? ORDER BY created_at DESC LIMIT 1'
+      ).bind(payload.userId).first()
+      if (!job) return c.json({ status: 'none' })
+      return c.json({
+        jobId: job.id,
+        status: job.status,
+        progress: job.progress,
+        result: job.result_json ? JSON.parse(job.result_json as string) : null,
+        error: job.error,
+        createdAt: job.created_at,
+        completedAt: job.completed_at
+      })
+    }
+  } catch (error: any) {
+    console.error('Generate-status error:', error)
+    return c.json({ error: error.message }, 500)
   }
 })
 
@@ -4632,10 +4750,11 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
   <!-- ═══ LOADING ═══ -->
   <section class="ev2-loading" id="loading-section">
     <div class="ev2-loading__spinner"></div>
-    <p style="font-size:14px;color:#374151;margin-bottom:12px;font-weight:600;">Génération en cours — cela peut prendre 2 à 5 minutes</p>
-    <p style="font-size:12px;color:#6b7280;margin-bottom:16px;">L'IA analyse vos documents et génère 7 livrables. Ne fermez pas cette page.</p>
+    <p style="font-size:14px;color:#374151;margin-bottom:12px;font-weight:600;">Génération en cours — cela peut prendre 5 à 8 minutes</p>
+    <p id="job-progress" style="font-size:12px;color:#1e3a5f;margin-bottom:12px;font-weight:500;">Démarrage...</p>
+    <p style="font-size:11px;color:#9ca3af;margin-bottom:16px;">L'IA analyse vos documents et génère 7 livrables. Ne fermez pas cette page.</p>
     <div class="ev2-loading__step" id="step-extract"><i class="fas fa-file-lines"></i> Extraction des documents...</div>
-    <div class="ev2-loading__step" id="step-analyze"><i class="fas fa-brain"></i> Analyse par l'IA (4 agents séquentiels)...</div>
+    <div class="ev2-loading__step" id="step-analyze"><i class="fas fa-brain"></i> Analyse par l'IA (agents séquentiels)...</div>
     <div class="ev2-loading__step" id="step-gen"><i class="fas fa-file-export"></i> Génération des livrables HTML...</div>
     <div class="ev2-loading__step" id="step-done"><i class="fas fa-check-circle"></i> Terminé !</div>
   </section>
@@ -4833,11 +4952,12 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
       } catch (e) { alert('Erreur: ' + e.message); }
     }
 
-    // ── Generate ──
+    // ── Generate (fire-and-forget + polling) ──
     async function generateAll() {
       const btn = document.getElementById('btn-gen');
       const load = document.getElementById('loading-section');
       const main = document.getElementById('main-layout');
+      const progressEl = document.getElementById('job-progress');
       if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Génération en cours...'; }
       if (main) main.style.display = 'none';
       if (load) load.classList.add('ev2-loading--active');
@@ -4850,20 +4970,73 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
         });
       }
       setStep(0);
-      const t1 = setTimeout(() => setStep(1), 3000);
-      const t2 = setTimeout(() => setStep(2), 30000);
+
+      function resetUI(msg) {
+        if (msg) alert(msg);
+        if (main) main.style.display = '';
+        if (load) load.classList.remove('ev2-loading--active');
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> Générer les livrables'; }
+      }
       
       try {
-        const genController = new AbortController();
-        const genTimeout = setTimeout(() => genController.abort(), 600000); // 10 min max
-        
-        const res = await fetch('/api/ai/generate-all', { method: 'POST', credentials: 'include', signal: genController.signal });
-        clearTimeout(genTimeout);
+        // 1. Fire the POST — returns immediately with jobId
+        const res = await fetch('/api/ai/generate-all', { method: 'POST', credentials: 'include' });
         const data = await res.json();
-        clearTimeout(t1); clearTimeout(t2);
-        if (data.success) { setStep(3); setTimeout(() => location.reload(), 1200); }
-        else { alert(data.error || 'Erreur lors de la génération'); if (main) main.style.display = ''; if (load) load.classList.remove('ev2-loading--active'); if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> Générer les livrables'; } }
-      } catch (e) { clearTimeout(t1); clearTimeout(t2); const msg = e.name === 'AbortError' ? 'La génération a pris trop de temps (>10 min). Vos données sont sauvegardées. Rechargez la page et réessayez.' : ('Erreur: ' + e.message); alert(msg); if (main) main.style.display = ''; if (load) load.classList.remove('ev2-loading--active'); if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> Générer les livrables'; } }
+        
+        if (!res.ok) { resetUI(data.error || 'Erreur lors de la génération'); return; }
+        
+        const jobId = data.jobId;
+        if (!jobId) { resetUI('Erreur: pas de jobId retourné'); return; }
+        if (progressEl) progressEl.textContent = 'Démarrage de la génération...';
+
+        // 2. Poll every 5s for status
+        let elapsed = 0;
+        const maxWait = 900000; // 15 min max
+        const pollInterval = 5000;
+        
+        const poll = () => new Promise((resolve, reject) => {
+          const timer = setInterval(async () => {
+            elapsed += pollInterval;
+            
+            // Update step based on elapsed time
+            if (elapsed > 5000) setStep(1);
+            if (elapsed > 60000) setStep(2);
+            
+            try {
+              const statusRes = await fetch('/api/ai/generate-status?jobId=' + encodeURIComponent(jobId), { credentials: 'include' });
+              const statusData = await statusRes.json();
+              
+              // Update progress message
+              if (progressEl && statusData.progress) progressEl.textContent = statusData.progress;
+              
+              if (statusData.status === 'completed') {
+                clearInterval(timer);
+                resolve(statusData);
+              } else if (statusData.status === 'failed') {
+                clearInterval(timer);
+                reject(new Error(statusData.error || 'La génération a échoué'));
+              } else if (elapsed >= maxWait) {
+                clearInterval(timer);
+                reject(new Error('La génération prend trop de temps (>15 min). Rechargez la page.'));
+              }
+            } catch (pollErr) {
+              // Network error during polling — keep trying
+              console.warn('Poll error:', pollErr);
+              if (elapsed >= maxWait) { clearInterval(timer); reject(pollErr); }
+            }
+          }, pollInterval);
+        });
+        
+        await poll();
+        
+        // 3. Success
+        setStep(3);
+        if (progressEl) progressEl.textContent = 'Génération terminée !';
+        setTimeout(() => location.reload(), 1500);
+        
+      } catch (e) {
+        resetUI(e.message || 'Erreur lors de la génération');
+      }
     }
 
     // ── Select deliverable (bottom icons) ──
