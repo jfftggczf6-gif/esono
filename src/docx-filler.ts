@@ -42,14 +42,32 @@ function extractText(xml: string): string {
 
 // ─── Paragraph XML builders ──────────────────────────────────
 
-/** Build a normal paragraph */
+/** Build a normal paragraph — supports **bold** markdown inline */
 function makePara(text: string, bold?: boolean): string {
-  const rprBold = bold ? '<w:rPr><w:b/><w:bCs/></w:rPr>' : ''
   const lines = text.split('\n').filter(l => l.trim())
   if (lines.length === 0) return ''
-  return lines.map(line =>
-    `<w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr><w:r>${rprBold}<w:t xml:space="preserve">${xmlEsc(line.trim())}</w:t></w:r></w:p>`
-  ).join('')
+  return lines.map(line => {
+    const trimmed = line.trim()
+    if (bold) {
+      return `<w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr><w:r><w:rPr><w:b/><w:bCs/></w:rPr><w:t xml:space="preserve">${xmlEsc(trimmed)}</w:t></w:r></w:p>`
+    }
+    // Parse **bold** markdown inline
+    return `<w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr>${buildRunsWithBold(trimmed)}</w:p>`
+  }).join('')
+}
+
+/** Build XML runs handling **bold** markdown markers */
+function buildRunsWithBold(text: string): string {
+  // Split on **...** patterns
+  const parts = text.split(/(\*\*[^*]+\*\*)/g)
+  return parts.map(part => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      const inner = part.slice(2, -2)
+      return `<w:r><w:rPr><w:b/><w:bCs/></w:rPr><w:t xml:space="preserve">${xmlEsc(inner)}</w:t></w:r>`
+    }
+    if (!part) return ''
+    return `<w:r><w:t xml:space="preserve">${xmlEsc(part)}</w:t></w:r>`
+  }).join('')
 }
 
 /** Build a bullet-list paragraph using the template's list style */
@@ -57,10 +75,44 @@ function makeBullet(text: string): string {
   return `<w:p><w:pPr><w:pStyle w:val="Paragraphedeliste"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t xml:space="preserve">${xmlEsc(text.trim())}</w:t></w:r></w:p>`
 }
 
-/** Build content from text, ignoring placeholder values */
+/** Build content from markdown text — handles **bold**, bullet lists, double newlines */
 function makeContent(text: string | undefined | null): string {
   if (!text || text === 'À compléter' || text === 'A completer') return ''
-  return makePara(text)
+  // Normalize literal \\n to real newlines (from JSON double-escaped strings)
+  const normalized = text.replace(/\\n/g, '\n')
+  return markdownToDocx(normalized)
+}
+
+/** Convert markdown-like text to DOCX XML paragraphs */
+function markdownToDocx(text: string): string {
+  let xml = ''
+  // Split by double newlines into paragraphs/blocks
+  const blocks = text.split(/\n\n+/)
+  for (const block of blocks) {
+    const trimmed = block.trim()
+    if (!trimmed) continue
+    // Check if block is a list (lines starting with - or * or numbered)
+    const lines = trimmed.split('\n')
+    let allList = true
+    for (const l of lines) {
+      if (!l.trim().match(/^[-*•]\s|^\d+[\.\)]\s/)) { allList = false; break }
+    }
+    if (allList && lines.length > 0) {
+      for (const l of lines) {
+        const bulletText = l.trim().replace(/^[-*•]\s+/, '').replace(/^\d+[\.\)]\s+/, '').trim()
+        // Support **bold** : **label** : content format in bullets
+        xml += `<w:p><w:pPr><w:pStyle w:val="Paragraphedeliste"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>${buildRunsWithBold(bulletText)}</w:p>`
+      }
+    } else {
+      // Regular paragraph(s)
+      for (const l of lines) {
+        const lt = l.trim()
+        if (!lt) continue
+        xml += `<w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr>${buildRunsWithBold(lt)}</w:p>`
+      }
+    }
+  }
+  return xml
 }
 
 /** Build bullet list from an array */
@@ -124,11 +176,16 @@ function buildRevueHistorique(bp: any): string {
     xml += makePara('Réalisations clés :', true)
     xml += makeBulletList(hist.realisations_cles)
   }
+  // Fallback: use description_generale if no sub-fields
+  if (!xml && (pres.description_generale || pres.description)) {
+    xml += makeContent(pres.description_generale || pres.description)
+  }
   return xml || makePara('(À compléter)')
 }
 
 function buildVisionMission(bp: any): string {
-  const vmv = bp.presentation_entreprise?.vision_mission_valeurs || {}
+  const pres = bp.presentation_entreprise || {}
+  const vmv = pres.vision_mission_valeurs || {}
   let xml = ''
   if (vmv.vision) {
     xml += makePara('A : Vision :', true)
@@ -141,10 +198,14 @@ function buildVisionMission(bp: any): string {
   if (Array.isArray(vmv.valeurs) && vmv.valeurs.length > 0) {
     xml += makePara('C : Valeurs :', true)
     for (const v of vmv.valeurs) {
-      const name = v.valeur || v.nom || 'Valeur'
-      const ex = v.exemple || v.description || ''
+      const name = typeof v === 'string' ? v : (v.valeur || v.nom || 'Valeur')
+      const ex = typeof v === 'string' ? '' : (v.exemple || v.description || '')
       xml += makeBullet(`${name}${ex ? ' — ' + ex : ''}`)
     }
+  }
+  // Fallback: if still empty, use description_generale
+  if (!xml && (pres.description_generale || pres.description)) {
+    xml += makeContent(pres.description_generale || pres.description)
   }
   return xml || makePara('(À compléter)')
 }
@@ -235,8 +296,9 @@ function buildModeleEntreprise(bp: any): string {
   const offre = bp.offre_produit_service || bp.product_service || {}
   let xml = ''
 
-  // Fallback: if only .description exists (from generate-all simplified format)
-  if (modele.description && !modele.segments_clients && !offre.description) {
+  // Fallback: if only .description exists and no structured sub-fields
+  const hasSubFields = modele.segments_clients || modele.canaux_distribution || modele.sources_revenus || modele.activites_cles
+  if (modele.description && !hasSubFields && !offre.proposition_valeur) {
     xml += makeContent(modele.description)
     return xml
   }
@@ -248,20 +310,24 @@ function buildModeleEntreprise(bp: any): string {
   if (offre.avantage_concurrentiel) xml += makePara('Avantage concurrentiel : ' + offre.avantage_concurrentiel)
 
   xml += makePara('B : Clients, canaux d\'accès et relations avec les clients :', true)
-  if (modele.segments_clients) xml += makePara('Segments clients : ' + modele.segments_clients)
-  if (modele.canaux_distribution) xml += makePara('Canaux de distribution : ' + modele.canaux_distribution)
-  if (modele.relations_clients) xml += makePara('Relations clients : ' + modele.relations_clients)
+  if (modele.segments_clients) xml += makeContent(modele.segments_clients)
+  if (modele.canaux_distribution) xml += makeContent(modele.canaux_distribution)
+  if (modele.relations_clients) xml += makeContent(modele.relations_clients)
+  if (!modele.segments_clients && !modele.canaux_distribution) {
+    // Fall back to description for clients section
+    if (modele.description) xml += makeContent(modele.description.substring(0, 500))
+  }
 
   xml += makePara('C : Revenus et dépenses :', true)
-  if (modele.sources_revenus) xml += makePara('Sources de revenus : ' + modele.sources_revenus)
-  if (modele.structure_couts) xml += makePara('Structure de coûts : ' + modele.structure_couts)
+  if (modele.sources_revenus) xml += makeContent(modele.sources_revenus)
+  if (modele.structure_couts) xml += makeContent(modele.structure_couts)
 
   xml += makePara('D : Principales activités, ressources et partenaires :', true)
-  if (modele.activites_cles) xml += makePara('Activités clés : ' + modele.activites_cles)
-  if (modele.ressources_cles) xml += makePara('Ressources clés : ' + modele.ressources_cles)
-  if (modele.partenaires_cles) xml += makePara('Partenaires clés : ' + modele.partenaires_cles)
+  if (modele.activites_cles) xml += makeContent(modele.activites_cles)
+  if (modele.ressources_cles) xml += makeContent(modele.ressources_cles)
+  if (modele.partenaires_cles) xml += makeContent(modele.partenaires_cles)
 
-  return xml || makePara('(À compléter)')
+  return xml || (modele.description ? makeContent(modele.description) : makePara('(À compléter)'))
 }
 
 function buildMarche(bp: any): string {
@@ -409,10 +475,14 @@ function buildImpact(bp: any): string {
 function buildFinancier(bp: any): string {
   const fin = bp.plan_financier || bp.financial_plan || {}
   let xml = ''
-  // Fallback: if only .description exists
-  if (fin.description && !fin.plan_investissement && !fin.tableau_financier_3ans) {
+  // Fallback: if only .description exists AND no financial table data
+  if (fin.description && !fin.plan_investissement && !fin.tableau_financier_3ans && !fin.kpis) {
     xml += makeContent(fin.description)
     return xml
+  }
+  // Always show description text first for narrative context
+  if (fin.description) {
+    xml += makeContent(fin.description)
   }
 
   if (fin.plan_investissement) {
@@ -488,15 +558,20 @@ function buildFinancier(bp: any): string {
 
 function buildAttentesOvo(bp: any): string {
   const att = bp.attentes_ovo || {}
+  const bes = bp.besoins_financement || {}
   let xml = ''
   xml += makePara('A : Financier :', true)
   if (att.montant_demande) xml += makePara('Montant demandé : ' + att.montant_demande)
   if (att.contribution_entrepreneur) xml += makePara('Contribution de l\'entrepreneur : ' + att.contribution_entrepreneur)
   if (att.autres_investisseurs) xml += makePara('Autres investisseurs : ' + att.autres_investisseurs)
+  // Fall back to besoins_financement description if no structured attentes
+  if (!att.montant_demande && bes.description) {
+    xml += makeContent(bes.description.substring(0, 500))
+  }
   xml += makePara('B : Expertise :', true)
   if (att.expertise_necessaire) xml += makePara('Expertise nécessaire : ' + att.expertise_necessaire)
   if (att.coaching_souhaite) xml += makePara('Coaching souhaité : ' + att.coaching_souhaite)
-  return xml || makePara('(À compléter)')
+  return xml || (bes.description ? makeContent(bes.description) : makePara('(À compléter)'))
 }
 
 // ─── Section mapping (heading text → content builder) ────────
