@@ -7891,29 +7891,35 @@ app.post('/api/plan-ovo/fill', async (c) => {
     // ═══════════════════════════════════════════════════
     console.log(`[Plan OVO Fill] Step 2: Loading Excel template...`)
 
-    // Fetch the template from the static assets
-    // In local dev (wrangler pages dev), static assets are served from public/
-    const url = new URL(c.req.url)
-    const templateUrl = `${url.protocol}//${url.host}/templates/plan_ovo_template.xlsm`
-    let templateBytes: Uint8Array
+    // Strategy: try c.env.ASSETS first (works both in local dev and production),
+    // then fallback to external self-fetch. Self-fetch can timeout in workerd local dev
+    // because the worker cannot connect to itself.
+    let templateBytes!: Uint8Array
 
+    // Method 1: c.env.ASSETS (Cloudflare Pages native asset binding)
     try {
-      const resp = await fetch(templateUrl)
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-      templateBytes = new Uint8Array(await resp.arrayBuffer())
-      console.log(`[Plan OVO Fill] Template loaded: ${templateBytes.length} bytes`)
-    } catch (fetchErr: any) {
-      console.error(`[Plan OVO Fill] Failed to fetch template:`, fetchErr.message)
-      // Fallback: try to load from c.env.ASSETS if available (Cloudflare Pages)
+      const assetResp = await (c.env as any).ASSETS?.fetch(new Request('https://placeholder/templates/plan_ovo_template.xlsm'))
+      if (assetResp && assetResp.ok) {
+        templateBytes = new Uint8Array(await assetResp.arrayBuffer())
+        console.log(`[Plan OVO Fill] Template loaded from ASSETS: ${templateBytes.length} bytes`)
+      } else {
+        throw new Error(`ASSETS fetch: ${assetResp?.status || 'no ASSETS binding'}`)
+      }
+    } catch (assetsErr: any) {
+      console.warn(`[Plan OVO Fill] ASSETS fetch failed: ${assetsErr.message}, trying external fetch...`)
+      // Method 2: External fetch (works when ASSETS not available)
       try {
-        const assetResp = await c.env.ASSETS?.fetch(new Request('https://placeholder/templates/plan_ovo_template.xlsm'))
-        if (assetResp && assetResp.ok) {
-          templateBytes = new Uint8Array(await assetResp.arrayBuffer())
-          console.log(`[Plan OVO Fill] Template loaded from ASSETS: ${templateBytes.length} bytes`)
-        } else {
-          throw new Error('ASSETS fetch failed')
-        }
-      } catch {
+        const url = new URL(c.req.url)
+        const templateUrl = `${url.protocol}//${url.host}/templates/plan_ovo_template.xlsm`
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 8000) // 8s timeout
+        const resp = await fetch(templateUrl, { signal: controller.signal })
+        clearTimeout(timeout)
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        templateBytes = new Uint8Array(await resp.arrayBuffer())
+        console.log(`[Plan OVO Fill] Template loaded via fetch: ${templateBytes.length} bytes`)
+      } catch (fetchErr: any) {
+        console.error(`[Plan OVO Fill] Failed to fetch template:`, fetchErr.message)
         await db.prepare(`
           UPDATE plan_ovo_analyses SET status = 'generated', error_message = 'Template Excel introuvable', updated_at = datetime('now') WHERE id = ?
         `).bind(planId).run()
@@ -9003,16 +9009,26 @@ function renderBusinessPlanModulePage(opts: {
       'presentation': 'presentation_entreprise',
       'présentation de l\'entreprise': 'presentation_entreprise',
       'présentation de l\'entreprise & équipe': 'presentation_entreprise',
+      'presentation de l\'entreprise & equipe': 'presentation_entreprise',
       'company presentation': 'presentation_entreprise',
       'analyse de marche': 'analyse_marche',
       'analyse de marché': 'analyse_marche',
+      'analyse de marche & concurrence': 'analyse_marche',
+      'analyse de marché & concurrence': 'analyse_marche',
       'market analysis': 'analyse_marche',
       'bmc affine': 'bmc_affine',
       'bmc affiné': 'bmc_affine',
+      'business model canvas': 'bmc_affine',
+      'business model canvas affine': 'bmc_affine',
+      'business model canvas affiné': 'bmc_affine',
+      'modele economique (business model)': 'modele_economique',
+      'modèle économique (business model)': 'modele_economique',
       'strategie commerciale': 'strategie_marketing',
       'stratégie commerciale': 'strategie_marketing',
       'strategie marketing': 'strategie_marketing',
       'stratégie marketing': 'strategie_marketing',
+      'stratégie marketing (5p)': 'strategie_marketing',
+      'strategie marketing (5p)': 'strategie_marketing',
       'marketing strategy': 'strategie_marketing',
       'modele economique': 'modele_economique',
       'modèle économique': 'modele_economique',
@@ -9020,12 +9036,23 @@ function renderBusinessPlanModulePage(opts: {
       'plan operationnel': 'plan_operationnel',
       'plan opérationnel': 'plan_operationnel',
       'operational plan': 'plan_operationnel',
+      'equipe & organisation': 'plan_operationnel',
+      'équipe & organisation': 'plan_operationnel',
       'impact social': 'impact_social',
       'social impact': 'impact_social',
+      'impact social & environnemental': 'impact_social',
+      'strategie d\'impact social': 'impact_social',
+      'stratégie d\'impact social': 'impact_social',
+      'stratégie d\'impact social & odd': 'impact_social',
+      'strategie d\'impact social & odd': 'impact_social',
       'projections financieres': 'plan_financier',
       'projections financières': 'plan_financier',
       'plan financier': 'plan_financier',
       'financial plan': 'plan_financier',
+      'analyse financiere': 'plan_financier',
+      'analyse financière': 'plan_financier',
+      'analyse financiere & plan d\'investissement': 'plan_financier',
+      'analyse financière & plan d\'investissement': 'plan_financier',
       'gouvernance': 'gouvernance',
       'governance': 'gouvernance',
       'gouvernance & projet': 'gouvernance',
@@ -9033,16 +9060,25 @@ function renderBusinessPlanModulePage(opts: {
       'risques': 'risques_mitigation',
       'risk mitigation': 'risques_mitigation',
       'risques & mitigation': 'risques_mitigation',
+      'analyse swot': 'risques_mitigation',
+      'analyse swot & risques': 'risques_mitigation',
       'besoins de financement': 'besoins_financement',
+      'besoins de financement & plan de levee': 'besoins_financement',
+      'besoins de financement & plan de levée': 'besoins_financement',
       'funding needs': 'besoins_financement',
       'offre produit': 'offre_produit_service',
       'offre produit/service': 'offre_produit_service',
       'product service': 'offre_produit_service',
+      'plan d\'action': 'plan_action',
+      'plan d\'action & prochaines etapes': 'plan_action',
+      'plan d\'action & prochaines étapes': 'plan_action',
       'annexes': 'annexes',
     }
     const rich: any = { score: bpData.score, metadata: { ai_generated: true, date_generation: new Date().toISOString() } }
     for (const sec of bpData.sections) {
-      const titleNorm = (sec.title || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+      // Strip leading numbers/dots/dashes (e.g. "1. Résumé Exécutif" → "Résumé Exécutif")
+      const titleClean = (sec.title || '').replace(/^\d+[\.\)\-\s]+\s*/, '').trim()
+      const titleNorm = titleClean.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
       let key = ''
       for (const [pattern, mapped] of Object.entries(sectionTitleMap)) {
         const pNorm = pattern.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -11042,22 +11078,37 @@ app.get('/api/business-plan/download/:id', async (c) => {
       const sectionTitleMap: Record<string, string> = {
         'resume executif': 'resume_executif', 'résumé exécutif': 'resume_executif',
         'presentation': 'presentation_entreprise', 'présentation': 'presentation_entreprise',
+        'présentation de l\'entreprise': 'presentation_entreprise', 'présentation de l\'entreprise & équipe': 'presentation_entreprise',
         'analyse de marche': 'analyse_marche', 'analyse de marché': 'analyse_marche',
+        'analyse de marché & concurrence': 'analyse_marche', 'analyse de marche & concurrence': 'analyse_marche',
         'bmc affine': 'bmc_affine', 'bmc affiné': 'bmc_affine',
+        'business model canvas': 'bmc_affine', 'business model canvas affiné': 'bmc_affine',
+        'modele economique (business model)': 'modele_economique', 'modèle économique (business model)': 'modele_economique',
         'strategie commerciale': 'strategie_marketing', 'stratégie commerciale': 'strategie_marketing',
         'strategie marketing': 'strategie_marketing', 'stratégie marketing': 'strategie_marketing',
+        'stratégie marketing (5p)': 'strategie_marketing', 'strategie marketing (5p)': 'strategie_marketing',
         'modele economique': 'modele_economique', 'modèle économique': 'modele_economique',
         'plan operationnel': 'plan_operationnel', 'plan opérationnel': 'plan_operationnel',
-        'impact social': 'impact_social',
+        'equipe & organisation': 'plan_operationnel', 'équipe & organisation': 'plan_operationnel',
+        'impact social': 'impact_social', 'impact social & environnemental': 'impact_social',
+        'stratégie d\'impact social': 'impact_social', 'stratégie d\'impact social & odd': 'impact_social',
         'projections financieres': 'plan_financier', 'projections financières': 'plan_financier', 'plan financier': 'plan_financier',
+        'analyse financière': 'plan_financier', 'analyse financiere': 'plan_financier',
+        'analyse financière & plan d\'investissement': 'plan_financier',
         'gouvernance': 'gouvernance', 'gouvernance & projet': 'gouvernance',
         'gestion des risques': 'risques_mitigation', 'risques': 'risques_mitigation',
+        'analyse swot': 'risques_mitigation', 'analyse swot & risques': 'risques_mitigation',
         'besoins de financement': 'besoins_financement',
+        'besoins de financement & plan de levée': 'besoins_financement', 'besoins de financement & plan de levee': 'besoins_financement',
         'offre produit': 'offre_produit_service', 'offre produit/service': 'offre_produit_service',
+        'plan d\'action': 'plan_action', 'plan d\'action & prochaines étapes': 'plan_action',
+        'annexes': 'annexes',
       }
       const rich: any = { score: bpData.score, metadata: { ai_generated: true, date_generation: new Date().toISOString() } }
       for (const sec of bpData.sections) {
-        const titleNorm = (sec.title || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+        // Strip leading numbers/dots/dashes (e.g. "1. Résumé Exécutif" → "Résumé Exécutif")
+        const titleClean = (sec.title || '').replace(/^\d+[\.\)\-\s]+\s*/, '').trim()
+        const titleNorm = titleClean.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
         let key = ''
         for (const [pattern, mapped] of Object.entries(sectionTitleMap)) {
           const pNorm = pattern.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -11070,13 +11121,18 @@ app.get('/api/business-plan/download/:id', async (c) => {
           else if (key === 'analyse_marche') rich.analyse_marche = { description: content }
           else if (key === 'strategie_marketing') rich.strategie_marketing = { description: content }
           else if (key === 'modele_economique') rich.modele_economique = { description: content }
+          else if (key === 'bmc_affine') rich.bmc_affine = { description: content }
           else if (key === 'plan_operationnel') rich.plan_operationnel = { description: content }
           else if (key === 'impact_social') rich.impact_social = { description: content }
           else if (key === 'plan_financier') rich.plan_financier = { description: content }
           else if (key === 'gouvernance') rich.gouvernance = { description: content }
           else if (key === 'risques_mitigation') rich.risques_mitigation = { description: content }
           else if (key === 'besoins_financement') rich.besoins_financement = { description: content }
+          else if (key === 'plan_action') rich.plan_action = { description: content }
+          else if (key === 'annexes') rich.annexes = { description: content }
           else rich[key] = { description: content }
+        } else {
+          console.warn(`[BP Download] Unmatched section title: "${sec.title}" (normalized: "${titleNorm}")`)
         }
       }
       bpData = rich
