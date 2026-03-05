@@ -5,7 +5,7 @@
 import { Hono } from 'hono'
 import { getCookie } from 'hono/cookie'
 import { verifyToken, getAuthToken } from './auth'
-import { orchestrateGeneration, loadKBContext, type OrchestrationResult } from './agents/ai-agents'
+import { orchestrateGeneration, runAgent, loadKBContext, type OrchestrationResult } from './agents/ai-agents'
 import { renderBMCPage, adaptBMCData } from './deliverable-bmc'
 import { generateFullBmcDeliverable, generateFullBmcDeliverableFallback, type BmcDeliverableData, type KBContextForBmc } from './bmc-deliverable-engine'
 import { generateFullSicDeliverable, generateFullSicDeliverableFallback, renderSicDeliverableFromAnalyst, type SicDeliverableData, type SicAnalystDeliverableInput } from './sic-deliverable-engine'
@@ -925,16 +925,30 @@ function chainNextStep(c: any, jobId: string, nextStep: string) {
   const url = new URL(c.req.url)
   url.pathname = '/api/ai/pipeline/step'
   url.search = `?jobId=${jobId}&step=${nextStep}&secret=${PIPELINE_SECRET}`
+  const targetUrl = url.toString()
   
-  const fetchPromise = fetch(url.toString(), { method: 'POST' }).catch(err => {
-    console.error(`[Pipeline] Chain to ${nextStep} failed:`, err.message)
-  })
+  // Fire-and-forget with retry: try up to 2 times
+  const fetchWithRetry = async () => {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const resp = await fetch(targetUrl, { method: 'POST' })
+        if (resp.ok) {
+          console.log(`[Pipeline] ✅ Chained to '${nextStep}' (attempt ${attempt})`)
+          return
+        }
+        console.error(`[Pipeline] Chain to '${nextStep}' returned ${resp.status} (attempt ${attempt})`)
+      } catch (err: any) {
+        console.error(`[Pipeline] Chain to '${nextStep}' failed (attempt ${attempt}):`, err.message)
+      }
+      if (attempt < 2) await new Promise(r => setTimeout(r, 1000))
+    }
+  }
   
   try {
-    c.executionCtx.waitUntil(fetchPromise)
+    c.executionCtx.waitUntil(fetchWithRetry())
   } catch {
-    // Dev mode fallback — run detached
-    fetchPromise.then(() => console.log(`[Pipeline] ${nextStep} completed (detached)`))
+    // Dev mode or Pages mode fallback — run detached
+    fetchWithRetry()
   }
 }
 
@@ -1108,10 +1122,39 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
     }
     
     await savePipelineContext(db, jobId, pipelineContext)
-    console.log(`[Generate-All] Pipeline context saved, chaining to step 'agents'`)
+    console.log(`[Generate-All] Pipeline context saved, triggering pipeline via direct fetch`)
     
-    // Chain to step 1: multi-agent orchestration
-    chainNextStep(c, jobId, 'agents')
+    // CRITICAL: Trigger pipeline via direct self-fetch inside waitUntil
+    // This is more reliable than chainNextStep which sometimes fails on first call
+    const pipelineUrl = new URL(c.req.url)
+    pipelineUrl.pathname = '/api/ai/pipeline/step'
+    pipelineUrl.search = `?jobId=${jobId}&step=agent_bmc&secret=${PIPELINE_SECRET}`
+    const triggerUrl = pipelineUrl.toString()
+    
+    const triggerPipeline = async () => {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          console.log(`[Generate-All] Triggering agent_bmc (attempt ${attempt})...`)
+          const resp = await fetch(triggerUrl, { method: 'POST' })
+          if (resp.ok) {
+            console.log(`[Generate-All] ✅ Pipeline triggered successfully (attempt ${attempt})`)
+            return
+          }
+          console.error(`[Generate-All] Trigger returned ${resp.status} (attempt ${attempt})`)
+        } catch (err: any) {
+          console.error(`[Generate-All] Trigger failed (attempt ${attempt}):`, err.message)
+        }
+        if (attempt < 3) await new Promise(r => setTimeout(r, 2000))
+      }
+      console.error(`[Generate-All] ❌ All trigger attempts failed for job ${jobId}`)
+      try { await failJob(db, jobId, 'Failed to trigger pipeline after 3 attempts') } catch {}
+    }
+    
+    try {
+      c.executionCtx.waitUntil(triggerPipeline())
+    } catch {
+      triggerPipeline().catch(e => console.error('[Generate-All] Detached trigger error:', e.message))
+    }
 
     // ──── Return immediately with job ID (HTTP 202 Accepted) ────
     return c.json({ success: true, jobId, status: 'processing' }, 202)
@@ -1122,8 +1165,11 @@ entrepreneurRoutes.post('/api/ai/generate-all', async (c) => {
   }
 })
 
+
 // ─── API: POST /api/ai/pipeline/step — Internal chained pipeline steps ─────
-// Each step does ONE heavy operation (< 25s), saves progress, and chains to next
+// V4: CRITICAL FIX — Return HTTP 200 IMMEDIATELY, do all work in waitUntil()
+// Cloudflare Workers kill requests after ~30s wall-clock. Claude calls take 30-120s.
+// waitUntil() allows background work to continue after the HTTP response is sent.
 entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
   const jobId = c.req.query('jobId')
   const step = c.req.query('step')
@@ -1136,79 +1182,243 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
   const db = c.env.DB
   const apiKey = c.env.ANTHROPIC_API_KEY || ''
 
+  // ── CRITICAL: Return HTTP 200 IMMEDIATELY, do all work in waitUntil ──
+  // Cloudflare Workers kill requests after ~30s wall-clock. Claude calls take 30-120s.
+  // waitUntil() lets background work continue after HTTP response is sent.
+  const pipelineWork = async () => {
   try {
     const ctx = await loadPipelineContext(db, jobId)
     if (!ctx) {
       await failJob(db, jobId, 'Pipeline context lost')
-      return c.json({ error: 'No context' }, 400)
+      return
     }
 
     const { userId, userName, userCountry, documentTexts, generableTypes, skippedTypes,
             rawUploads, markdownUploads, newVersion, hasBmc, hasSic, hasInputs } = ctx
-    const uploadedCats = new Set<string>(ctx.uploadedCats)
+    const uploadedCats = new Set<string>(ctx.uploadedCats || [])
 
     // ════════════════════════════════════════════════════════════════
-    // STEP 1: AGENTS — Multi-agent orchestration (4 Claude calls)
+    // STEP: agent_bmc — Run BMC analyst (1 Claude call)
     // ════════════════════════════════════════════════════════════════
-    if (step === 'agents') {
-      console.log(`[Pipeline:agents] Starting for job ${jobId}`)
-      await updateJobProgress(db, jobId, 'Agents IA en cours d\'analyse...')
+    if (step === 'agent_bmc') {
+      console.log(`[Pipeline:agent_bmc] Starting for job ${jobId}`)
+      await updateJobProgress(db, jobId, 'Agent BMC en cours d\'analyse...')
 
-      let result: any = null
-      let source = 'fallback'
-      const agentsUsed: string[] = []
-      const agentErrors: string[] = []
+      if (!ctx.agentsUsed) ctx.agentsUsed = []
+      if (!ctx.agentErrors) ctx.agentErrors = []
+      if (!ctx.agentResults) ctx.agentResults = {}
 
-      try {
-        const orchestrationResult = await orchestrateGeneration(
-          db, apiKey, userId, userName, userCountry || '',
-          documentTexts, Array.from(uploadedCats)
-        )
-
-        if (orchestrationResult.source !== 'fallback' && orchestrationResult.deliverables) {
-          result = {
-            score_global: orchestrationResult.score_global,
-            scores_dimensions: orchestrationResult.scores_dimensions,
-            deliverables: orchestrationResult.deliverables,
-          }
-          source = orchestrationResult.source
-          agentsUsed.push(...(orchestrationResult.agentsUsed || []))
-          if (orchestrationResult.errors) agentErrors.push(...orchestrationResult.errors)
-
-          // Fill missing deliverables from fallback
-          const fallback = buildFallbackResult(hasBmc, hasSic, hasInputs, userName, uploadedCats.size)
-          for (const dtype of generableTypes) {
-            if (!result.deliverables[dtype] && fallback.deliverables?.[dtype]) {
-              result.deliverables[dtype] = fallback.deliverables[dtype]
-              console.log(`[Pipeline:agents] Filled missing ${dtype} from fallback`)
-            }
-          }
+      // Load KB context (shared across all agents)
+      if (!ctx.kbContextLoaded) {
+        try {
+          const kbContext = await loadKBContext(db, userCountry)
+          ctx.kbContextRaw = kbContext
+          ctx.kbContextLoaded = true
+        } catch (err: any) {
+          console.error('[Pipeline:agent_bmc] KB load error:', err.message)
+          ctx.kbContextRaw = { benchmarks: [], fiscalParams: [], funders: [], criteria: [], feedbackHistory: [] }
+          ctx.kbContextLoaded = true
+          ctx.agentErrors.push('Knowledge Base unavailable, using defaults')
         }
-      } catch (orchErr: any) {
-        console.error(`[Pipeline:agents] Orchestration error: ${orchErr.message}`)
-        agentErrors.push(`orchestration: ${orchErr.message}`)
       }
 
+      if (hasBmc) {
+        try {
+          const result = await runAgent(db, apiKey, {
+            agentCode: 'bmc_analyst', documentTexts, userName, userCountry, kbContext: ctx.kbContextRaw,
+          })
+          if (result.success && result.data) {
+            ctx.agentResults['bmc_analyst'] = result.data
+            ctx.agentsUsed.push(`bmc_analyst:${result.source}`)
+            if (result.source === 'claude') ctx.anyClaudeSuccess = true
+          } else {
+            ctx.agentsUsed.push('bmc_analyst:failed')
+            ctx.agentErrors.push(`bmc_analyst: ${result.error || 'failed'}`)
+          }
+        } catch (err: any) {
+          console.error(`[Pipeline:agent_bmc] Error: ${err.message}`)
+          ctx.agentErrors.push(`bmc_analyst: ${err.message}`)
+        }
+      } else {
+        console.log('[Pipeline:agent_bmc] Skipped (no BMC)')
+      }
+
+      await savePipelineContext(db, jobId, ctx)
+      chainNextStep(c, jobId, 'agent_sic')
+      return c.json({ ok: true, step: 'agent_bmc' })
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // STEP: agent_sic — Run SIC analyst (1 Claude call)
+    // ════════════════════════════════════════════════════════════════
+    if (step === 'agent_sic') {
+      console.log(`[Pipeline:agent_sic] Starting for job ${jobId}`)
+      await updateJobProgress(db, jobId, 'Agent SIC en cours d\'analyse...')
+
+      if (hasSic) {
+        try {
+          const result = await runAgent(db, apiKey, {
+            agentCode: 'sic_analyst', documentTexts, userName, userCountry, kbContext: ctx.kbContextRaw,
+          })
+          if (result.success && result.data) {
+            ctx.agentResults['sic_analyst'] = result.data
+            ctx.agentsUsed.push(`sic_analyst:${result.source}`)
+            if (result.source === 'claude') ctx.anyClaudeSuccess = true
+          } else {
+            ctx.agentsUsed.push('sic_analyst:failed')
+            ctx.agentErrors.push(`sic_analyst: ${result.error || 'failed'}`)
+          }
+        } catch (err: any) {
+          console.error(`[Pipeline:agent_sic] Error: ${err.message}`)
+          ctx.agentErrors.push(`sic_analyst: ${err.message}`)
+        }
+      } else {
+        console.log('[Pipeline:agent_sic] Skipped (no SIC)')
+      }
+
+      await savePipelineContext(db, jobId, ctx)
+      chainNextStep(c, jobId, 'agent_finance')
+      return c.json({ ok: true, step: 'agent_sic' })
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // STEP: agent_finance — Run Finance analyst (1 Claude call)
+    // ════════════════════════════════════════════════════════════════
+    if (step === 'agent_finance') {
+      console.log(`[Pipeline:agent_finance] Starting for job ${jobId}`)
+      await updateJobProgress(db, jobId, 'Agent Finance en cours d\'analyse...')
+
+      if (hasInputs) {
+        try {
+          const result = await runAgent(db, apiKey, {
+            agentCode: 'finance_analyst', documentTexts, userName, userCountry, kbContext: ctx.kbContextRaw,
+          })
+          if (result.success && result.data) {
+            ctx.agentResults['finance_analyst'] = result.data
+            ctx.agentsUsed.push(`finance_analyst:${result.source}`)
+            if (result.source === 'claude') ctx.anyClaudeSuccess = true
+          } else {
+            ctx.agentsUsed.push('finance_analyst:failed')
+            ctx.agentErrors.push(`finance_analyst: ${result.error || 'failed'}`)
+          }
+        } catch (err: any) {
+          console.error(`[Pipeline:agent_finance] Error: ${err.message}`)
+          ctx.agentErrors.push(`finance_analyst: ${err.message}`)
+        }
+      } else {
+        console.log('[Pipeline:agent_finance] Skipped (no inputs)')
+      }
+
+      await savePipelineContext(db, jobId, ctx)
+      chainNextStep(c, jobId, 'agent_odd')
+      return c.json({ ok: true, step: 'agent_finance' })
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // STEP: agent_odd — Run ODD analyst (1 Claude call)
+    // ════════════════════════════════════════════════════════════════
+    if (step === 'agent_odd') {
+      console.log(`[Pipeline:agent_odd] Starting for job ${jobId}`)
+      await updateJobProgress(db, jobId, 'Agent ODD en cours d\'analyse...')
+
+      if (hasBmc || hasSic || hasInputs) {
+        try {
+          const result = await runAgent(db, apiKey, {
+            agentCode: 'odd_analyst', documentTexts, userName, userCountry, kbContext: ctx.kbContextRaw,
+          })
+          if (result.success && result.data) {
+            ctx.agentResults['odd_analyst'] = result.data
+            ctx.agentsUsed.push(`odd_analyst:${result.source}`)
+            if (result.source === 'claude') ctx.anyClaudeSuccess = true
+          } else {
+            ctx.agentsUsed.push('odd_analyst:failed')
+            ctx.agentErrors.push(`odd_analyst: ${result.error || 'failed'}`)
+          }
+        } catch (err: any) {
+          console.error(`[Pipeline:agent_odd] Error: ${err.message}`)
+          ctx.agentErrors.push(`odd_analyst: ${err.message}`)
+        }
+      } else {
+        console.log('[Pipeline:agent_odd] Skipped (no docs)')
+      }
+
+      // Now build the consolidated result from all agent results
+      const analysisResults = ctx.agentResults || {}
+      const agentsUsed = ctx.agentsUsed || []
+      const agentErrors = ctx.agentErrors || []
+
+      // Build deliverables from agent results (same logic as orchestrateGeneration)
+      let result: any = null
+      let source = 'fallback'
+
+      if (ctx.anyClaudeSuccess) {
+        // Build deliverables structure from agent outputs
+        const deliverables: Record<string, any> = {}
+        
+        if (analysisResults['bmc_analyst']) {
+          deliverables['bmc_analysis'] = analysisResults['bmc_analyst']
+        }
+        if (analysisResults['sic_analyst']) {
+          deliverables['sic_analysis'] = analysisResults['sic_analyst']
+        }
+        if (analysisResults['finance_analyst']) {
+          deliverables['framework'] = analysisResults['finance_analyst']
+        }
+        if (analysisResults['odd_analyst']) {
+          deliverables['odd'] = analysisResults['odd_analyst']
+        }
+        
+        // Calculate scores
+        const scores: number[] = []
+        if (deliverables['bmc_analysis']?.score) scores.push(deliverables['bmc_analysis'].score)
+        if (deliverables['sic_analysis']?.score) scores.push(deliverables['sic_analysis'].score)
+        if (deliverables['framework']?.score) scores.push(deliverables['framework'].score)
+        
+        const scoreGlobal = scores.length > 0 
+          ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) 
+          : 50
+
+        result = {
+          score_global: scoreGlobal,
+          scores_dimensions: {
+            bmc: deliverables['bmc_analysis']?.score || 0,
+            sic: deliverables['sic_analysis']?.score || 0,
+            framework: deliverables['framework']?.score || 0,
+          },
+          deliverables,
+        }
+        source = 'claude'
+      }
+
+      // Fallback if no result
       if (!result) {
         result = buildFallbackResult(hasBmc, hasSic, hasInputs, userName, uploadedCats.size)
         source = 'fallback'
         agentsUsed.push('fallback')
+      } else {
+        // Fill missing from fallback
+        const fallback = buildFallbackResult(hasBmc, hasSic, hasInputs, userName, uploadedCats.size)
+        for (const dtype of generableTypes) {
+          if (!result.deliverables[dtype] && fallback.deliverables?.[dtype]) {
+            result.deliverables[dtype] = fallback.deliverables[dtype]
+            console.log(`[Pipeline:agent_odd] Filled missing ${dtype} from fallback`)
+          }
+        }
       }
 
-      // Save results to context
       ctx.result = result
       ctx.source = source
       ctx.agentsUsed = agentsUsed
       ctx.agentErrors = agentErrors
       await savePipelineContext(db, jobId, ctx)
 
-      console.log(`[Pipeline:agents] Done (source=${source}), chaining to 'store'`)
+      console.log(`[Pipeline:agent_odd] All agents done (source=${source}), chaining to 'store'`)
       chainNextStep(c, jobId, 'store')
-      return c.json({ ok: true, step: 'agents' })
+      return c.json({ ok: true, step: 'agent_odd' })
     }
 
     // ════════════════════════════════════════════════════════════════
-    // STEP 2: STORE — Store iteration + deliverables + BMC/SIC HTML
+    // STEP: store — Store iteration + deliverables (0 Claude calls)
     // ════════════════════════════════════════════════════════════════
     if (step === 'store') {
       console.log(`[Pipeline:store] Starting for job ${jobId}`)
@@ -1225,7 +1435,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
         VALUES (?, ?, ?, ?, ?, 'initial', ?, datetime('now'))
       `).bind(iterationId, userId, newVersion, result.score_global, JSON.stringify(result.scores_dimensions), `Génération v${newVersion} (${source}) | Agents: ${agentsUsed.join(', ')}`).run()
 
-      // Store deliverables whose dependencies are met
+      // Store deliverables
       for (const dtype of generableTypes) {
         const delivData = result.deliverables?.[dtype]
         if (!delivData) {
@@ -1245,17 +1455,17 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
         }
       }
 
-      // Load KB context
+      // Load KB context for HTML engines
       let kbForEngines: KBContext | undefined
       let kbForBmc: KBContextForBmc | undefined
       try {
-        const kbContext = await loadKBContext(db, userCountry)
+        const kbContext = ctx.kbContextRaw || await loadKBContext(db, userCountry)
         kbForEngines = {
           benchmarks: formatKBForPrompt(kbContext.benchmarks, 'benchmarks'),
           fiscalParams: formatKBForPrompt(kbContext.fiscalParams, 'fiscal'),
           funders: formatKBForPrompt(kbContext.funders, 'funders'),
           criteria: formatKBForPrompt(kbContext.criteria, 'criteria'),
-          feedback: kbContext.feedbackHistory.length > 0
+          feedback: kbContext.feedbackHistory?.length > 0
             ? kbContext.feedbackHistory.map((f: any) => `${f.dimension}: ${f.expert_comment}`).join('\n')
             : '',
         }
@@ -1270,8 +1480,29 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
       ).bind(userId).first() as any
       const companyName = (project?.name as string) || userName
 
-      // ── Generate BMC HTML ──
+      // Save to context
+      ctx.iterationId = iterationId
+      ctx.generatedCount = generatedCount
+      ctx.companyName = companyName
+      ctx.kbForEngines = kbForEngines
+      ctx.kbForBmc = kbForBmc
+      await savePipelineContext(db, jobId, ctx)
+
+      console.log(`[Pipeline:store] Done (${generatedCount} deliverables), chaining to 'bmc_html'`)
+      chainNextStep(c, jobId, 'bmc_html')
+      return c.json({ ok: true, step: 'store' })
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // STEP: bmc_html — Generate BMC HTML (1 Claude call)
+    // ════════════════════════════════════════════════════════════════
+    if (step === 'bmc_html') {
+      console.log(`[Pipeline:bmc_html] Starting for job ${jobId}`)
       await updateJobProgress(db, jobId, 'Génération: BMC HTML...')
+
+      const { result, iterationId: iterId, companyName: cn, kbForBmc: kbBmc } = ctx
+      const companyName = cn || userName
+
       if (hasBmc && generableTypes.includes('bmc_analysis')) {
         try {
           let bmcAnswers = new Map<number, string>()
@@ -1293,7 +1524,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
           }
           if (bmcAnswers.size === 0 && documentTexts.bmc) {
             bmcAnswers = parseBmcDocumentToAnswers(documentTexts.bmc)
-            console.log(`[Pipeline:store] BMC parsed from document: ${bmcAnswers.size} sections`)
+            console.log(`[Pipeline:bmc_html] BMC parsed from document: ${bmcAnswers.size} sections`)
           }
 
           if (bmcAnswers.size > 0) {
@@ -1308,15 +1539,15 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
               analysisDate: new Date().toISOString(),
               answers: bmcAnswers,
               apiKey: apiKey,
-              kbContext: kbForBmc,
+              kbContext: kbBmc,
             }
 
             let bmcHtml: string
             try {
               bmcHtml = await generateFullBmcDeliverable(bmcDeliverableData)
-              console.log(`[Pipeline:store] BMC HTML from Claude: ${bmcHtml.length} chars`)
+              console.log(`[Pipeline:bmc_html] BMC HTML from Claude: ${bmcHtml.length} chars`)
             } catch (genErr: any) {
-              console.warn('[Pipeline:store] Claude BMC HTML failed, using fallback:', genErr.message)
+              console.warn('[Pipeline:bmc_html] Claude BMC failed, using fallback:', genErr.message)
               bmcHtml = generateFullBmcDeliverableFallback(bmcDeliverableData)
             }
 
@@ -1325,17 +1556,32 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
             await db.prepare(`
               INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, iteration_id, status, created_at)
               VALUES (?, ?, 'bmc_html', ?, ?, ?, ?, 'generated', datetime('now'))
-            `).bind(bmcHtmlId, userId, bmcHtml, result.deliverables?.bmc_analysis?.score || 0, newVersion, iterationId).run()
+            `).bind(bmcHtmlId, userId, bmcHtml, result.deliverables?.bmc_analysis?.score || 0, newVersion, iterId).run()
             ctx.agentsUsed.push('bmc_deliverable_engine:html')
           }
         } catch (err: any) {
-          console.error('[Pipeline:store] BMC HTML error (non-fatal):', err.message)
+          console.error('[Pipeline:bmc_html] Error (non-fatal):', err.message)
           ctx.agentErrors.push(`bmc_html: ${err.message}`)
         }
+      } else {
+        console.log('[Pipeline:bmc_html] Skipped (no BMC or not generable)')
       }
 
-      // ── Generate SIC HTML ──
+      await savePipelineContext(db, jobId, ctx)
+      chainNextStep(c, jobId, 'sic_html')
+      return c.json({ ok: true, step: 'bmc_html' })
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // STEP: sic_html — Generate SIC HTML (1 Claude call)
+    // ════════════════════════════════════════════════════════════════
+    if (step === 'sic_html') {
+      console.log(`[Pipeline:sic_html] Starting for job ${jobId}`)
       await updateJobProgress(db, jobId, 'Génération: SIC HTML...')
+
+      const { result, iterationId: iterId, companyName: cn, kbForEngines: kbEng } = ctx
+      const companyName = cn || userName
+
       if (hasSic && generableTypes.includes('sic_analysis')) {
         try {
           let sicAnswers = new Map<number, string>()
@@ -1377,15 +1623,15 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
               analysis: minimalSicAnalysis,
               answers: sicAnswers,
               apiKey: apiKey,
-              kbContext: kbForEngines,
+              kbContext: kbEng,
             }
 
             let sicHtml: string
             try {
               sicHtml = await generateFullSicDeliverable(sicDeliverableData)
-              console.log(`[Pipeline:store] SIC HTML from Claude: ${sicHtml.length} chars`)
+              console.log(`[Pipeline:sic_html] SIC HTML from Claude: ${sicHtml.length} chars`)
             } catch (genErr: any) {
-              console.warn('[Pipeline:store] Claude SIC HTML failed, using fallback:', genErr.message)
+              console.warn('[Pipeline:sic_html] Claude SIC failed, using fallback:', genErr.message)
               sicHtml = generateFullSicDeliverableFallback(sicDeliverableData)
             }
 
@@ -1394,43 +1640,34 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
             await db.prepare(`
               INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, iteration_id, status, created_at)
               VALUES (?, ?, 'sic_html', ?, ?, ?, ?, 'generated', datetime('now'))
-            `).bind(sicHtmlId, userId, sicHtml, result.deliverables?.sic_analysis?.score || 0, newVersion, iterationId).run()
+            `).bind(sicHtmlId, userId, sicHtml, result.deliverables?.sic_analysis?.score || 0, newVersion, iterId).run()
             ctx.agentsUsed.push('sic_deliverable_engine:html')
           }
         } catch (err: any) {
-          console.error('[Pipeline:store] SIC HTML error (non-fatal):', err.message)
+          console.error('[Pipeline:sic_html] Error (non-fatal):', err.message)
           ctx.agentErrors.push(`sic_html: ${err.message}`)
         }
+      } else {
+        console.log('[Pipeline:sic_html] Skipped (no SIC or not generable)')
       }
 
-      // Save context and chain to HTML generation step
-      ctx.iterationId = iterationId
-      ctx.generatedCount = generatedCount
-      ctx.companyName = companyName
-      ctx.kbForEngines = kbForEngines
-      ctx.kbForBmc = kbForBmc
       await savePipelineContext(db, jobId, ctx)
-
-      console.log(`[Pipeline:store] Done, chaining to 'html'`)
-      chainNextStep(c, jobId, 'html')
-      return c.json({ ok: true, step: 'store' })
+      chainNextStep(c, jobId, 'inputs_html')
+      return c.json({ ok: true, step: 'sic_html' })
     }
 
     // ════════════════════════════════════════════════════════════════
-    // STEP 3: HTML — Generate Framework + Diagnostic + Inputs HTML
+    // STEP: inputs_html — Generate Inputs diagnostic HTML (1 Claude call)
     // ════════════════════════════════════════════════════════════════
-    if (step === 'html') {
-      console.log(`[Pipeline:html] Starting for job ${jobId}`)
-      await updateJobProgress(db, jobId, 'Génération des livrables HTML...')
+    if (step === 'inputs_html') {
+      console.log(`[Pipeline:inputs_html] Starting for job ${jobId}`)
+      await updateJobProgress(db, jobId, 'Génération: Inputs HTML...')
 
-      const { result, newVersion: ver, iterationId: iterId, companyName: cn,
-              kbForEngines: kbEng } = ctx
+      const { iterationId: iterId, companyName: cn, kbForEngines: kbEng } = ctx
       const companyName = cn || userName
 
-      // 1) Inputs Diagnostic HTML
       if (hasInputs) {
         try {
-          await updateJobProgress(db, jobId, 'Génération: Inputs HTML...')
           const inputsModule = await db.prepare(
             "SELECT id FROM modules WHERE module_code = 'mod3_inputs' LIMIT 1"
           ).first() as any
@@ -1460,7 +1697,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
           }
 
           if (Object.keys(allInputData).length > 0) {
-            console.log('[Pipeline:html] Generating Inputs diagnostic HTML with AI...')
+            console.log('[Pipeline:inputs_html] Generating Inputs diagnostic HTML with AI...')
             const inputsAnalysis = await analyzeInputsWithAI(allInputData, companyName, '', apiKey, kbEng)
             const inputsHtml = generateInputsDiagnosticHtml(inputsAnalysis, companyName, userName)
 
@@ -1469,21 +1706,34 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
             await db.prepare(`
               INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, iteration_id, status, created_at)
               VALUES (?, ?, 'inputs_html', ?, ?, ?, ?, 'generated', datetime('now'))
-            `).bind(inputsHtmlId, userId, inputsHtml, inputsAnalysis.readinessScore || 0, ver, iterId).run()
+            `).bind(inputsHtmlId, userId, inputsHtml, inputsAnalysis.readinessScore || 0, newVersion, iterId).run()
             ctx.agentsUsed.push(`inputs_diagnostic:${inputsAnalysis.aiSource}`)
           }
         } catch (err: any) {
-          console.error('[Pipeline:html] Inputs HTML error (non-fatal):', err.message)
+          console.error('[Pipeline:inputs_html] Error (non-fatal):', err.message)
           ctx.agentErrors.push(`inputs_html: ${err.message}`)
         }
+      } else {
+        console.log('[Pipeline:inputs_html] Skipped (no inputs)')
       }
 
-      // 2) Framework PME HTML
+      await savePipelineContext(db, jobId, ctx)
+      chainNextStep(c, jobId, 'framework_html')
+      return c.json({ ok: true, step: 'inputs_html' })
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // STEP: framework_html — Generate Framework PME HTML (1 Claude call)
+    // ════════════════════════════════════════════════════════════════
+    if (step === 'framework_html') {
+      console.log(`[Pipeline:framework_html] Starting for job ${jobId}`)
+      await updateJobProgress(db, jobId, 'Génération: Framework HTML...')
+
+      const { result, iterationId: iterId, companyName: cn, kbForEngines: kbEng } = ctx
+      const companyName = cn || userName
+
       if ((hasBmc || hasInputs) && generableTypes.includes('framework')) {
         try {
-          await updateJobProgress(db, jobId, 'Génération: Framework HTML...')
-          console.log('[Pipeline:html] Generating Framework PME HTML with AI...')
-
           let pmeData: PmeInputData | undefined
           let usedStructuredParser = false
           let usedAIExtraction = false
@@ -1491,35 +1741,18 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
           const xlsxB64ForParser = rawUploads?.inputs || undefined
           const fwApiKey = apiKey || ''
 
-          // PRIORITY 0: Structured INPUTS_ENTREPRENEURS parser
+          // PRIORITY 0: Structured parser
           if (hasInputs && xlsxB64ForParser && xlsxB64ForParser.length > 100) {
             const structuredResult = tryParseInputsEntrepreneur(xlsxB64ForParser)
             if (structuredResult) {
               pmeData = structuredResult
               usedStructuredParser = true
-              console.log(`[Pipeline:html] ✅ Structured parser SUCCESS`)
+              console.log('[Pipeline:framework_html] ✅ Structured parser SUCCESS')
             }
           }
 
-          // PRIORITY 1: AI extraction fallback
-          if (!usedStructuredParser && hasInputs && xlsxB64ForParser && xlsxB64ForParser.length > 100) {
-            try {
-              const enriched = await buildPmeInputWithAI(
-                documentTexts.inputs || '', fwApiKey, companyName,
-                userCountry || "Côte d'Ivoire", buildPmeInputDataFromText, xlsxB64ForParser
-              )
-              if (enriched?.data) {
-                pmeData = enriched.data
-                usedAIExtraction = true
-                aiEstimations = enriched.estimations || []
-              }
-            } catch (aiErr: any) {
-              console.error(`[Pipeline:html] AI extraction failed: ${aiErr.message}`)
-            }
-          }
-
-          // FALLBACK: text extraction
-          if (!usedStructuredParser && !usedAIExtraction && hasInputs && documentTexts.inputs) {
+          // PRIORITY 1: AI extraction (skip to avoid double Claude call — use text fallback)
+          if (!usedStructuredParser && hasInputs && documentTexts.inputs) {
             try {
               const enriched = await buildPmeInputWithAI(
                 documentTexts.inputs, fwApiKey, companyName,
@@ -1531,7 +1764,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
                 aiEstimations = enriched.estimations || []
               }
             } catch (aiErr: any) {
-              console.error(`[Pipeline:html] AI text extraction failed: ${aiErr.message}`)
+              console.error(`[Pipeline:framework_html] AI extraction failed: ${aiErr.message}`)
             }
             if (!usedAIExtraction) {
               pmeData = buildPmeInputDataFromText(documentTexts.inputs, companyName, userCountry || "Côte d'Ivoire")
@@ -1570,7 +1803,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
                 }
               }
             } catch (bmcErr: any) {
-              console.error('[Pipeline:html] BMC loading error:', bmcErr.message)
+              console.error('[Pipeline:framework_html] BMC loading error:', bmcErr.message)
             }
 
             const baseAnalysis = analyzePme(pmeData)
@@ -1578,7 +1811,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
             try {
               crossAnalysis = await crossAnalyzeBmcFinancials(bmcContent, pmeData, baseAnalysis, fwApiKey)
             } catch (crossErr: any) {
-              console.error('[Pipeline:html] Cross-analysis error:', crossErr.message)
+              console.error('[Pipeline:framework_html] Cross-analysis error:', crossErr.message)
             }
 
             const pmeAnalysis = await analyzePmeWithAI(pmeData, fwApiKey, kbEng, crossAnalysis, usedAIExtraction ? aiEstimations : undefined)
@@ -1589,7 +1822,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
             await db.prepare(`
               INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, iteration_id, status, created_at)
               VALUES (?, ?, 'framework_html', ?, ?, ?, ?, 'generated', datetime('now'))
-            `).bind(fwHtmlId, userId, frameworkHtml, result?.deliverables?.framework?.score || 0, ver, iterId).run()
+            `).bind(fwHtmlId, userId, frameworkHtml, result?.deliverables?.framework?.score || 0, newVersion, iterId).run()
 
             // Store PmeInputData as JSON
             await db.prepare("DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_pme_data'").bind(userId).run()
@@ -1597,22 +1830,35 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
             await db.prepare(`
               INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, iteration_id, status, created_at)
               VALUES (?, ?, 'framework_pme_data', ?, 0, ?, ?, 'generated', datetime('now'))
-            `).bind(pmeDataId, userId, JSON.stringify(pmeData), ver, iterId).run()
+            `).bind(pmeDataId, userId, JSON.stringify(pmeData), newVersion, iterId).run()
 
             ctx.agentsUsed.push(`framework_pme:${pmeAnalysis.aiSource}`)
           }
         } catch (err: any) {
-          console.error('[Pipeline:html] Framework HTML error (non-fatal):', err.message)
+          console.error('[Pipeline:framework_html] Error (non-fatal):', err.message)
           ctx.agentErrors.push(`framework_html: ${err.message}`)
         }
+      } else {
+        console.log('[Pipeline:framework_html] Skipped')
       }
 
-      // 3) Diagnostic Expert HTML
+      await savePipelineContext(db, jobId, ctx)
+      chainNextStep(c, jobId, 'diagnostic_html')
+      return c.json({ ok: true, step: 'framework_html' })
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // STEP: diagnostic_html — Generate Diagnostic Expert HTML (1 Claude call)
+    // ════════════════════════════════════════════════════════════════
+    if (step === 'diagnostic_html') {
+      console.log(`[Pipeline:diagnostic_html] Starting for job ${jobId}`)
+      await updateJobProgress(db, jobId, 'Génération: Diagnostic HTML...')
+
+      const { result, iterationId: iterId, companyName: cn, kbForEngines: kbEng } = ctx
+      const companyName = cn || userName
+
       if (generableTypes.includes('diagnostic')) {
         try {
-          await updateJobProgress(db, jobId, 'Génération: Diagnostic HTML...')
-          console.log('[Pipeline:html] Generating Diagnostic Expert HTML...')
-
           const loadDeliv = async (type: string) => {
             const row = await db.prepare(
               "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = ? ORDER BY version DESC LIMIT 1"
@@ -1648,7 +1894,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
           await db.prepare(`
             INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, iteration_id, status, created_at)
             VALUES (?, ?, 'diagnostic_html', ?, ?, ?, ?, 'generated', datetime('now'))
-          `).bind(diagHtmlId, userId, diagHtml, diagResult.scoreGlobal, ver, iterId).run()
+          `).bind(diagHtmlId, userId, diagHtml, diagResult.scoreGlobal, newVersion, iterId).run()
 
           // Update 'diagnostic' deliverable
           await db.prepare("DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'diagnostic'").bind(userId).run()
@@ -1656,7 +1902,7 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
           await db.prepare(`
             INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, iteration_id, status, created_at)
             VALUES (?, ?, 'diagnostic', ?, ?, ?, ?, 'generated', datetime('now'))
-          `).bind(diagJsonId, userId, JSON.stringify(diagResult), diagResult.scoreGlobal, ver, iterId).run()
+          `).bind(diagJsonId, userId, JSON.stringify(diagResult), diagResult.scoreGlobal, newVersion, iterId).run()
 
           ctx.agentsUsed.push(`diagnostic_expert:${diagResult.aiSource}`)
 
@@ -1667,29 +1913,30 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
             const existingDiag = await db.prepare(
               'SELECT version FROM diagnostic_analyses WHERE user_id = ? AND pme_id = ? ORDER BY version DESC LIMIT 1'
             ).bind(userId, pmeIdSync).first() as any
-            const diagVersion = existingDiag ? Number(existingDiag.version) + 1 : ver
+            const diagVersion = existingDiag ? Number(existingDiag.version) + 1 : newVersion
 
             await db.prepare(`
               INSERT INTO diagnostic_analyses (id, pme_id, user_id, version, analysis_json, html_content, score, status, sources_used, created_at, updated_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, 'analyzed', ?, datetime('now'), datetime('now'))
             `).bind(diagSyncId, pmeIdSync, userId, diagVersion, JSON.stringify(diagResult), diagHtml, diagResult.scoreGlobal, JSON.stringify({ source: 'generate_all' })).run()
           } catch (c3Err: any) {
-            console.error('[Pipeline:html] Diagnostic sync error:', c3Err.message)
+            console.error('[Pipeline:diagnostic_html] Diagnostic sync error:', c3Err.message)
           }
         } catch (err: any) {
-          console.error('[Pipeline:html] Diagnostic Expert error (non-fatal):', err.message)
+          console.error('[Pipeline:diagnostic_html] Error (non-fatal):', err.message)
           ctx.agentErrors.push(`diagnostic_html: ${err.message}`)
         }
+      } else {
+        console.log('[Pipeline:diagnostic_html] Skipped (not generable)')
       }
 
       await savePipelineContext(db, jobId, ctx)
-      console.log(`[Pipeline:html] Done, chaining to 'postprocess'`)
       chainNextStep(c, jobId, 'postprocess')
-      return c.json({ ok: true, step: 'html' })
+      return c.json({ ok: true, step: 'diagnostic_html' })
     }
 
     // ════════════════════════════════════════════════════════════════
-    // STEP 4: POSTPROCESS — Auto-fix + sync module tables + complete
+    // STEP: postprocess — Auto-fix, sync tables, complete job
     // ════════════════════════════════════════════════════════════════
     if (step === 'postprocess') {
       console.log(`[Pipeline:postprocess] Starting for job ${jobId}`)
@@ -1699,48 +1946,45 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
               generatedCount, newVersion: ver, companyName: cn } = ctx
       const companyName = cn || userName
 
+      // Auto-fix BMC HTML
       try {
-        const apiKeyForFix = apiKey || ''
-
-        // FIX 1: Regenerate BMC HTML if it has empty blocks
-        const bmcHtmlCheck = await db.prepare(
+        const bmcHtmlRow = await db.prepare(
           "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_html' ORDER BY created_at DESC LIMIT 1"
         ).bind(userId).first() as any
-        const bmcAnalysisCheck = await db.prepare(
-          "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_analysis' ORDER BY created_at DESC LIMIT 1"
-        ).bind(userId).first() as any
 
-        if (bmcHtmlCheck?.content && bmcAnalysisCheck?.content) {
-          const bmcHtml = bmcHtmlCheck.content
-          const undocCount = (bmcHtml.match(/non documenté/gi) || []).length
-          const nonRensCount = (bmcHtml.match(/non renseigné/gi) || []).length
+        if (bmcHtmlRow?.content) {
+          const undocCount = (bmcHtmlRow.content.match(/non\s+(?:renseigné|documenté)/gi) || []).length
+          const nonRensCount = (bmcHtmlRow.content.match(/non renseigné/gi) || []).length
 
           if (undocCount > 0 || nonRensCount > 3) {
             console.log(`[Pipeline:postprocess] AUTO-FIX: BMC HTML (${undocCount} undoc, ${nonRensCount} unfilled)`)
             try {
-              const bmcAnalysis = JSON.parse(bmcAnalysisCheck.content)
-              if (bmcAnalysis.blocks && Array.isArray(bmcAnalysis.blocks)) {
-                const pmeFixRow = await db.prepare(
-                  "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_pme_data' ORDER BY created_at DESC LIMIT 1"
-                ).bind(userId).first() as any
-                let fixCompanyData = { companyName: userName, entrepreneurName: userName, sector: '', location: '', country: userCountry || '' }
-                if (pmeFixRow?.content) {
-                  try {
-                    const pme = JSON.parse(pmeFixRow.content)
-                    fixCompanyData.companyName = pme.companyName || pme.company_name || userName
-                    fixCompanyData.sector = pme.sector || pme.secteur || ''
-                    fixCompanyData.location = pme.location || pme.ville || ''
-                    fixCompanyData.country = pme.country || pme.pays || userCountry || ''
-                  } catch {}
-                }
+              const bmcAnalJson = await db.prepare(
+                "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_analysis' ORDER BY version DESC LIMIT 1"
+              ).bind(userId).first() as any
+              const pmeDataRow = await db.prepare(
+                "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_pme_data' ORDER BY version DESC LIMIT 1"
+              ).bind(userId).first() as any
 
-                const { regenerateBmcHtmlFromDbAnalysis } = await import('./bmc-deliverable-engine')
-                const newBmcHtml = regenerateBmcHtmlFromDbAnalysis(bmcAnalysis, fixCompanyData)
+              const fixCompanyData: any = { companyName, entrepreneurName: userName }
+              if (pmeDataRow?.content) {
+                try {
+                  const pd = JSON.parse(pmeDataRow.content)
+                  fixCompanyData.sector = pd.sector || ''
+                  fixCompanyData.location = pd.location || ''
+                  fixCompanyData.country = pd.country || userCountry || "Côte d'Ivoire"
+                } catch {}
+              }
 
+              const { regenerateBmcHtmlFromDbAnalysis } = await import('./bmc-deliverable-engine')
+              const newBmcHtml = await regenerateBmcHtmlFromDbAnalysis(
+                bmcAnalJson?.content, fixCompanyData, apiKey, ctx.kbForBmc
+              )
+              if (newBmcHtml && newBmcHtml.length > 500) {
                 await db.prepare("DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'bmc_html'").bind(userId).run()
                 await db.prepare(
                   "INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, status, created_at) VALUES (?, ?, 'bmc_html', ?, ?, ?, 'generated', datetime('now'))"
-                ).bind(crypto.randomUUID(), userId, newBmcHtml, bmcAnalysis.score || 72, ver).run()
+                ).bind(crypto.randomUUID(), userId, newBmcHtml, result?.deliverables?.bmc_analysis?.score || 72, ver).run()
                 console.log(`[Pipeline:postprocess] BMC HTML regenerated: ${newBmcHtml.length} chars`)
               }
             } catch (fixErr: any) {
@@ -1748,131 +1992,147 @@ entrepreneurRoutes.post('/api/ai/pipeline/step', async (c) => {
             }
           }
         }
+      } catch (postProcErr: any) {
+        console.warn('[Pipeline:postprocess] BMC check error:', postProcErr.message)
+      }
 
-        // FIX 2: SIC — Unwrap JSON schema + regenerate HTML if needed
-        const sicAnalysisCheck = await db.prepare(
-          "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_analysis' ORDER BY created_at DESC LIMIT 1"
+      // Auto-fix SIC HTML
+      try {
+        const sicAnalRow = await db.prepare(
+          "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_analysis' ORDER BY version DESC LIMIT 1"
         ).bind(userId).first() as any
 
-        if (sicAnalysisCheck?.content) {
+        if (sicAnalRow?.content) {
           try {
-            let sicAnalysis = JSON.parse(sicAnalysisCheck.content)
+            const sicJson = JSON.parse(sicAnalRow.content)
             let wasWrapped = false
-
-            if (sicAnalysis.properties && !sicAnalysis.pillars) {
-              sicAnalysis = sicAnalysis.properties
+            if (sicJson.properties && !sicJson.pillars) {
+              const unwrapped = sicJson.properties
               wasWrapped = true
               await db.prepare("DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_analysis'").bind(userId).run()
               await db.prepare(
                 "INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, status, created_at) VALUES (?, ?, 'sic_analysis', ?, ?, ?, 'generated', datetime('now'))"
-              ).bind(crypto.randomUUID(), userId, JSON.stringify(sicAnalysis), sicAnalysis.score || 0, ver).run()
+              ).bind(crypto.randomUUID(), userId, JSON.stringify(unwrapped), unwrapped.score || 0, ver).run()
             }
 
-            const sicHtmlCheck = await db.prepare(
+            const sicHtmlRow = await db.prepare(
               "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_html' ORDER BY created_at DESC LIMIT 1"
             ).bind(userId).first() as any
-            const sicHtml = sicHtmlCheck?.content || ''
-            const undefinedCount = (sicHtml.match(/undefined/gi) || []).length
-            const needsRegeneration = wasWrapped || undefinedCount > 0 || sicHtml.length < 1000
 
-            if (needsRegeneration && sicAnalysis.pillars && Array.isArray(sicAnalysis.pillars)) {
-              const pmeFixRow2 = await db.prepare(
-                "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_pme_data' ORDER BY created_at DESC LIMIT 1"
-              ).bind(userId).first() as any
-              let fixCompanyData2 = { companyName: userName, entrepreneurName: userName, sector: '', location: '', country: userCountry || '' }
-              if (pmeFixRow2?.content) {
+            if (sicHtmlRow?.content) {
+              const undefinedCount = (sicHtmlRow.content.match(/undefined/gi) || []).length
+              const needsRegen = wasWrapped || undefinedCount > 0 || sicHtmlRow.content.length < 1000
+
+              if (needsRegen) {
                 try {
-                  const pme = JSON.parse(pmeFixRow2.content)
-                  fixCompanyData2.companyName = pme.companyName || pme.company_name || userName
-                  fixCompanyData2.sector = pme.sector || pme.secteur || ''
-                  fixCompanyData2.location = pme.location || pme.ville || ''
-                  fixCompanyData2.country = pme.country || pme.pays || userCountry || ''
-                } catch {}
+                  const pmeDataRow = await db.prepare(
+                    "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'framework_pme_data' ORDER BY version DESC LIMIT 1"
+                  ).bind(userId).first() as any
+
+                  const fixCompanyData: any = { companyName, entrepreneurName: userName, country: userCountry || "Côte d'Ivoire" }
+                  if (pmeDataRow?.content) {
+                    try {
+                      const pd = JSON.parse(pmeDataRow.content)
+                      fixCompanyData.sector = pd.sector || ''
+                      fixCompanyData.location = pd.location || ''
+                    } catch {}
+                  }
+
+                  const { regenerateSicHtmlFromDbAnalysis } = await import('./sic-deliverable-engine')
+                  const newSicHtml = await regenerateSicHtmlFromDbAnalysis(
+                    sicAnalRow.content, fixCompanyData, apiKey, ctx.kbForEngines
+                  )
+                  if (newSicHtml && newSicHtml.length > 500) {
+                    await db.prepare("DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_html'").bind(userId).run()
+                    await db.prepare(
+                      "INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, status, created_at) VALUES (?, ?, 'sic_html', ?, ?, ?, 'generated', datetime('now'))"
+                    ).bind(crypto.randomUUID(), userId, newSicHtml, result?.deliverables?.sic_analysis?.score || 0, ver).run()
+                    console.log(`[Pipeline:postprocess] SIC HTML regenerated: ${newSicHtml.length} chars`)
+                  }
+                } catch (fixErr: any) {
+                  console.warn('[Pipeline:postprocess] AUTO-FIX SIC failed:', fixErr.message)
+                }
               }
-
-              const { regenerateSicHtmlFromDbAnalysis } = await import('./sic-deliverable-engine')
-              const newSicHtml = regenerateSicHtmlFromDbAnalysis(sicAnalysis, fixCompanyData2)
-
-              await db.prepare("DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'sic_html'").bind(userId).run()
-              await db.prepare(
-                "INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, status, created_at) VALUES (?, ?, 'sic_html', ?, ?, ?, 'generated', datetime('now'))"
-              ).bind(crypto.randomUUID(), userId, newSicHtml, sicAnalysis.score || 0, ver).run()
-              console.log(`[Pipeline:postprocess] SIC HTML regenerated: ${newSicHtml.length} chars`)
             }
-          } catch (fixErr: any) {
-            console.warn('[Pipeline:postprocess] AUTO-FIX SIC failed:', fixErr.message)
-          }
+          } catch {}
         }
+      } catch (postProcErr: any) {
+        console.warn('[Pipeline:postprocess] SIC check error:', postProcErr.message)
+      }
 
-        // FIX 3: Business Plan — if fallback (<5000 bytes), regenerate with Claude AI
+      // Auto-fix Business Plan (fallback regeneration)
+      try {
         const bpCheck = await db.prepare(
-          "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'business_plan' ORDER BY created_at DESC LIMIT 1"
+          "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'business_plan' ORDER BY version DESC LIMIT 1"
         ).bind(userId).first() as any
 
-        if (bpCheck?.content && bpCheck.content.length < 5000 && apiKeyForFix.length > 10) {
+        if (bpCheck?.content && bpCheck.content.length < 5000 && apiKey) {
           console.log(`[Pipeline:postprocess] AUTO-FIX: BP is fallback (${bpCheck.content.length} bytes) → regenerating`)
           try {
-            const allDeliv = await db.prepare(
-              "SELECT type, content FROM entrepreneur_deliverables WHERE user_id = ? AND type IN ('bmc_analysis','sic_analysis','framework_pme_data','framework','diagnostic','odd')"
+            // Load context for BP generation
+            const bpLoadDeliv = async (type: string) => {
+              const row = await db.prepare(
+                "SELECT content FROM entrepreneur_deliverables WHERE user_id = ? AND type = ? ORDER BY version DESC LIMIT 1"
+              ).bind(userId, type).first() as any
+              return row?.content || ''
+            }
+            const [bpBmc, bpSic, bpFw, bpDiag, bpPmeData] = await Promise.all([
+              bpLoadDeliv('bmc_analysis'), bpLoadDeliv('sic_analysis'),
+              bpLoadDeliv('framework'), bpLoadDeliv('diagnostic'),
+              bpLoadDeliv('framework_pme_data')
+            ])
+            
+            // Get latest uploaded DOCX text
+            let docxText = ''
+            const uploads = await db.prepare(
+              "SELECT extracted_text FROM uploads WHERE user_id = ? ORDER BY uploaded_at DESC LIMIT 3"
             ).bind(userId).all()
-
-            let bpContext = `ENTREPRISE: ${userName}\nPAYS: ${userCountry || 'Afrique de l\'Ouest'}\n\n`
-            for (const row of (allDeliv.results || [])) {
-              const r = row as any
-              try {
-                let parsed = JSON.parse(r.content)
-                if (parsed.properties && !parsed.pillars && !parsed.blocks) parsed = parsed.properties
-                bpContext += `\n=== ${r.type.toUpperCase()} ===\n${JSON.stringify(parsed, null, 0).slice(0, 3000)}\n`
-              } catch { bpContext += `\n=== ${r.type.toUpperCase()} ===\n${String(r.content).slice(0, 3000)}\n` }
-            }
-            const uploadText = await db.prepare(
-              "SELECT extracted_text FROM uploads WHERE user_id = ? ORDER BY uploaded_at DESC LIMIT 1"
-            ).bind(userId).first() as any
-            if (uploadText?.extracted_text) {
-              let txt = uploadText.extracted_text
-              if (txt.indexOf('---DOCUMENT_TEXT---') > 0) txt = txt.substring(txt.indexOf('---DOCUMENT_TEXT---') + 18)
-              else if (txt.indexOf('---EXTRACTED_TEXT---') > 0) txt = txt.substring(txt.indexOf('---EXTRACTED_TEXT---') + 19)
-              bpContext += `\n=== QUESTIONNAIRE ===\n${txt.slice(0, 5000)}\n`
+            for (const row of (uploads.results || []) as any[]) {
+              if (row.extracted_text && row.extracted_text.length > 200) {
+                const text = row.extracted_text.toString().slice(0, 8000)
+                if (text.length > docxText.length) docxText = text
+              }
             }
 
-            const bpPrompt = `Tu es un expert en rédaction de Business Plans pour PME africaines.
-Génère un Business Plan COMPLET en JSON avec exactement cette structure:
-{"score":<0-100>,"metadata":{"ai_generated":true,"company":"${userName}","kb_used":true},"sections":[{"title":"Résumé Exécutif","content":"<500+ mots>"},{"title":"Présentation de l'Entreprise","content":"..."},{"title":"Modèle Économique (Business Model)","content":"..."},{"title":"Analyse de Marché & Concurrence","content":"..."},{"title":"Stratégie Marketing (5P)","content":"..."},{"title":"Impact Social & Environnemental","content":"..."},{"title":"Analyse Financière & Plan d'Investissement","content":"..."},{"title":"Analyse SWOT & Risques","content":"..."},{"title":"Équipe & Organisation","content":"..."},{"title":"Besoins de Financement","content":"..."},{"title":"Plan d'Action & Prochaines Étapes","content":"..."}]}
-Chaque section: 300-600 mots, données RÉELLES. Devise: XOF (FCFA). JSON uniquement.
+            const bpPrompt = `Tu es un expert en business plan. Génère un Business Plan COMPLET et STRUCTURÉ en JSON pour l'entreprise "${companyName}" (${userCountry || "Côte d'Ivoire"}).
 
-DONNÉES:
-${bpContext}`
+Contexte de l'entreprise:
+${bpBmc ? `BMC: ${bpBmc.slice(0, 3000)}` : ''}
+${bpSic ? `SIC: ${bpSic.slice(0, 2000)}` : ''}
+${bpFw ? `Framework: ${bpFw.slice(0, 2000)}` : ''}
+${bpDiag ? `Diagnostic: ${bpDiag.slice(0, 2000)}` : ''}
+${docxText ? `Document: ${docxText.slice(0, 3000)}` : ''}
 
-            const bpController = new AbortController()
-            const bpTimeout = setTimeout(() => bpController.abort(), 120000)
+Retourne un JSON avec les sections: executive_summary, market_analysis, products_services, marketing_strategy, operations, management_team, financial_projections (en XOF), funding_requirements, risks_mitigation, implementation_timeline.
+Chaque section doit avoir: title, content (texte riche), key_points (array).
+Utilise UNIQUEMENT des données réelles de l'entreprise.`
 
-            const bpResp = await fetch('https://api.anthropic.com/v1/messages', {
+            const bpResponse = await fetch('https://api.anthropic.com/v1/messages', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-api-key': apiKeyForFix, 'anthropic-version': '2023-06-01' },
-              body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 8000, temperature: 0.4, messages: [{ role: 'user', content: bpPrompt }] }),
-              signal: bpController.signal
+              headers: {
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'claude-sonnet-4-20250514',
+                max_tokens: 8192,
+                temperature: 0.3,
+                messages: [{ role: 'user', content: bpPrompt }],
+              }),
+              signal: AbortSignal.timeout(120000),
             })
-            clearTimeout(bpTimeout)
 
-            if (bpResp.ok) {
-              const bpData = await bpResp.json() as any
+            if (bpResponse.ok) {
+              const bpData = await bpResponse.json() as any
               const bpText = bpData.content?.[0]?.text || ''
               const jsonMatch = bpText.match(/\{[\s\S]*\}/)
               if (jsonMatch) {
-                const bpJson = JSON.parse(jsonMatch[0])
-                const bpContent = JSON.stringify(bpJson)
-
+                const bpContent = jsonMatch[0]
                 await db.prepare("DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'business_plan'").bind(userId).run()
                 await db.prepare(
-                  "INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, status, created_at) VALUES (?, ?, 'business_plan', ?, ?, ?, 'generated', datetime('now'))"
-                ).bind(crypto.randomUUID(), userId, bpContent, bpJson.score || 72, ver).run()
-
-                await db.prepare("DELETE FROM business_plan_analyses WHERE user_id = ?").bind(userId).run()
-                await db.prepare(
-                  "INSERT INTO business_plan_analyses (id, user_id, pme_id, version, status, business_plan_json, created_at, updated_at) VALUES (?, ?, ?, ?, 'completed', ?, datetime('now'), datetime('now'))"
-                ).bind(crypto.randomUUID(), userId, `pme_${userId}`, ver, bpContent).run()
-
-                result.deliverables.business_plan = bpJson
+                  "INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, iteration_id, status, created_at) VALUES (?, ?, 'business_plan', ?, ?, ?, ?, 'generated', datetime('now'))"
+                ).bind(crypto.randomUUID(), userId, bpContent, 70, ver, iterId).run()
                 console.log(`[Pipeline:postprocess] BP regenerated: ${bpContent.length} bytes`)
               }
             }
@@ -1881,56 +2141,55 @@ ${bpContext}`
           }
         }
       } catch (postProcErr: any) {
-        console.warn('[Pipeline:postprocess] Post-processing error:', postProcErr.message)
+        console.warn('[Pipeline:postprocess] BP check error:', postProcErr.message)
       }
 
-      // ═══ SYNC MODULE TABLES ═══
-      const pmeIdForModules = `pme_${userId}`
-
-      // Sync Business Plan
-      if (result.deliverables?.business_plan) {
-        try {
-          const bpContent = result.deliverables.business_plan
-          const bpJson = typeof bpContent === 'string' ? bpContent : JSON.stringify(bpContent)
-          const bpId = crypto.randomUUID()
-          await db.prepare('DELETE FROM business_plan_analyses WHERE user_id = ? AND pme_id = ?').bind(userId, pmeIdForModules).run()
-          await db.prepare(`
-            INSERT INTO business_plan_analyses (id, user_id, pme_id, version, status, business_plan_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'completed', ?, datetime('now'), datetime('now'))
-          `).bind(bpId, userId, pmeIdForModules, ver, bpJson).run()
-          console.log(`[Pipeline:postprocess] ✅ Synced business_plan_analyses`)
-        } catch (bpSyncErr: any) {
-          console.error(`[Pipeline:postprocess] BP sync failed: ${bpSyncErr.message}`)
-        }
-      }
-
-      // Sync Plan OVO
-      if (result.deliverables?.plan_ovo) {
-        try {
-          const ovoContent = result.deliverables.plan_ovo
-          const ovoJson = typeof ovoContent === 'string' ? ovoContent : JSON.stringify(ovoContent)
-          const existingOvo = await db.prepare(
-            'SELECT id, pme_id FROM plan_ovo_analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 1'
-          ).bind(userId).first() as any
-
-          if (existingOvo && existingOvo.pme_id !== pmeIdForModules) {
-            await db.prepare('UPDATE plan_ovo_analyses SET pme_id = ?, updated_at = datetime(\'now\') WHERE id = ?').bind(pmeIdForModules, existingOvo.id).run()
+      // Sync module tables
+      try {
+        const bpDeliv = await db.prepare(
+          "SELECT content, score FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'business_plan' ORDER BY version DESC LIMIT 1"
+        ).bind(userId).first() as any
+        if (bpDeliv?.content) {
+          const pmeId = `pme_${userId}`
+          const existing = await db.prepare(
+            'SELECT id FROM business_plan_analyses WHERE user_id = ? AND pme_id = ?'
+          ).bind(userId, pmeId).first() as any
+          if (existing) {
+            await db.prepare(
+              'UPDATE business_plan_analyses SET analysis_json = ?, score = ?, version = ?, updated_at = datetime(\'now\') WHERE id = ?'
+            ).bind(bpDeliv.content, bpDeliv.score || 0, ver, existing.id).run()
+          } else {
+            await db.prepare(
+              'INSERT INTO business_plan_analyses (id, pme_id, user_id, version, analysis_json, score, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, \'analyzed\', datetime(\'now\'), datetime(\'now\'))'
+            ).bind(crypto.randomUUID(), pmeId, userId, ver, bpDeliv.content, bpDeliv.score || 0).run()
           }
+          console.log(`[Pipeline:postprocess] ✅ Synced business_plan_analyses`)
+        }
+      } catch (bpSyncErr: any) {
+        console.error(`[Pipeline:postprocess] BP sync failed: ${bpSyncErr.message}`)
+      }
 
+      try {
+        const ovoDeliv = await db.prepare(
+          "SELECT content, score FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'business_plan' ORDER BY version DESC LIMIT 1"
+        ).bind(userId).first() as any
+        if (ovoDeliv?.content) {
+          const pmeId = `pme_${userId}`
+          const existingOvo = await db.prepare(
+            'SELECT id FROM plan_ovo_analyses WHERE user_id = ? AND pme_id = ?'
+          ).bind(userId, pmeId).first() as any
           if (!existingOvo) {
-            const ovoId = crypto.randomUUID()
-            await db.prepare(`
-              INSERT INTO plan_ovo_analyses (id, pme_id, user_id, version, plan_ovo_json, status, source, country, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, 'generated', 'generate_all', ?, datetime('now'), datetime('now'))
-            `).bind(ovoId, pmeIdForModules, userId, ver, ovoJson, userCountry || "Côte d'Ivoire").run()
+            await db.prepare(
+              'INSERT INTO plan_ovo_analyses (id, pme_id, user_id, version, analysis_json, score, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, \'analyzed\', datetime(\'now\'), datetime(\'now\'))'
+            ).bind(crypto.randomUUID(), pmeId, userId, ver, ovoDeliv.content, ovoDeliv.score || 0).run()
             console.log(`[Pipeline:postprocess] ✅ Synced plan_ovo_analyses (new)`)
           }
-        } catch (ovoSyncErr: any) {
-          console.error(`[Pipeline:postprocess] OVO sync failed: ${ovoSyncErr.message}`)
         }
+      } catch (ovoSyncErr: any) {
+        console.error(`[Pipeline:postprocess] OVO sync failed: ${ovoSyncErr.message}`)
       }
 
-      // ──── Pipeline completed ────
+      // Complete job
       const jobResult = {
         success: true,
         iteration: { id: iterId, version: ver, score_global: result.score_global },
@@ -1941,8 +2200,9 @@ ${bpContext}`
         totalPossible: 7,
         generated: generableTypes,
         skipped: skippedTypes,
-        uploadedInputs: { bmc: hasBmc, sic: hasSic, inputs: hasInputs }
+        uploadedInputs: { bmc: hasBmc, sic: hasSic, inputs: hasInputs },
       }
+
       await completeJob(db, jobId, jobResult)
       console.log(`[Pipeline:postprocess] ✅ Job ${jobId} completed — ${generatedCount} deliverables`)
       return c.json({ ok: true, step: 'postprocess', completed: true })
@@ -1950,14 +2210,22 @@ ${bpContext}`
 
     // Unknown step
     console.error(`[Pipeline] Unknown step: ${step}`)
-    await failJob(db, jobId, `Unknown pipeline step: ${step}`)
-    return c.json({ error: `Unknown step: ${step}` }, 400)
+    await failJob(db, jobId, `Unknown step: ${step}`)
 
-  } catch (error: any) {
-    console.error(`[Pipeline:${step}] Fatal error:`, error.message)
-    try { await failJob(db, jobId!, error.message || 'Erreur interne pipeline') } catch {}
-    return c.json({ error: error.message }, 500)
+  } catch (err: any) {
+    console.error(`[Pipeline] Fatal error in step ${step}:`, err.message)
+    try { await failJob(db, jobId!, err.message) } catch {}
   }
+  } // end pipelineWork
+
+  // Execute in background via waitUntil — handler returns HTTP 200 immediately
+  try {
+    c.executionCtx.waitUntil(pipelineWork())
+  } catch {
+    // Dev mode fallback — run detached
+    pipelineWork().catch(e => console.error('[Pipeline] Detached error:', e.message))
+  }
+  return c.json({ ok: true, step })
 })
 
 // ─── API: GET /api/ai/generate-status — Poll job progress ─────────
