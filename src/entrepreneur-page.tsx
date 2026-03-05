@@ -2360,12 +2360,12 @@ IMPORTANT: Utilise les données RÉELLES du document. Devise: XOF/FCFA. Projecti
           ).bind(userId, pmeId).first() as any
           if (existing) {
             await db.prepare(
-              'UPDATE business_plan_analyses SET analysis_json = ?, score = ?, version = ?, updated_at = datetime(\'now\') WHERE id = ?'
-            ).bind(bpDeliv.content, bpDeliv.score || 0, ver, existing.id).run()
+              'UPDATE business_plan_analyses SET business_plan_json = ?, version = ?, status = \'completed\', updated_at = datetime(\'now\') WHERE id = ?'
+            ).bind(bpDeliv.content, ver, existing.id).run()
           } else {
             await db.prepare(
-              'INSERT INTO business_plan_analyses (id, pme_id, user_id, version, analysis_json, score, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, \'analyzed\', datetime(\'now\'), datetime(\'now\'))'
-            ).bind(crypto.randomUUID(), pmeId, userId, ver, bpDeliv.content, bpDeliv.score || 0).run()
+              'INSERT INTO business_plan_analyses (id, pme_id, user_id, version, business_plan_json, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, \'completed\', datetime(\'now\'), datetime(\'now\'))'
+            ).bind(crypto.randomUUID(), pmeId, userId, ver, bpDeliv.content).run()
           }
           console.log(`[Pipeline:postprocess] ✅ Synced business_plan_analyses`)
         }
@@ -2375,16 +2375,21 @@ IMPORTANT: Utilise les données RÉELLES du document. Devise: XOF/FCFA. Projecti
 
       try {
         const ovoDeliv = await db.prepare(
-          "SELECT content, score FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'business_plan' ORDER BY version DESC LIMIT 1"
+          "SELECT content, score FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'plan_ovo' ORDER BY version DESC LIMIT 1"
         ).bind(userId).first() as any
         if (ovoDeliv?.content) {
           const pmeId = `pme_${userId}`
           const existingOvo = await db.prepare(
             'SELECT id FROM plan_ovo_analyses WHERE user_id = ? AND pme_id = ?'
           ).bind(userId, pmeId).first() as any
-          if (!existingOvo) {
+          if (existingOvo) {
             await db.prepare(
-              'INSERT INTO plan_ovo_analyses (id, pme_id, user_id, version, analysis_json, score, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, \'analyzed\', datetime(\'now\'), datetime(\'now\'))'
+              'UPDATE plan_ovo_analyses SET analysis_json = ?, score = ?, version = ?, status = \'generated\', updated_at = datetime(\'now\') WHERE id = ?'
+            ).bind(ovoDeliv.content, ovoDeliv.score || 0, ver, existingOvo.id).run()
+            console.log(`[Pipeline:postprocess] ✅ Updated plan_ovo_analyses`)
+          } else {
+            await db.prepare(
+              'INSERT INTO plan_ovo_analyses (id, pme_id, user_id, version, analysis_json, score, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, \'generated\', datetime(\'now\'), datetime(\'now\'))'
             ).bind(crypto.randomUUID(), pmeId, userId, ver, ovoDeliv.content, ovoDeliv.score || 0).run()
             console.log(`[Pipeline:postprocess] ✅ Synced plan_ovo_analyses (new)`)
           }
@@ -4911,12 +4916,28 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
     try {
       // Search with multiple statuses and pme_id variants
       const planRow = await c.env.DB.prepare(
-        "SELECT id, extraction_json FROM plan_ovo_analyses WHERE user_id = ? AND status IN ('filled', 'generated', 'extracted', 'filling', 'generating') ORDER BY created_at DESC LIMIT 1"
+        "SELECT id, extraction_json, analysis_json FROM plan_ovo_analyses WHERE user_id = ? AND status IN ('filled', 'generated', 'extracted', 'filling', 'generating', 'analyzed') ORDER BY created_at DESC LIMIT 1"
       ).bind(payload.userId).first() as any
       if (planRow?.id) {
         mainPlanOvoId = planRow.id
         if (planRow.extraction_json) {
           try { mainPlanOvoExtraction = JSON.parse(planRow.extraction_json) } catch { /* ignore */ }
+        }
+        // Fallback: use analysis_json if extraction_json is not available
+        if (!mainPlanOvoExtraction && planRow.analysis_json) {
+          try { mainPlanOvoExtraction = JSON.parse(planRow.analysis_json) } catch { /* ignore */ }
+        }
+      }
+      // Fallback: if no plan_ovo_analyses, load from entrepreneur_deliverables
+      if (!mainPlanOvoId) {
+        const ovoDeliv = await c.env.DB.prepare(
+          "SELECT content, score FROM entrepreneur_deliverables WHERE user_id = ? AND type = 'plan_ovo' ORDER BY version DESC LIMIT 1"
+        ).bind(payload.userId).first() as any
+        if (ovoDeliv?.content) {
+          try {
+            mainPlanOvoExtraction = JSON.parse(ovoDeliv.content)
+            mainPlanOvoId = 'deliv_ovo' // Marker for deliverable-based OVO
+          } catch {}
         }
       }
     } catch { /* ignore */ }
@@ -5998,7 +6019,129 @@ entrepreneurRoutes.get('/entrepreneur', async (c) => {
       // ═══ CHECK IF WE HAVE EXTRACTION DATA ═══
       const ext = PLAN_OVO_EXTRACTION;
       if (!ext || !ext.produits) {
-        // Fallback: display projections from the plan_ovo deliverable content
+        // Check for enriched plan_ovo format (from Claude enrichment)
+        if (ext && ext.projections && (ext.projections.year1 || ext.projections.year2)) {
+          html += '<div style="padding:20px">';
+          
+          // Score and analysis
+          if (ext.score) {
+            const sColor = ext.score >= 70 ? '#059669' : ext.score >= 50 ? '#d97706' : '#dc2626';
+            html += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;padding:16px;background:linear-gradient(135deg,#0f172a,#1e293b);border-radius:12px;color:white">';
+            html += '<div style="font-size:42px;font-weight:800;color:' + sColor + '">' + ext.score + '<span style="font-size:18px;color:#94a3b8">/100</span></div>';
+            html += '<div style="flex:1"><div style="font-size:13px;font-weight:600;color:#e2e8f0">Score Plan Financier</div>';
+            if (ext.analysis) html += '<div style="font-size:12px;color:#94a3b8;margin-top:4px;line-height:1.5">' + ext.analysis.substring(0, 300) + (ext.analysis.length > 300 ? '...' : '') + '</div>';
+            html += '</div></div>';
+          }
+          
+          // Key metrics
+          if (ext.key_metrics) {
+            const km = ext.key_metrics;
+            html += '<h3 style="font-size:15px;font-weight:700;color:#1e3a5f;margin-bottom:12px"><i class="fas fa-tachometer-alt"></i> Indicateurs Clés</h3>';
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:20px">';
+            const metrics = [
+              { label: 'Point Mort', value: km.break_even_months ? km.break_even_months + ' mois' : null, icon: 'fa-crosshairs', color: '#059669' },
+              { label: 'TRI', value: km.irr, icon: 'fa-percentage', color: '#0284c7' },
+              { label: 'VAN', value: km.npv, icon: 'fa-coins', color: '#7c3aed' },
+              { label: 'Payback', value: km.payback_period, icon: 'fa-clock', color: '#d97706' },
+              { label: 'Marge Brute', value: km.gross_margin, icon: 'fa-chart-pie', color: '#059669' },
+              { label: 'Marge Nette', value: km.net_margin, icon: 'fa-chart-line', color: '#0284c7' },
+              { label: 'DSCR', value: km.debt_service_coverage, icon: 'fa-balance-scale', color: '#7c3aed' },
+              { label: 'ROI 5 ans', value: km.roi_5years, icon: 'fa-trending-up', color: '#059669' },
+            ].filter(m => m.value);
+            metrics.forEach(function(m) {
+              html += '<div style="padding:14px;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0;text-align:center">';
+              html += '<div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px"><i class="fas ' + m.icon + '" style="color:' + m.color + '"></i> ' + m.label + '</div>';
+              html += '<div style="font-size:18px;font-weight:700;color:' + m.color + '">' + m.value + '</div>';
+              html += '</div>';
+            });
+            html += '</div>';
+          }
+          
+          // Projections table
+          html += '<h3 style="font-size:15px;font-weight:700;color:#1e3a5f;margin-bottom:12px"><i class="fas fa-chart-bar"></i> Projections Financières sur 5 ans</h3>';
+          html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">';
+          html += '<thead><tr style="background:#f0fdf4"><th style="padding:10px;text-align:left;border:1px solid #bbf7d0">Indicateur</th>';
+          var ovoYears = ['year1','year2','year3','year4','year5'];
+          var ovoYearLabels = ['Année 1','Année 2','Année 3','Année 4','Année 5'];
+          for (var yi=0; yi<5; yi++) html += '<th style="padding:10px;text-align:right;border:1px solid #bbf7d0">' + ovoYearLabels[yi] + '</th>';
+          html += '</tr></thead><tbody>';
+          var ovoFmt = function(v) { if (v == null) return "—"; var n = Number(v); if (isNaN(n)) return String(v); if (Math.abs(n) >= 1e6) return (n/1e6).toFixed(1) + " M"; if (Math.abs(n) >= 1e3) return (n/1e3).toFixed(0) + " k"; return n.toLocaleString(); };
+          var ovoRows = [
+            { label: "Chiffre d'Affaires", key: 'revenue', color: '#059669' },
+            { label: 'Charges', key: 'expenses', color: '#dc2626' },
+            { label: 'EBITDA', key: 'ebitda', color: '#d97706' },
+            { label: 'Résultat Net', key: 'net_income', color: '#7c3aed' },
+            { label: 'Cash Flow', key: 'cash_flow', color: '#0284c7' },
+          ];
+          ovoRows.forEach(function(row) {
+            html += '<tr><td style="padding:8px 10px;border:1px solid #e5e7eb;font-weight:600;color:' + row.color + '">' + row.label + '</td>';
+            ovoYears.forEach(function(yk) {
+              var val = ext.projections[yk] ? ext.projections[yk][row.key] : null;
+              var displayVal = val != null ? ovoFmt(val) + ' FCFA' : '—';
+              html += '<td style="padding:8px 10px;border:1px solid #e5e7eb;text-align:right;font-weight:500">' + displayVal + '</td>';
+            });
+            html += '</tr>';
+          });
+          html += '</tbody></table></div>';
+          
+          // Revenue model
+          if (ext.revenue_model && ext.revenue_model.sources) {
+            html += '<h3 style="font-size:15px;font-weight:700;color:#1e3a5f;margin:20px 0 12px"><i class="fas fa-funnel-dollar"></i> Modèle de Revenus</h3>';
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">';
+            ext.revenue_model.sources.forEach(function(src) {
+              html += '<div style="padding:14px;background:#f0fdf4;border-radius:10px;border:1px solid #bbf7d0">';
+              html += '<div style="font-size:13px;font-weight:600;color:#065f46">' + (src.name || 'Source') + '</div>';
+              if (src.share) html += '<div style="font-size:11px;color:#047857;margin-top:4px">' + src.share + ' du CA</div>';
+              html += '</div>';
+            });
+            html += '</div>';
+          }
+          
+          // Funding plan
+          if (ext.funding_plan) {
+            html += '<h3 style="font-size:15px;font-weight:700;color:#1e3a5f;margin:20px 0 12px"><i class="fas fa-hand-holding-usd"></i> Plan de Financement</h3>';
+            html += '<div style="padding:16px;background:#f0f4ff;border-radius:10px;border:1px solid #c7d2fe">';
+            if (ext.funding_plan.total_needed) html += '<div style="font-size:16px;font-weight:700;color:#4338ca;margin-bottom:8px">Besoin total : ' + ext.funding_plan.total_needed + '</div>';
+            var fundParts = [
+              { label: 'Fonds propres', value: ext.funding_plan.equity },
+              { label: 'Emprunt', value: ext.funding_plan.debt },
+              { label: 'Subventions', value: ext.funding_plan.grants },
+            ].filter(function(f) { return f.value; });
+            if (fundParts.length) {
+              html += '<div style="display:flex;gap:16px;flex-wrap:wrap">';
+              fundParts.forEach(function(f) {
+                html += '<div style="font-size:12px;color:#374151"><strong>' + f.label + ':</strong> ' + f.value + '</div>';
+              });
+              html += '</div>';
+            }
+            html += '</div>';
+          }
+          
+          // Assumptions
+          if (ext.assumptions && ext.assumptions.length) {
+            html += '<h3 style="font-size:15px;font-weight:700;color:#1e3a5f;margin:20px 0 12px"><i class="fas fa-clipboard-list"></i> Hypothèses</h3>';
+            html += '<ul style="list-style:none;padding:0;margin:0">';
+            ext.assumptions.forEach(function(a) {
+              html += '<li style="padding:6px 0;font-size:13px;color:#374151;border-bottom:1px solid #f3f4f6"><i class="fas fa-check-circle" style="color:#059669;margin-right:8px"></i>' + a + '</li>';
+            });
+            html += '</ul>';
+          }
+          
+          // Risks
+          if (ext.risks && ext.risks.length) {
+            html += '<h3 style="font-size:15px;font-weight:700;color:#1e3a5f;margin:20px 0 12px"><i class="fas fa-shield-alt"></i> Risques Identifiés</h3>';
+            ext.risks.forEach(function(r) {
+              var rColor = r.impact === 'élevé' ? '#dc2626' : r.impact === 'moyen' ? '#d97706' : '#059669';
+              html += '<div style="padding:12px;background:#fef2f2;border-radius:8px;border-left:4px solid ' + rColor + ';margin-bottom:8px">';
+              html += '<div style="font-size:13px;font-weight:600;color:#1e293b">' + (r.risk || '') + '</div>';
+              if (r.mitigation) html += '<div style="font-size:12px;color:#6b7280;margin-top:4px"><i class="fas fa-shield-check" style="color:#059669"></i> ' + r.mitigation + '</div>';
+              html += '</div>';
+            });
+          }
+          
+          html += '</div>';
+        } else {
+        // Original fallback: display projections from the plan_ovo deliverable content
         const proj = c.projections?.scenario_base;
         if (proj) {
           html += '<div style="padding:20px">';

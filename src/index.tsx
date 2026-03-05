@@ -8998,9 +8998,39 @@ function renderBusinessPlanModulePage(opts: {
 
   // ── Normalize bpData: convert generate-all flat sections to rich structure ──
   // generate-all produces: { score, sections: [{ title, content }] }
+  //   OR Claude named keys: { executive_summary: { title, content, key_points }, market_analysis: {...}, ... }
   // module expects: { resume_executif: { synthese }, presentation_entreprise: { description_generale }, ... }
   let normalizedBp: any = bpData || {}
-  if (bpData?.sections && Array.isArray(bpData.sections) && !bpData.resume_executif && !bpData.executive_summary) {
+  
+  // Handle Claude named-key format: { executive_summary: { title, content, key_points }, ... }
+  if (bpData && !bpData.sections && !bpData.resume_executif && (bpData.executive_summary || bpData.market_analysis || bpData.products_services)) {
+    const keyMap: Record<string, { target: string, contentKey: string }> = {
+      'executive_summary': { target: 'resume_executif', contentKey: 'synthese' },
+      'market_analysis': { target: 'analyse_marche', contentKey: 'description' },
+      'products_services': { target: 'offre_produit_service', contentKey: 'description' },
+      'marketing_strategy': { target: 'strategie_marketing', contentKey: 'description' },
+      'operations': { target: 'plan_operationnel', contentKey: 'description' },
+      'management_team': { target: 'presentation_entreprise', contentKey: 'description_generale' },
+      'financial_projections': { target: 'plan_financier', contentKey: 'description' },
+      'funding_requirements': { target: 'besoins_financement', contentKey: 'description' },
+      'risks_mitigation': { target: 'risques_mitigation', contentKey: 'description' },
+      'implementation_timeline': { target: 'plan_action', contentKey: 'description' },
+      'social_impact': { target: 'impact_social', contentKey: 'description' },
+      'governance': { target: 'gouvernance', contentKey: 'description' },
+    }
+    const rich: any = { score: bpData.score || 0, metadata: { ai_generated: true, date_generation: new Date().toISOString() } }
+    for (const [srcKey, mapping] of Object.entries(keyMap)) {
+      const section = bpData[srcKey]
+      if (section) {
+        const content = section.content || (typeof section === 'string' ? section : '')
+        const kp = section.key_points || []
+        rich[mapping.target] = { [mapping.contentKey]: content, description: content, points_cles: kp }
+      }
+    }
+    normalizedBp = rich
+    console.log('[BP Module] Normalized Claude named-key format to rich structure')
+  }
+  else if (bpData?.sections && Array.isArray(bpData.sections) && !bpData.resume_executif && !bpData.executive_summary) {
     // Map section titles to structured keys
     const sectionTitleMap: Record<string, string> = {
       'resume executif': 'resume_executif',
