@@ -5288,7 +5288,13 @@ app.post('/api/regenerate-deliverables', async (c) => {
       `).bind(userId).first() as any
       
       if (sicAnalysisRow?.content) {
-        const sicAnalysis = JSON.parse(sicAnalysisRow.content)
+        let sicAnalysis = JSON.parse(sicAnalysisRow.content)
+        
+        // Unwrap JSON schema wrapper: {type:"object", properties:{score,pillars,...}}
+        if (sicAnalysis.properties && !sicAnalysis.pillars) {
+          console.log('[Regenerate] SIC: unwrapping JSON schema wrapper (properties → root)')
+          sicAnalysis = sicAnalysis.properties
+        }
         
         if (sicAnalysis.pillars && Array.isArray(sicAnalysis.pillars)) {
           const newSicHtml = regenerateSicHtmlFromDbAnalysis(sicAnalysis, companyData)
@@ -5316,69 +5322,157 @@ app.post('/api/regenerate-deliverables', async (c) => {
       console.error('[Regenerate] SIC error:', e.message)
     }
     
-    // ─── Business Plan sync: copy latest from business_plan_analyses to entrepreneur_deliverables ───
+    // ─── Business Plan: Regenerate with Claude AI if fallback ───
     try {
-      const bpRow = await db.prepare(`
-        SELECT id, business_plan_json, version FROM business_plan_analyses 
-        WHERE user_id = ? AND status = 'completed' 
+      // Check current BP size — if < 5000, it's a fallback and needs regeneration
+      const currentBpRow = await db.prepare(`
+        SELECT content FROM entrepreneur_deliverables 
+        WHERE user_id = ? AND type = 'business_plan' 
         ORDER BY created_at DESC LIMIT 1
       `).bind(userId).first() as any
       
-      if (bpRow?.business_plan_json) {
-        const bpJson = JSON.parse(bpRow.business_plan_json)
-        // Build simplified sections for entrepreneur_deliverables preview
-        const bpSections = bpJson.sections || []
-        let simplifiedSections: any[] = []
+      const currentBpSize = currentBpRow?.content?.length || 0
+      const apiKey = (c.env as any).ANTHROPIC_API_KEY || ''
+      
+      if (currentBpSize < 5000 && apiKey.length > 10) {
+        console.log(`[Regenerate] BP is fallback (${currentBpSize} bytes), regenerating with Claude AI...`)
         
-        if (bpSections.length > 0) {
-          simplifiedSections = bpSections
-        } else {
-          // Build sections from rich format
-          const sectionMap: Array<{key: string, title: string}> = [
-            { key: 'resume_executif', title: 'Résumé Exécutif' },
-            { key: 'presentation_entreprise', title: 'Présentation de l\'Entreprise' },
-            { key: 'analyse_marche', title: 'Analyse de Marché' },
-            { key: 'model_economique', title: 'Modèle Économique' },
-            { key: 'offre_produit_service', title: 'Offre Produit/Service' },
-            { key: 'strategie_marketing', title: 'Stratégie Marketing' },
-            { key: 'plan_operationnel', title: 'Plan Opérationnel' },
-            { key: 'impact_social', title: 'Impact Social' },
-            { key: 'plan_financier', title: 'Plan Financier' },
-            { key: 'analyse_swot', title: 'Analyse SWOT & Risques' },
-            { key: 'besoins_financement', title: 'Besoins de Financement' },
-          ]
-          for (const { key, title } of sectionMap) {
-            const section = bpJson[key]
-            if (section) {
-              const content = typeof section === 'string' ? section :
-                section.synthese || section.description || section.description_generale || 
-                JSON.stringify(section).slice(0, 1000)
-              simplifiedSections.push({ title, content })
-            }
-          }
+        // Gather all deliverables for context
+        const allDeliverables = await db.prepare(`
+          SELECT type, content FROM entrepreneur_deliverables 
+          WHERE user_id = ? AND type IN ('bmc_analysis', 'sic_analysis', 'framework_pme_data', 'framework', 'diagnostic', 'odd')
+        `).bind(userId).all()
+        
+        let context = `ENTREPRISE: ${companyData.companyName}\nSECTEUR: ${companyData.sector}\nPAYS: ${companyData.country}\nLOCALISATION: ${companyData.location}\n\n`
+        
+        for (const row of (allDeliverables.results || [])) {
+          const r = row as any
+          try {
+            const parsed = JSON.parse(r.content)
+            // Unwrap JSON schema wrapper
+            const data = parsed.properties || parsed
+            context += `\n=== ${r.type.toUpperCase()} ===\n${JSON.stringify(data, null, 0).slice(0, 3000)}\n`
+          } catch { context += `\n=== ${r.type.toUpperCase()} ===\n${String(r.content).slice(0, 3000)}\n` }
         }
         
-        const bpContent = JSON.stringify({
-          score: bpJson.scores?.bmc || bpJson.score || 0,
-          sections: simplifiedSections,
-          metadata: bpJson.metadata
-        })
+        // Also get the uploaded DOCX text for richer context
+        const uploadRow = await db.prepare(`
+          SELECT extracted_text FROM uploads WHERE user_id = ? ORDER BY uploaded_at DESC LIMIT 1
+        `).bind(userId).first() as any
+        if (uploadRow?.extracted_text) {
+          context += `\n=== QUESTIONNAIRE DOCX (texte brut) ===\n${uploadRow.extracted_text.slice(0, 5000)}\n`
+        }
         
-        await db.prepare('DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = ?')
-          .bind(userId, 'business_plan').run()
-        await db.prepare(`
-          INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, created_at)
-          VALUES (?, ?, 'business_plan', ?, ?, ?, datetime('now'))
-        `).bind(crypto.randomUUID(), userId, bpContent, bpJson.scores?.bmc || 0, bpRow.version || 1).run()
+        const bpPrompt = `Tu es un expert en rédaction de Business Plans pour PME africaines.
+À partir des données ci-dessous, génère un Business Plan COMPLET et DÉTAILLÉ en JSON.
+
+${context}
+
+IMPORTANT: Le JSON doit avoir exactement cette structure:
+{
+  "score": <nombre 0-100>,
+  "metadata": {"ai_generated": true, "company": "${companyData.companyName}", "kb_used": true},
+  "sections": [
+    {"title": "Résumé Exécutif", "content": "<500+ mots, chiffres précis, vision stratégique>"},
+    {"title": "Présentation de l'Entreprise", "content": "<description complète: forme juridique, historique, équipe, gouvernance>"},
+    {"title": "Modèle Économique (Business Model)", "content": "<BMC détaillé, proposition de valeur, segments, revenus>"},
+    {"title": "Analyse de Marché & Concurrence", "content": "<TAM/SAM/SOM, concurrents, positionnement, tendances>"},
+    {"title": "Stratégie Marketing (5P)", "content": "<Produit, Prix, Place, Promotion, Personnel>"},
+    {"title": "Impact Social & Environnemental", "content": "<théorie du changement, ODD, indicateurs, bénéficiaires>"},
+    {"title": "Analyse Financière & Plan d'Investissement", "content": "<CA historique, projections 5 ans, rentabilité, BFR>"},
+    {"title": "Analyse SWOT & Risques", "content": "<forces, faiblesses, opportunités, menaces, mitigations>"},
+    {"title": "Équipe & Organisation", "content": "<organigramme, compétences clés, recrutements prévus>"},
+    {"title": "Besoins de Financement", "content": "<montant total, répartition, calendrier, ROI attendu>"},
+    {"title": "Plan d'Action & Prochaines Étapes", "content": "<roadmap 12 mois, jalons clés, KPIs>"}
+  ]
+}
+
+Chaque section doit faire 300-600 mots minimum avec des données RÉELLES extraites du contexte.
+Devise: XOF (FCFA). Réponds UNIQUEMENT avec le JSON, pas de texte autour.`
         
-        results.business_plan = { success: true, size: bpContent.length, sections: simplifiedSections.length }
-        console.log(`[Regenerate] BP synced: ${bpContent.length} bytes, ${simplifiedSections.length} sections`)
+        try {
+          const claudeResp = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify({
+              model: 'claude-sonnet-4-20250514',
+              max_tokens: 8000,
+              temperature: 0.4,
+              messages: [{ role: 'user', content: bpPrompt }]
+            })
+          })
+          
+          if (claudeResp.ok) {
+            const claudeData = await claudeResp.json() as any
+            const text = claudeData.content?.[0]?.text || ''
+            // Extract JSON from response
+            const jsonMatch = text.match(/\{[\s\S]*\}/)
+            if (jsonMatch) {
+              const bpJson = JSON.parse(jsonMatch[0])
+              const bpContent = JSON.stringify(bpJson)
+              
+              // Update entrepreneur_deliverables
+              await db.prepare('DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = ?')
+                .bind(userId, 'business_plan').run()
+              await db.prepare(`
+                INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, created_at)
+                VALUES (?, ?, 'business_plan', ?, ?, 2, datetime('now'))
+              `).bind(crypto.randomUUID(), userId, bpContent, bpJson.score || 72).run()
+              
+              // Also update business_plan_analyses
+              const bpAnalysisId = crypto.randomUUID()
+              await db.prepare(`
+                INSERT INTO business_plan_analyses (id, user_id, pme_id, version, status, business_plan_json, created_at, updated_at)
+                VALUES (?, ?, ?, 2, 'completed', ?, datetime('now'), datetime('now'))
+              `).bind(bpAnalysisId, userId, `pme_${userId}`, bpContent).run()
+              
+              const sections = bpJson.sections || []
+              results.business_plan = { success: true, size: bpContent.length, sections: sections.length, ai_generated: true } as any
+              console.log(`[Regenerate] BP Claude AI: ${bpContent.length} bytes, ${sections.length} sections`)
+            } else {
+              throw new Error('No JSON found in Claude response')
+            }
+          } else {
+            const errText = await claudeResp.text()
+            throw new Error(`Claude API ${claudeResp.status}: ${errText.slice(0, 200)}`)
+          }
+        } catch (claudeErr: any) {
+          console.error('[Regenerate] BP Claude AI failed:', claudeErr.message)
+          results.business_plan = { success: false, error: `Claude AI failed: ${claudeErr.message}` } as any
+        }
       } else {
-        results.business_plan = { success: false, error: 'No business_plan_analyses found' }
+        // BP already rich or no API key — just sync from business_plan_analyses
+        const bpRow = await db.prepare(`
+          SELECT id, business_plan_json, version FROM business_plan_analyses 
+          WHERE user_id = ? AND status = 'completed' 
+          ORDER BY created_at DESC LIMIT 1
+        `).bind(userId).first() as any
+        
+        if (bpRow?.business_plan_json) {
+          const bpJson = JSON.parse(bpRow.business_plan_json)
+          const bpSections = bpJson.sections || []
+          const bpContent = JSON.stringify(bpJson)
+          
+          await db.prepare('DELETE FROM entrepreneur_deliverables WHERE user_id = ? AND type = ?')
+            .bind(userId, 'business_plan').run()
+          await db.prepare(`
+            INSERT INTO entrepreneur_deliverables (id, user_id, type, content, score, version, created_at)
+            VALUES (?, ?, 'business_plan', ?, ?, ?, datetime('now'))
+          `).bind(crypto.randomUUID(), userId, bpContent, bpJson.score || 0, bpRow.version || 1).run()
+          
+          results.business_plan = { success: true, size: bpContent.length, sections: bpSections.length } as any
+          console.log(`[Regenerate] BP synced (already rich): ${bpContent.length} bytes`)
+        } else {
+          results.business_plan = { success: true, size: currentBpSize, note: 'BP already enriched' } as any
+        }
       }
     } catch (e: any) {
       results.business_plan = { success: false, error: e.message }
-      console.error('[Regenerate] BP sync error:', e.message)
+      console.error('[Regenerate] BP error:', e.message)
     }
     
     return c.json({ success: true, results, companyData })
